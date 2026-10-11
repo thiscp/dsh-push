@@ -22,6 +22,21 @@
 
 凭据文件（不入库）：`/etc/answer-relay/regtoken`、`/etc/answer-relay/bridgetoken`（600）、`/root/ntfy/dshbot.password`。
 
+## 凭据丢了怎么找回（无孤本原则）
+
+- **DSH Web token**：不用记，每次 DSH 重启必换；永远取 `web.log` 最后一行 `dsh web: http://...?token=...`
+- **ntfy 读令牌**：手机 APP 设置页可见；私有仓 `verify/config.local.ps1` 有副本；都没有就重签发（见下）后改 APP 设置
+- **ntfy 写令牌**：仅 verify 脚本用（hook 推送走 dshbot user/pass 基础认证），丢了重签发即可
+- **根凭据 dshbot user/pass**：工作机/Windows `~/.config/dsh-ntfy/token` + 阿里云 `/root/ntfy/dshbot.password` 双备份
+- **bridgetoken/regtoken**：服务器文件即权威副本，可随意换新值并同步两侧后重启服务
+
+重签发 ntfy 令牌（user/pass 换 session 再签 token）：
+
+```bash
+curl -s -c /tmp/c.txt -d "auth=$NTFY_USER:$NTFY_PASS" https://<ntfy>/v2/account/session >/dev/null
+curl -s -b /tmp/c.txt -d '{"label":"dshapp","perms":["read:dsh"]}' https://<ntfy>/v2/account/token
+```
+
 ## 下发方式
 
 ```
