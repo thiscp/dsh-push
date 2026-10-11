@@ -37,6 +37,7 @@ $map = [ordered]@{
   'Users\<user>'       = 'Users\<user>'
   'Users\\<user>'      = 'Users\\<user>'
   '$EmuUser     = "user"' = '$EmuUser     = "user"'
+  '$EmuUser = "user"'     = '$EmuUser = "user"'
   'tk_REPLACE_READ'  = 'tk_REPLACE_READ'
   'tk_REPLACE_WRITE' = 'tk_REPLACE_WRITE'
 }

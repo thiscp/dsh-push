@@ -130,20 +130,41 @@ class QuickAnswerActivity : Activity() {
         loadingDlg = null
     }
 
-    // 提交成功：薄荷底 + 成功表情弹跳入场，约 0.95s 自动退出（v1.8.0）
+    // 提交成功（v1.26.0）：主题全身立绘弹跳入场后原地摇摆浮动，约 1.4s 自动关闭；
+    // 底色跟随主题 dshCardBg（深色主题不穿帮）；摇摆是运行时属性动画，零动图素材
     private fun showSuccessThenFinish() {
-        val iv = ImageView(this).apply { setImageResource(R.drawable.pet_success) }
+        val pose = ThemePrefs.poseRes(this)
+        val iv = ImageView(this).apply {
+            setImageResource(if (pose != 0) pose else R.drawable.pet_success)
+        }
+        val h = dp(230)
+        val w = (h * 935f / 1682f).toInt()
         val box = FrameLayout(this).apply {
-            setBackgroundColor(0xE6DDFFFC.toInt())
-            addView(iv, FrameLayout.LayoutParams(dp(130), dp(130), Gravity.CENTER))
+            setBackgroundColor(c(R.attr.dshCardBg))
+            addView(iv, FrameLayout.LayoutParams(w, h, Gravity.CENTER))
         }
         val d = AlertDialog.Builder(this).setView(box).setCancelable(false).create()
         d.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0x00000000))
+        d.setOnDismissListener { breathers.forEach { it.cancel() }; breathers.clear() }
         d.show()
+        iv.pivotX = w / 2f; iv.pivotY = h.toFloat()   // 摇摆以脚底为轴
         iv.scaleX = 0.2f; iv.scaleY = 0.2f
         iv.animate().scaleX(1f).scaleY(1f).setDuration(450)
-            .setInterpolator(OvershootInterpolator(2.2f)).start()
-        iv.postDelayed({ d.dismiss(); finish() }, 950)
+            .setInterpolator(OvershootInterpolator(2.2f)).withEndAction {
+                ObjectAnimator.ofFloat(iv, "rotation", 0f, -2.5f, 0f, 2.5f, 0f).apply {
+                    duration = 1300
+                    repeatCount = ObjectAnimator.INFINITE
+                    interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                    start(); breathers.add(this)
+                }
+                ObjectAnimator.ofFloat(iv, "translationY", 0f, -dp(6).toFloat(), 0f).apply {
+                    duration = 900
+                    repeatCount = ObjectAnimator.INFINITE
+                    interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                    start(); breathers.add(this)
+                }
+            }.start()
+        iv.postDelayed({ d.dismiss(); finish() }, 1400)
     }
 
     private fun askQuestion(questions: JSONArray, index: Int, collected: JSONArray) {

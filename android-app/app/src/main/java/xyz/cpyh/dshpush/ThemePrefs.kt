@@ -33,6 +33,17 @@ object ThemePrefs {
     /** 主界面用（NoActionBar 全屏主题） */
     fun themeRes(ctx: Context) = ACT[current(ctx)]
 
+    /** 当前主题的全身立绘资源（无对应返回 0）；pose 映射唯一权威表（v1.26.0） */
+    fun poseRes(ctx: Context): Int = when (KEYS[current(ctx)]) {
+        "day" -> R.drawable.pose_maid
+        "night" -> R.drawable.pose_serious
+        "sakura" -> R.drawable.pose_shy
+        "matcha" -> R.drawable.pose_confused
+        "starry" -> R.drawable.pose_starry
+        "caramel" -> R.drawable.pose_cheerful
+        else -> 0
+    }
+
     /** 快答浮窗用（Dialog 主题，保持对话框窗口形态） */
     fun dialogThemeRes(ctx: Context) = DLG[current(ctx)]
 

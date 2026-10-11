@@ -36,7 +36,7 @@ class PushService : Service() {
         const val CH_URGENT = "dsh_urgent2"
         const val CH_SERVICE = "dsh_svc"
         const val NOTIF_SERVICE_ID = 2
-        const val APP_VER = "1.25.1"
+        const val APP_VER = "1.26.0"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
