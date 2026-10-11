@@ -66,9 +66,10 @@ git add -A
 $s = git status --porcelain
 if (-not $s) { Write-Host "public already up to date"; Pop-Location; exit 0 }
 git commit -m $Msg | Out-Null
-git push origin master 2>&1 | Out-Null
+# --porcelain: machine output on stdout (PS 5.1 treats native stderr as errors)
+git push --porcelain origin master | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "push github failed" }
-git push gitee master 2>&1 | Out-Null
+git push --porcelain gitee master | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "push gitee failed" }
 git log --oneline -1
 Write-Host "exported to GitHub + Gitee public"
