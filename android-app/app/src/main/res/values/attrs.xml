@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <attr name="dshBgPage" format="color" />
+    <attr name="dshCardBg" format="color" />
+    <attr name="dshCardStroke" format="color" />
+    <attr name="dshPillBg" format="color" />
+    <attr name="dshPillStroke" format="color" />
+    <attr name="dshPillRipple" format="color" />
+    <attr name="dshAccent" format="color" />
+    <attr name="dshAccentPressed" format="color" />
+    <attr name="dshTextPrimary" format="color" />
+    <attr name="dshTextSecondary" format="color" />
+    <attr name="dshWarn" format="color" />
+    <attr name="dshNotif" format="color" />
+    <attr name="dshWallpaper" format="reference" />
+    <attr name="dshScrim" format="color" />
+</resources>

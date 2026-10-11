@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 六套鲸鱼娘主题：颜色全部经自定义属性下发；forceDarkAllowed=false 防系统强制深色二次反色 -->
+
+    <!-- 日间 · 晴海（现配色，默认） -->
+    <style name="Theme.Dsh.Day" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="dshBgPage">@color/bg_page</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">@color/card_stroke</item>
+        <item name="dshPillBg">#CCE6F2FA</item>
+        <item name="dshPillStroke">#C9DCF2</item>
+        <item name="dshPillRipple">#334A7FB5</item>
+        <item name="dshAccent">@color/accent</item>
+        <item name="dshAccentPressed">@color/accent_pressed</item>
+        <item name="dshTextPrimary">@color/text_primary</item>
+        <item name="dshTextSecondary">@color/text_secondary</item>
+        <item name="dshWarn">@color/warn</item>
+        <item name="dshNotif">@color/notif_color</item>
+        <item name="dshWallpaper">@drawable/bg_day</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:statusBarColor">@color/bg_page</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Day.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Day.Dialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog">
+        <item name="dshBgPage">@color/bg_page</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">@color/card_stroke</item>
+        <item name="dshPillBg">#CCE6F2FA</item>
+        <item name="dshPillStroke">#C9DCF2</item>
+        <item name="dshPillRipple">#334A7FB5</item>
+        <item name="dshAccent">@color/accent</item>
+        <item name="dshAccentPressed">@color/accent_pressed</item>
+        <item name="dshTextPrimary">@color/text_primary</item>
+        <item name="dshTextSecondary">@color/text_secondary</item>
+        <item name="dshWarn">@color/warn</item>
+        <item name="dshNotif">@color/notif_color</item>
+        <item name="dshWallpaper">@drawable/bg_day</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Day.Dialog</item>
+    </style>
+
+    <!-- 深夜 · 深海夜光 -->
+    <style name="Theme.Dsh.Night" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="dshBgPage">#0F1726</item>
+        <item name="dshCardBg">#CC1D2B44</item>
+        <item name="dshCardStroke">#33455F</item>
+        <item name="dshPillBg">#CC1F3350</item>
+        <item name="dshPillStroke">#3A5070</item>
+        <item name="dshPillRipple">#338FB8E8</item>
+        <item name="dshAccent">#8FB8E8</item>
+        <item name="dshAccentPressed">#6E97C9</item>
+        <item name="dshTextPrimary">#E8EFF8</item>
+        <item name="dshTextSecondary">#9FB0C6</item>
+        <item name="dshWarn">#E0918F</item>
+        <item name="dshNotif">#4F7FB8</item>
+        <item name="dshWallpaper">@drawable/bg_whale_night</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:statusBarColor">#0F1726</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Night.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Night.Dialog" parent="@android:style/Theme.DeviceDefault.Dialog">
+        <item name="dshBgPage">#0F1726</item>
+        <item name="dshCardBg">#CC1D2B44</item>
+        <item name="dshCardStroke">#33455F</item>
+        <item name="dshPillBg">#CC1F3350</item>
+        <item name="dshPillStroke">#3A5070</item>
+        <item name="dshPillRipple">#338FB8E8</item>
+        <item name="dshAccent">#8FB8E8</item>
+        <item name="dshAccentPressed">#6E97C9</item>
+        <item name="dshTextPrimary">#E8EFF8</item>
+        <item name="dshTextSecondary">#9FB0C6</item>
+        <item name="dshWarn">#E0918F</item>
+        <item name="dshNotif">#4F7FB8</item>
+        <item name="dshWallpaper">@drawable/bg_whale_night</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Night.Dialog</item>
+    </style>
+
+    <!-- 樱花 · 樱瓣飘浮 -->
+    <style name="Theme.Dsh.Sakura" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="dshBgPage">#FDF2F4</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">#F0D5DC</item>
+        <item name="dshPillBg">#CCFBE9EE</item>
+        <item name="dshPillStroke">#F0CBD6</item>
+        <item name="dshPillRipple">#33C97B94</item>
+        <item name="dshAccent">#C97B94</item>
+        <item name="dshAccentPressed">#AE657C</item>
+        <item name="dshTextPrimary">#4A3540</item>
+        <item name="dshTextSecondary">#9C8790</item>
+        <item name="dshWarn">#C96A6A</item>
+        <item name="dshNotif">#C97B94</item>
+        <item name="dshWallpaper">@drawable/bg_sakura</item>
+        <item name="dshScrim">#26C97B94</item>
+        <item name="android:statusBarColor">#FDF2F4</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Sakura.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Sakura.Dialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog">
+        <item name="dshBgPage">#FDF2F4</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">#F0D5DC</item>
+        <item name="dshPillBg">#CCFBE9EE</item>
+        <item name="dshPillStroke">#F0CBD6</item>
+        <item name="dshPillRipple">#33C97B94</item>
+        <item name="dshAccent">#C97B94</item>
+        <item name="dshAccentPressed">#AE657C</item>
+        <item name="dshTextPrimary">#4A3540</item>
+        <item name="dshTextSecondary">#9C8790</item>
+        <item name="dshWarn">#C96A6A</item>
+        <item name="dshNotif">#C97B94</item>
+        <item name="dshWallpaper">@drawable/bg_sakura</item>
+        <item name="dshScrim">#26C97B94</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Sakura.Dialog</item>
+    </style>
+
+    <!-- 抹茶 · 抹茶布丁 -->
+    <style name="Theme.Dsh.Matcha" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="dshBgPage">#F2F7EC</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">#DCE7CF</item>
+        <item name="dshPillBg">#CCEAF2E0</item>
+        <item name="dshPillStroke">#CFE0BE</item>
+        <item name="dshPillRipple">#336F9E6B</item>
+        <item name="dshAccent">#6F9E6B</item>
+        <item name="dshAccentPressed">#587F55</item>
+        <item name="dshTextPrimary">#37432F</item>
+        <item name="dshTextSecondary">#8A9682</item>
+        <item name="dshWarn">#C97A5A</item>
+        <item name="dshNotif">#6F9E6B</item>
+        <item name="dshWallpaper">@drawable/bg_matcha</item>
+        <item name="dshScrim">#266F9E6B</item>
+        <item name="android:statusBarColor">#F2F7EC</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Matcha.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Matcha.Dialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog">
+        <item name="dshBgPage">#F2F7EC</item>
+        <item name="dshCardBg">#CCFFFFFF</item>
+        <item name="dshCardStroke">#DCE7CF</item>
+        <item name="dshPillBg">#CCEAF2E0</item>
+        <item name="dshPillStroke">#CFE0BE</item>
+        <item name="dshPillRipple">#336F9E6B</item>
+        <item name="dshAccent">#6F9E6B</item>
+        <item name="dshAccentPressed">#587F55</item>
+        <item name="dshTextPrimary">#37432F</item>
+        <item name="dshTextSecondary">#8A9682</item>
+        <item name="dshWarn">#C97A5A</item>
+        <item name="dshNotif">#6F9E6B</item>
+        <item name="dshWallpaper">@drawable/bg_matcha</item>
+        <item name="dshScrim">#266F9E6B</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Matcha.Dialog</item>
+    </style>
+
+    <!-- 星空 · 银河入梦 -->
+    <style name="Theme.Dsh.Starry" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <item name="dshBgPage">#0D0B1E</item>
+        <item name="dshCardBg">#B31F1A3A</item>
+        <item name="dshCardStroke">#3A3163</item>
+        <item name="dshPillBg">#CC262048</item>
+        <item name="dshPillStroke">#4A3F7A</item>
+        <item name="dshPillRipple">#33A78BFA</item>
+        <item name="dshAccent">#A78BFA</item>
+        <item name="dshAccentPressed">#8B6FE8</item>
+        <item name="dshTextPrimary">#EDEAF8</item>
+        <item name="dshTextSecondary">#A9A3C9</item>
+        <item name="dshWarn">#F0B0B0</item>
+        <item name="dshNotif">#7C6CF0</item>
+        <item name="dshWallpaper">@drawable/bg_whale_starry</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:statusBarColor">#0D0B1E</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Starry.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Starry.Dialog" parent="@android:style/Theme.DeviceDefault.Dialog">
+        <item name="dshBgPage">#0D0B1E</item>
+        <item name="dshCardBg">#B31F1A3A</item>
+        <item name="dshCardStroke">#3A3163</item>
+        <item name="dshPillBg">#CC262048</item>
+        <item name="dshPillStroke">#4A3F7A</item>
+        <item name="dshPillRipple">#33A78BFA</item>
+        <item name="dshAccent">#A78BFA</item>
+        <item name="dshAccentPressed">#8B6FE8</item>
+        <item name="dshTextPrimary">#EDEAF8</item>
+        <item name="dshTextSecondary">#A9A3C9</item>
+        <item name="dshWarn">#F0B0B0</item>
+        <item name="dshNotif">#7C6CF0</item>
+        <item name="dshWallpaper">@drawable/bg_whale_starry</item>
+        <item name="dshScrim">#00000000</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Starry.Dialog</item>
+    </style>
+
+    <!-- 焦糖 · 焦糖布丁 -->
+    <style name="Theme.Dsh.Caramel" parent="@android:style/Theme.DeviceDefault.Light.NoActionBar">
+        <item name="dshBgPage">#FFF6EA</item>
+        <item name="dshCardBg">#CCFFFDF6</item>
+        <item name="dshCardStroke">#E8D5BC</item>
+        <item name="dshPillBg">#CCFFF7EC</item>
+        <item name="dshPillStroke">#D9B98F</item>
+        <item name="dshPillRipple">#33C07A3C</item>
+        <item name="dshAccent">#C07A3C</item>
+        <item name="dshAccentPressed">#A66428</item>
+        <item name="dshTextPrimary">#4A3626</item>
+        <item name="dshTextSecondary">#8A6F55</item>
+        <item name="dshWarn">#C05B4A</item>
+        <item name="dshNotif">#C07A3C</item>
+        <item name="dshWallpaper">@drawable/bg_caramel</item>
+        <item name="dshScrim">#1AC07A3C</item>
+        <item name="android:statusBarColor">#FFF6EA</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Caramel.Dialog</item>
+    </style>
+    <style name="Theme.Dsh.Caramel.Dialog" parent="@android:style/Theme.DeviceDefault.Light.Dialog">
+        <item name="dshBgPage">#FFF6EA</item>
+        <item name="dshCardBg">#CCFFFDF6</item>
+        <item name="dshCardStroke">#E8D5BC</item>
+        <item name="dshPillBg">#CCFFF7EC</item>
+        <item name="dshPillStroke">#D9B98F</item>
+        <item name="dshPillRipple">#33C07A3C</item>
+        <item name="dshAccent">#C07A3C</item>
+        <item name="dshAccentPressed">#A66428</item>
+        <item name="dshTextPrimary">#4A3626</item>
+        <item name="dshTextSecondary">#8A6F55</item>
+        <item name="dshWarn">#C05B4A</item>
+        <item name="dshNotif">#C07A3C</item>
+        <item name="dshWallpaper">@drawable/bg_caramel</item>
+        <item name="dshScrim">#1AC07A3C</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/Theme.Dsh.Caramel.Dialog</item>
+    </style>
+</resources>

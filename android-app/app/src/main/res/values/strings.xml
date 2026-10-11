@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">大肥鱼盯梢</string>
+    <string name="subtitle">大肥鱼替你盯着 DSH</string>
+    <string name="empty">大肥鱼打盹中，暂时没有消息</string>
+    <string name="attribution">立绘 © yunxi（BSD-3）· 主题立绘 © 上善/ZipZipPipe（CC BY-NC-SA）· 形象源自 DeepSeek 鲸鱼娘二创</string>
+    <string name="quick_title">帮大肥鱼拿个主意？</string>
+    <string name="submitted">已交给 DSH，大肥鱼继续盯下一条</string>
+    <string name="token_title">把通行证交给大肥鱼</string>
+    <string name="token_hint">粘贴访问令牌（tk_ 开头）</string>
+    <string name="token_save">收好通行证</string>
+    <string name="token_cleared">通行证已清空，填一张新的</string>
+    <string name="theme_btn">换主题</string>
+    <string name="theme_title">给大肥鱼换身衣裳</string>
+</resources>

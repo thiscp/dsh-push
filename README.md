@@ -1,0 +1,71 @@
+# dsh-push
+
+> DSH（DeepSeek Harness）跑长任务，人走了怎么办？—— 一台没有 Google 推送的国产手机，也能收到任务完成通知、在通知栏直接回答 DSH 的提问。
+>
+> A self-hosted push bridge between [DeepSeek Harness](https://deepseek.com) (DSH) and Android: task-complete notifications, native quick-answers from the notification shade, and a themed in-app browser for DSH Web — no Google Play Services required.
+
+## 截图
+
+| 主界面 · 日间晴海 | 主界面 · 深夜深海 | 浏览器 · 星空玻璃 | 浏览器 · 深夜玻璃 |
+|---|---|---|---|
+| ![日间](docs/screens/home-day.png) | ![深夜](docs/screens/home-night.png) | ![星空](docs/screens/browser-starry.png) | ![深夜浏览器](docs/screens/browser-night.png) |
+
+六套主题（日间/深夜/樱花/抹茶/星空/焦糖），每套独立场景壁纸 + 全身立绘；应用内浏览器把 DSH Web 整个玻璃化，壁纸从界面后透出。
+
+## 它解决什么问题
+
+- **DSH Web 跑长任务**，人离开电脑后只能反复刷新网页；任务中途 `ask_user_question` 提问会**阻塞等待**。
+- 目标手机是 **iQOO 13（Android 16，无 GMS，vivo 后台管控严）**——FCM 系推送全部不可用，通用推送 App 也做不到"通知栏原生渲染问题 + 一键作答、任务当场继续"。
+
+## 架构
+
+```
+DSH (hooks.json: Stop / PreToolUse)
+  └─ deploy/{work|windows}/dsh-ntfy-push ──POST──▶ ntfy 服务器（自建，TLS）
+                                                     │  WebSocket 长连接
+                                                     ▼
+                              安卓 APP（前台服务 + 开机自启 + 断线重连）
+                              ├─ 通知渲染（正文/问题/进度）
+                              ├─ 通知栏一键作答 ──▶ 公网作答页(relay) ──tailscale──▶ 应答桥 ──▶ DSH $events → 任务继续
+                              └─ 「打开 DSH」内置浏览器（主题壁纸 + 全界面玻璃化）
+```
+
+- 推送通道：[ntfy](https://ntfy.sh) 自建实例（`deploy/aliyun/edge-http.conf` 是边缘 nginx 反代配置）
+- 作答回桥：`deploy/aliyun/answer-relay.py`（公网 H5/App 双通道）+ `deploy/work/dsh-answer-bridge.mjs`（DSH 侧）
+- 全部凭据走外部文件，不入库（见 `deploy/README.md`）
+
+## APP 功能一览（v1.25.1）
+
+- 推送接收：前台服务 + `BOOT_COMPLETED` 自启（Android 16 适配）+ WS 断线自动重连
+- 通知即答：问题在通知栏原生渲染（单选/多选/自填），提交后 DSH 任务当场继续；应用内快答浮窗
+- 内置浏览器：打开 DSH Web；主题壁纸 + 立绘 + 全界面毛玻璃（注入式，不改 DSH 本体）；文件上传/APK 下载直装
+- 六套小清新主题：矢量场景 + 立绘构图（52% 屏高、跨分辨率一致）、按钮半透明、深色主题网页自动暗化
+- 杂项：崩溃自报告、未读角标、已读回执、密度/DPI 切换自适应
+
+## 构建
+
+```bash
+cd android-app
+./gradlew assembleDebug        # JDK 17 + Android SDK 34（AGP 自动下载依赖）
+# 产物 app/build/outputs/apk/debug/app-debug.apk（debug 签名，自用即可）
+```
+
+APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → 订阅。
+
+## 仓库结构
+
+| 目录 | 内容 |
+|---|---|
+| `android-app/` | 安卓 APP 源码（Kotlin，无第三方 UI 库，~10 个文件）+ 素材源文件与授权 |
+| `deploy/` | 服务端脚本权威副本：ntfy 推送钩子、作答 relay/桥、边缘 nginx（见其 README） |
+| `verify/` | 一键验收流水线（编译→装机→推送断言→截图）+ AI 作业手册 `verify/README.md`；本机配置放 `verify/config.local.ps1`（模板见 `config.example.ps1`） |
+| `openspec/` | 规格驱动开发记录：基线规格 + 全部已归档变更提案 |
+| `docs/` | 截图与开发日志 |
+
+## 素材授权
+
+代码为 **MIT**（见 [LICENSE](LICENSE)）。角色立绘为第三方二创，**CC BY-NC-SA 4.0（非商用）**，署名表见 `android-app/assets-src/galgame/NOTICE.md`；商用请替换立绘素材。
+
+## 免责声明
+
+本项目是个人自研工具，非 DeepSeek 官方产品；按"现状"开源，无维护承诺。

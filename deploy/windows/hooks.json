@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "python C:\\Users\\<user>\\bin\\dsh-ntfy-push.py" } ] }
+    ],
+    "PreToolUse": [
+      { "matcher": "ask_user_question|exit_plan_mode",
+        "hooks": [ { "type": "command", "command": "python C:\\Users\\<user>\\bin\\dsh-ntfy-push.py" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "ask_user_question|exit_plan_mode",
+        "hooks": [ { "type": "command", "command": "python C:\\Users\\<user>\\bin\\dsh-ntfy-push.py" } ] }
+    ]
+  }
+}

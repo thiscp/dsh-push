@@ -1,0 +1,14 @@
+[Unit]
+Description=DSH answer relay (nonce-gated webhook forwarder)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/answer-relay.py
+Restart=always
+RestartSec=3
+MemoryHigh=40M
+MemoryMax=64M
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

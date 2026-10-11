@@ -1,0 +1,15 @@
+[Unit]
+Description=DSH answer bridge (events stream + phone answer forwarding)
+After=network-online.target
+
+[Service]
+User=work
+ExecStart=/usr/bin/node /home/work/bin/dsh-answer-bridge.mjs
+Restart=always
+RestartSec=5
+MemoryMax=128M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

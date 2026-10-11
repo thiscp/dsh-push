@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深夜主题星点独立图层：与 bg_whale_night 星位对齐，整层 alpha 闪烁（v1.8.0） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+    <path
+        android:fillColor="#E8EFF8"
+        android:pathData="M60,90 L62,96 L68,98 L62,100 L60,106 L58,100 L52,98 L58,96 Z
+            M150,58 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M232,132 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0
+            M108,178 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M330,196 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0
+            M40,250 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0
+            M196,236 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M270,286 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0
+            M84,330 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M340,360 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+</vector>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深夜·深海夜光 专属夜空背景：渐变深海 + 星点 + 月牙 + 气泡 + 淡鲸剪影（替代浅色鲸鱼娘壁纸） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:a="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+
+    <!-- 深海渐变：顶部近黑蓝 → 底部稍亮藏蓝 -->
+    <path android:pathData="M0,0h360v780h-360z">
+        <a:fillColor>
+            <gradient
+                android:type="linear"
+                android:startX="180" android:startY="0"
+                android:endX="180" android:endY="780"
+                android:startColor="#0B1220"
+                android:endColor="#1A2C4A" />
+        </a:fillColor>
+    </path>
+
+    <!-- 月牙 -->
+    <path
+        android:fillColor="#8FB8E8"
+        android:fillAlpha="0.20"
+        android:pathData="M300,84 a26,26 0 1,0 0,52 a20,20 0 1,1 0,-52 z" />
+
+    <!-- 星点：四芒星 + 圆点散落 -->
+    <path
+        android:fillColor="#E8EFF8"
+        android:fillAlpha="0.75"
+        android:pathData="M60,90 L62,96 L68,98 L62,100 L60,106 L58,100 L52,98 L58,96 Z
+            M150,58 m-1.5,0 a1.5,1.5 0 1,0 3,0 a1.5,1.5 0 1,0 -3,0
+            M232,132 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0
+            M108,178 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M330,196 m-1.4,0 a1.4,1.4 0 1,0 2.8,0 a1.4,1.4 0 1,0 -2.8,0
+            M40,250 m-1.2,0 a1.2,1.2 0 1,0 2.4,0 a1.2,1.2 0 1,0 -2.4,0
+            M196,236 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M270,286 m-1.3,0 a1.3,1.3 0 1,0 2.6,0 a1.3,1.3 0 1,0 -2.6,0
+            M84,330 m-1,0 a1,1 0 1,0 2,0 a1,1 0 1,0 -2,0
+            M340,360 m-1.1,0 a1.1,1.1 0 1,0 2.2,0 a1.1,1.1 0 1,0 -2.2,0" />
+
+    <!-- 淡鲸剪影（大肥鱼夜泳） -->
+    <path
+        android:fillColor="#8FB8E8"
+        android:fillAlpha="0.10"
+        android:pathData="M118,560 C138,528 222,526 252,552 C263,562 270,568 278,566 L296,554 L289,574 L302,590 C284,595 271,590 258,586 C222,602 142,600 120,576 C115,571 114,565 118,560 Z" />
+
+    <!-- 气泡串 -->
+    <path
+        android:strokeColor="#8FB8E8"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.25"
+        android:pathData="M70,640 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0
+            M95,600 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M60,570 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0
+            M300,660 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0
+            M280,615 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M312,585 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+</vector>

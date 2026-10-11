@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+# DSH hook -> ntfy push (Windows edition). Reads hook JSON on stdin. ALWAYS exits 0.
+import base64, json, os, sys, time, urllib.request, secrets
+
+try: sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+except Exception: pass
+
+def log(msg):
+    try:
+        d = os.path.expanduser("~/.cache/dsh-ntfy-push"); os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "error.log"), "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except Exception: pass
+
+def cfg():
+    d = {}
+    try:
+        for line in open(os.path.expanduser("~/.config/dsh-ntfy/token"), encoding="utf-8"):
+            if "=" in line:
+                k, v = line.strip().split("=", 1); d[k] = v
+    except Exception: pass
+    return d
+
+def dedup(key, win=15):
+    try:
+        d = os.path.expanduser("~/.cache/dsh-ntfy-push"); os.makedirs(d, exist_ok=True)
+        f = os.path.join(d, key[:80]); now = time.time()
+        if os.path.exists(f) and now - os.path.getmtime(f) < win: return False
+        open(f, "w").write(str(now))
+        for fn in os.listdir(d):
+            p = os.path.join(d, fn)
+            if fn != "error.log" and now - os.path.getmtime(p) > 86400: os.remove(p)
+        return True
+    except Exception: return True
+
+def http(url, body, headers, timeout=5):
+    data = json.dumps(body).encode() if isinstance(body, (dict, list)) else (body.encode() if body else None)
+    req = urllib.request.Request(url, data=data, method="POST")
+    for k, v in headers.items(): req.add_header(k, v)
+    with urllib.request.urlopen(req, timeout=timeout) as r: return r.getcode()
+
+def web_url(c):
+    # DSH Web 直达链接：现取 web.log 最后一条 token（每次重启必变），主机重写为 tailnet 基址（v1.9.2）
+    base = c.get("WEB_BASE", "")
+    if not base: return ""
+    try:
+        import re
+        tok = ""
+        with open(os.path.expanduser("~/.dsh/web.log"), encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = re.search(r"dsh web: http://\S+[?&]token=(\S+)", line)
+                if m: tok = m.group(1)
+        if tok: return base.rstrip("/") + "/?token=" + tok
+    except Exception as e: log("weburl fail: %s" % e)
+    return ""
+
+def main():
+    c = cfg()
+    raw = sys.stdin.read()
+    try: data = json.loads(raw)
+    except Exception: data = {}
+    ev = data.get("hook_event_name") or ""
+    if ev == "PostToolUse":
+        log("post-raw: %s" % raw[:400])
+    tk = c.get("NTFY_TOKEN")
+    auth = ("Bearer " + tk) if tk else ("Basic " + base64.b64encode(("%s:%s" % (c.get("NTFY_USER"), c.get("NTFY_PASS"))).encode()).decode())
+    sess = (data.get("session_id") or "")[-8:]
+    cwd = data.get("cwd") or ""
+    title, body, prio = None, None, 3
+    if ev == "Stop":
+        if not dedup("stop-" + (data.get("session_id") or "x"), 3): return
+        title = "DSH 任务结束 [%s]" % (sess or "?")
+        body = "目录: %s" % cwd
+        w = web_url(c)
+        if w: body = body + "\n#web " + w
+    elif ev == "PreToolUse" and data.get("tool_name") in ("ask_user_question", "exit_plan_mode"):
+        tid = data.get("tool_use_id") or ""
+        if not dedup("q-" + (tid or "x")): return
+        ti = data.get("tool_input") or {}
+        qs = ti.get("questions") or []
+        q = qs[0] if qs else {}
+        qt = q.get("question") or ti.get("plan") or ""
+        opts = [o.get("label", "") for o in (q.get("options") or [])][:3]
+        if not qt: qt = "DSH 正在等你选择"
+        title = "DSH 等你选择 [%s]" % (sess or "?")
+        body = qt + (("\n→ " + " / ".join([o for o in opts if o])) if opts else "")
+        prio = 4
+        reg_qs = [{"id": (q2.get("id") or ("q%d" % i)), "question": q2.get("question") or "",
+                   "options": [o.get("label", "") for o in (q2.get("options") or []) if o.get("label")]}
+                  for i, q2 in enumerate(qs)]
+        link = ""
+        if tid and reg_qs:
+            import urllib.parse as _up
+            link = "\n\U0001F4F1 作答: https://ntfy.cpyh.xyz/answer/" + _up.quote(tid, safe="")
+            try:
+                http(c.get("RELAY_URL", ""), {"callId": tid, "agentId": data.get("session_id") or "",
+                     "questions": reg_qs, "ttl": 86400},
+                     {"X-Reg-Token": c.get("RELAY_TOKEN", ""), "Content-Type": "application/json"})
+            except Exception as e: log("register fail: %s" % e)
+        body = body + link
+        if tid and reg_qs:
+            body = body + "\n#qid %s" % (reg_qs[0].get("id") or "q0")
+        w = web_url(c)
+        if w: body = body + "\n#web " + w
+        # 通知直答载荷：单问题 2-3 选项时追加机器 trailer（v1.9.0）
+        if tid and len(qs) == 1:
+            allopts = [o.get("label", "") for o in (q.get("options") or []) if o.get("label")]
+            if 2 <= len(allopts) <= 3 and all(
+                    not any(ch in lb for ch in "|=#\n") for lb in allopts):
+                body = body + "\n#opts %s=%s" % (q.get("id") or "q0", "|".join(allopts))
+    elif ev == "PostToolUse" and data.get("tool_name") in ("ask_user_question", "exit_plan_mode"):
+        # 作答回声：不管从哪端答的（DSH Web 聊天界面/ntfy 作答页/手机），工具结束都走到这
+        # → 发 #ans，手机撤通知入已答态（聊天界面作答不经 relay，只有这条路覆盖）
+        tid = data.get("tool_use_id") or ""
+        resp = data.get("tool_response")
+        if tid:
+            summary = ""
+            try:
+                rj = resp if isinstance(resp, dict) else json.loads(str(resp))
+                parts = []
+                for a in (rj.get("answers") or []):
+                    if not isinstance(a, dict):
+                        continue
+                    sel = a.get("selected") or []
+                    parts.append(str(sel[0]) if sel else str(a.get("custom") or ""))
+                summary = " / ".join([p for p in parts if p])
+            except Exception:
+                pass
+            if not summary:
+                summary = "已作答"
+            title = "DSH 已答"
+            body = "#ans %s %s" % (tid, summary)
+            prio = 1
+    if title is None: return
+    try:
+        http(c.get("NTFY_URL", ""),
+             {"topic": "dsh", "title": title, "message": body, "priority": prio},
+             {"Authorization": auth, "Content-Type": "application/json"})
+    except Exception as e:
+        log("push fail: %s" % e)
+
+try: main()
+except Exception as e: log("fatal: %s" % e)
+sys.exit(0)

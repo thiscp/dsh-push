@@ -1,0 +1,4 @@
+android-app/.gradle/
+android-app/app/build/
+android-app/local.properties
+verify/config.local.ps1

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 焦糖·焦糖布丁 专属场景：奶油暖棕渐变 + 焦糖淋酱与奶滴（360x780） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:a="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+
+    <path android:pathData="M0,0h360v780h-360z">
+        <a:fillColor>
+            <gradient
+                android:type="linear"
+                android:startX="180" android:startY="0"
+                android:endX="180" android:endY="780"
+                android:startColor="#FFF6EA"
+                android:endColor="#F2DCBB" />
+        </a:fillColor>
+    </path>
+
+    <!-- 顶部焦糖淋酱：波浪带 + 垂滴 -->
+    <path
+        android:fillColor="#C07A3C"
+        android:fillAlpha="0.22"
+        android:pathData="M0,0 h360 v34 q-30,22 -60,2 q-30,-18 -60,4 q-30,20 -60,-2 q-30,-18 -60,4 q-30,20 -60,-2 q-30,-18 -60,4 z
+            M70,58 q6,16 0,26 q-6,-10 0,-26 z
+            M180,66 q6,18 0,30 q-6,-12 0,-30 z
+            M290,54 q6,16 0,26 q-6,-10 0,-26 z" />
+
+    <!-- 焦糖圆点散落 -->
+    <path
+        android:fillColor="#C07A3C"
+        android:fillAlpha="0.20"
+        android:pathData="M56,120 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0
+            M150,86 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M258,130 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0
+            M322,220 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M86,260 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M204,200 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M40,420 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M300,360 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+
+    <!-- 奶滴高光 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.45"
+        android:pathData="M120,180 q5,-12 10,0 q-5,8 -10,0 z
+            M240,300 q5,-12 10,0 q-5,8 -10,0 z
+            M60,360 q4,-10 8,0 q-4,7 -8,0 z" />
+
+    <!-- 底部大布丁：焦糖帽+蛋奶身 -->
+    <path
+        android:fillColor="#E8CFA3"
+        android:fillAlpha="0.40"
+        android:pathData="M120,772 l18,-58 q3,-8 10,-8 h64 q7,0 10,8 l18,58 z" />
+    <path
+        android:fillColor="#C07A3C"
+        android:fillAlpha="0.40"
+        android:pathData="M146,706 q4,-14 16,-14 h36 q12,0 16,14 q-10,10 -34,10 q-24,0 -34,-10 z" />
+</vector>

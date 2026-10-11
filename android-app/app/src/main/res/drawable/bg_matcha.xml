@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 抹茶·抹茶布丁 专属场景：抹茶渐变 + 布丁与茶叶点缀（360x780） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:a="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+
+    <path android:pathData="M0,0h360v780h-360z">
+        <a:fillColor>
+            <gradient
+                android:type="linear"
+                android:startX="180" android:startY="0"
+                android:endX="180" android:endY="780"
+                android:startColor="#F2F7EC"
+                android:endColor="#D9E9C6" />
+        </a:fillColor>
+    </path>
+
+    <!-- 抹茶圆点散落 -->
+    <path
+        android:fillColor="#8FBF7F"
+        android:fillAlpha="0.30"
+        android:pathData="M60,90 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0
+            M150,60 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M250,110 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0
+            M320,200 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M90,240 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0
+            M200,180 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M40,400 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M290,340 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+
+    <!-- 茶叶：两片叶形 -->
+    <path
+        android:fillColor="#6F9E6B"
+        android:fillAlpha="0.35"
+        android:pathData="M110,150 q14,-18 30,-6 q-14,16 -30,6 z
+            M270,260 q-14,-18 -30,-6 q14,16 30,6 z
+            M60,320 q12,-16 26,-5 q-12,14 -26,5 z" />
+
+    <!-- 底部小布丁：圆台+焦糖帽 -->
+    <path
+        android:fillColor="#C8B48F"
+        android:fillAlpha="0.35"
+        android:pathData="M150,760 l14,-46 q2,-6 8,-6 h16 q6,0 8,6 l14,46 z" />
+    <path
+        android:fillColor="#A9865A"
+        android:fillAlpha="0.35"
+        android:pathData="M168,712 q2,-10 12,-10 q10,0 12,10 q-6,6 -12,6 q-6,0 -12,-6 z" />
+    <path
+        android:fillColor="#C8B48F"
+        android:fillAlpha="0.25"
+        android:pathData="M40,770 l10,-34 q2,-5 6,-5 h12 q5,0 6,5 l10,34 z
+            M280,772 l9,-30 q2,-5 6,-5 h10 q5,0 6,5 l9,30 z" />
+</vector>

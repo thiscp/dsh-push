@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 日间·晴海 专属场景：浅蓝晴空 + 白云 + 暖阳 + 海浪气泡（360x780，v1.24.0 与其他主题同款风格） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:a="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+
+    <path android:pathData="M0,0h360v780h-360z">
+        <a:fillColor>
+            <gradient
+                android:type="linear"
+                android:startX="180" android:startY="0"
+                android:endX="180" android:endY="780"
+                android:startColor="#EDF6FC"
+                android:endColor="#C6E3F5" />
+        </a:fillColor>
+    </path>
+
+    <!-- 暖阳：右上圆盘+光晕 -->
+    <path
+        android:fillColor="#FFE9A8"
+        android:fillAlpha="0.55"
+        android:pathData="M300,86 m-34,0 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0" />
+    <path
+        android:fillColor="#FFF3CC"
+        android:fillAlpha="0.30"
+        android:pathData="M300,86 m-52,0 a52,52 0 1,0 104,0 a52,52 0 1,0 -104,0" />
+
+    <!-- 白云：三团 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.60"
+        android:pathData="M52,120 m-26,0 a26,17 0 1,0 52,0 a26,17 0 1,0 -52,0
+            M86,112 m-20,0 a20,14 0 1,0 40,0 a20,14 0 1,0 -40,0
+            M22,128 m-16,0 a16,11 0 1,0 32,0 a16,11 0 1,0 -32,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.45"
+        android:pathData="M250,220 m-24,0 a24,15 0 1,0 48,0 a24,15 0 1,0 -48,0
+            M282,212 m-17,0 a17,12 0 1,0 34,0 a17,12 0 1,0 -34,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.35"
+        android:pathData="M80,320 m-20,0 a20,13 0 1,0 40,0 a20,13 0 1,0 -40,0
+            M108,314 m-14,0 a14,10 0 1,0 28,0 a14,10 0 1,0 -28,0" />
+
+    <!-- 气泡散落 -->
+    <path
+        android:fillColor="#9CC8E8"
+        android:fillAlpha="0.30"
+        android:pathData="M60,470 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0
+            M140,420 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0
+            M320,400 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0
+            M30,600 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0
+            M336,560 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- 底部海浪：两道白浪带 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.50"
+        android:pathData="M0,724 q40,-22 80,0 q40,22 80,0 q40,-22 80,0 q40,22 80,0 q20,-11 40,-3 v59 h-360 z" />
+    <path
+        android:fillColor="#A8D4EE"
+        android:fillAlpha="0.45"
+        android:pathData="M0,752 q45,-18 90,0 q45,18 90,0 q45,-18 90,0 q45,18 90,0 v28 h-360 z" />
+</vector>

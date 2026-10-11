@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 樱花·樱瓣飘浮 专属场景：粉雾渐变 + 散落樱瓣（360x780，风格照 bg_whale_night） -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:a="http://schemas.android.com/aapt"
+    android:width="360dp"
+    android:height="780dp"
+    android:viewportWidth="360"
+    android:viewportHeight="780">
+
+    <path android:pathData="M0,0h360v780h-360z">
+        <a:fillColor>
+            <gradient
+                android:type="linear"
+                android:startX="180" android:startY="0"
+                android:endX="180" android:endY="780"
+                android:startColor="#FDF2F4"
+                android:endColor="#F6D5E0" />
+        </a:fillColor>
+    </path>
+
+    <!-- 樱瓣：水滴形花瓣散落，大小旋转各异 -->
+    <path
+        android:fillColor="#F2A9C4"
+        android:fillAlpha="0.40"
+        android:pathData="M52,86 q7,-11 14,0 q-7,11 -14,0 z
+            M140,52 q6,-9 12,0 q-6,9 -12,0 z
+            M262,96 q8,-12 16,0 q-8,12 -16,0 z
+            M318,180 q6,-9 12,0 q-6,9 -12,0 z
+            M88,210 q7,-10 14,0 q-7,10 -14,0 z
+            M196,168 q5,-8 10,0 q-5,8 -10,0 z
+            M36,330 q6,-9 12,0 q-6,9 -12,0 z
+            M296,300 q7,-10 14,0 q-7,10 -14,0 z
+            M160,262 q6,-9 12,0 q-6,9 -12,0 z
+            M240,392 q5,-8 10,0 q-5,8 -10,0 z
+            M64,470 q7,-10 14,0 q-7,10 -14,0 z
+            M330,470 q6,-9 12,0 q-6,9 -12,0 z" />
+
+    <!-- 深一档的点缀瓣 -->
+    <path
+        android:fillColor="#D982A6"
+        android:fillAlpha="0.30"
+        android:pathData="M112,120 q5,-8 10,0 q-5,8 -10,0 z
+            M226,236 q6,-9 12,0 q-6,9 -12,0 z
+            M48,150 q4,-7 8,0 q-4,7 -8,0 z
+            M312,360 q5,-8 10,0 q-5,8 -10,0 z
+            M180,430 q4,-7 8,0 q-4,7 -8,0 z" />
+
+    <!-- 底部樱瓣堆 -->
+    <path
+        android:fillColor="#F2A9C4"
+        android:fillAlpha="0.25"
+        android:pathData="M20,700 q9,-14 18,0 q-9,14 -18,0 z
+            M70,730 q8,-12 16,0 q-8,12 -16,0 z
+            M150,742 q9,-14 18,0 q-9,14 -18,0 z
+            M240,726 q8,-12 16,0 q-8,12 -16,0 z
+            M310,744 q9,-14 18,0 q-9,14 -18,0 z" />
+</vector>
