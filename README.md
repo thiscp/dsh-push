@@ -4,6 +4,17 @@
 >
 > A self-hosted push bridge between [DeepSeek Harness](https://deepseek.com) (DSH) and Android: task-complete notifications, native quick-answers from the notification shade, and a themed in-app browser for DSH Web — no Google Play Services required.
 
+## 🤖 这个仓库是写给 AI 看的
+
+本项目按 **"AI agent 能自己读完并部署"** 的标准组织文档：把仓库丢给你的 AI 助手（DSH / Claude Code / Codex 等），说一句"帮我把这套推送部署起来"，它应该能自己读文档完成全部工作——起 ntfy 服务器、装 APP、配 DSH hook、跑验收流水线。为此仓库里备齐了：
+
+- `deploy/README.md`：每个服务端脚本的部署位置、凭据文件、下发命令（命令级，可直接执行）
+- `verify/README.md`：**AI 作业手册**——一键验收流水线 + 几十条"踩过坑换来的硬事实"（PowerShell 5.1 陷阱、Android 16 行为、模拟器生命周期……），就是给 agent 的避坑清单
+- `openspec/`：规格驱动开发全记录（基线规格 + 每个变更的提案/设计/任务），AI 改功能前先读这里
+- `verify/config.example.ps1`：所有环境相关值的模板，部署方只需填这一个文件
+
+人类照做当然也行——只是文档的颗粒度是按"执行者没有常识、只会照做和验证"来写的。😉
+
 ## 截图
 
 | 主界面 · 日间晴海 | 主界面 · 深夜深海 | 浏览器 · 星空玻璃 | 浏览器 · 深夜玻璃 |
