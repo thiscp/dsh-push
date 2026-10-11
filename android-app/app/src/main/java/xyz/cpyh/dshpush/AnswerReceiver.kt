@@ -85,6 +85,12 @@ class AnswerReceiver : BroadcastReceiver() {
                         ok -> {
                             nm.cancel(nid)
                             PushService.markAnswered(ctx, callId, shown)
+                            // 全路径摇摆立绘（v1.27.0）：主页选项/通知直答也看到成功立绘；
+                            // 通知栏后台拉起可能被 OEM 弹窗管控拦截，toast 兜底零回归
+                            try {
+                                ctx.startActivity(Intent(ctx, SuccessPoseActivity::class.java)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                            } catch (e: Exception) { }
                             toast(ctx, "已答：${shown.take(20)}，大肥鱼继续盯")
                         }
                         r.code == 404 || r.code == 410 -> {

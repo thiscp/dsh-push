@@ -49,6 +49,13 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density" />
+        <!-- 全路径作答成功立绘（v1.27.0）：全屏透明悬浮，1.4s 自动关闭 -->
+        <activity
+            android:name=".SuccessPoseActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <service
             android:name=".PushService"
             android:exported="false"
