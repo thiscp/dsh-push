@@ -36,7 +36,9 @@ class PushService : Service() {
         const val CH_URGENT = "dsh_urgent2"
         const val CH_SERVICE = "dsh_svc"
         const val NOTIF_SERVICE_ID = 2
-        const val APP_VER = "1.28.0"
+        // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
+        const val EXTRA_SHOW_HOSTS = "showHosts"
+        const val APP_VER = "1.30.0"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
@@ -47,6 +49,8 @@ class PushService : Service() {
         val webRegex = Regex("\n#web (\\S+)$", RegexOption.MULTILINE)
         // 自由作答落点的问题 id：#qid <首问id>（v1.11.0 钩子追加；旧 hook 没这行，降级 q0）
         val qidRegex = Regex("\n#qid (\\S+)$", RegexOption.MULTILINE)
+        // 实例友好名：#name <标签>（v1.29.0 钩子按各台 WEB_NAME 追加，多 DSH 入口清单用）
+        val nameRegex = Regex("\n#name (.+)$", RegexOption.MULTILINE)
 
         // 任意入口作答成功/过期都回写消息状态，主界面开着即时重排（v1.9.6）。
         // v1.28.0：作答即已读——亲手答过=看过；唯一例外是监督者代答（read=false），
@@ -195,7 +199,21 @@ class PushService : Service() {
         // 常驻一键直达 DSH 网页：用最近一次推送带来的新鲜链接（v1.9.2）
         val web = prefs?.getString(KEY_WEB, "") ?: ""
         if (web.isNotEmpty()) b.addAction(webAction(web))
+        // 多 DSH 常驻入口（v1.29.0）：登记过实例才挂选择器动作——不打开 App 也能选进哪台
+        if (DshHosts.all(this).isNotEmpty()) b.addAction(chooseAction())
         return b.build()
+    }
+
+    // 「DSH 入口」（v1.29.0）：拉起主界面并让它弹实例选择器
+    // （request code 与内容意图错开，防 FLAG_UPDATE_CURRENT 互相覆盖 extras）
+    private fun chooseAction(): Notification.Action {
+        val i = Intent(this, MainActivity::class.java).putExtra(EXTRA_SHOW_HOSTS, true)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        val pi = PendingIntent.getActivity(this, NOTIF_SERVICE_ID * 1000 + 7, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Action.Builder(
+            android.R.drawable.ic_menu_sort_by_size, "DSH 入口", pi).build()
     }
 
     // 网页直达落点：App 内置 WebActivity 单实例窗口（v1.9.8）——
@@ -357,9 +375,11 @@ class PushService : Service() {
             val freeQid = if (directQid.isNotEmpty()) directQid
                           else if (qidLine.isNotEmpty()) qidLine else "q0"
             // 自研 App 原生渲染，通知里不展示裸链接与机器 trailer（#qid 也算 trailer，v1.11.0）
+            // #name 同为机器 trailer（v1.29.0）：它只喂实例清单，不进正文
             val displayBody = body.replace(Regex("\n*📱 作答: https?://\\S+"), "")
                 .replace(Regex("\n#opts .*$", RegexOption.MULTILINE), "")
                 .replace(Regex("\n#web .*$", RegexOption.MULTILINE), "")
+                .replace(Regex("\n#name .*$", RegexOption.MULTILINE), "")
                 .replace(Regex("\n#qid .*$", RegexOption.MULTILINE), "").trim()
             // v1.21.0：掺入 ts——同标题正文的重复推送（如连续两轮任务结束）
             // 不再共用 mid：已读互不牵连，通知也不再互相顶替
@@ -397,10 +417,17 @@ class PushService : Service() {
 
             val ch = if (prio >= 4) CH_URGENT else CH_NORMAL
             // 网页直达链接换新（DSH Web 重启后 token 必变）：持久化并重发常驻通知跟随（v1.9.2）
-            if (webLink.isNotEmpty() && webLink != prefs?.getString(KEY_WEB, "")) {
-                prefs?.edit()?.putString(KEY_WEB, webLink)?.apply()
-                getSystemService(NotificationManager::class.java)
-                    .notify(NOTIF_SERVICE_ID, serviceNotification())
+            if (webLink.isNotEmpty()) {
+                // 实例清单登记（v1.29.0）：每台推送过的 DSH 都留一条，供主页/常驻通知的
+                // 「DSH 入口」选择器用；名称取 `#name` 尾巴（缺省 host:port）
+                val hostName = nameRegex.find(body)?.groupValues?.get(1)?.trim()
+                val grew = DshHosts.upsert(this, webLink, hostName)
+                val webChanged = webLink != prefs?.getString(KEY_WEB, "")
+                if (webChanged) prefs?.edit()?.putString(KEY_WEB, webLink)?.apply()
+                // 清单变了也要重发常驻通知，否则新增的「DSH 入口」动作要等下次状态刷新才出现
+                if (webChanged || grew)
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIF_SERVICE_ID, serviceNotification())
             }
             val largeArt = if (prio >= 4) R.drawable.pet_please else R.drawable.pet_success
             val b = Notification.Builder(this, ch)

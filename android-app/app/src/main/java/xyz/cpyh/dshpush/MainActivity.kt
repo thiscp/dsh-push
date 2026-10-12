@@ -151,6 +151,11 @@ class MainActivity : Activity() {
                 setPadding(0, dp(2), 0, 0)
             })
         }, LinearLayout.LayoutParams(0, -2, 1f))
+        // 多 DSH 常驻入口（v1.29.0）：自己挑进哪台；卡片按钮仍指向各自推送来源
+        header.addView(pill(Button(this)).apply {
+            text = getString(R.string.hosts_btn)
+            setOnClickListener { showHosts() }
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         // 换主题入口（v1.7.0）
         header.addView(pill(Button(this)).apply {
             text = getString(R.string.theme_btn)
@@ -281,6 +286,131 @@ class MainActivity : Activity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         startForegroundService(Intent(this, PushService::class.java))
+        // 常驻通知「DSH 入口」动作进来的（v1.29.0）：布局完再弹选择器
+        if (intent?.getBooleanExtra(PushService.EXTRA_SHOW_HOSTS, false) == true) {
+            root.post { showHosts() }
+        }
+    }
+
+    // singleTask 复用同一实例时，常驻通知的「DSH 入口」动作走这里
+    override fun onNewIntent(i: Intent?) {
+        super.onNewIntent(i)
+        setIntent(i)
+        if (i?.getBooleanExtra(PushService.EXTRA_SHOW_HOSTS, false) == true) {
+            window.decorView.post { showHosts() }
+        }
+    }
+
+    // ---------- 多 DSH 实例选择器（v1.29.0） ----------
+
+    private fun showHosts() {
+        val hosts = DshHosts.all(this)
+        if (hosts.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.hosts_title)
+                .setMessage(R.string.hosts_empty)
+                .setPositiveButton(R.string.hosts_add) { _, _ -> showHostInput("") }
+                .setNegativeButton("知道了", null)
+                .show()
+            return
+        }
+        val labels = hosts.map { "${it.name}\n${it.id} · ${ago(it.lastSeen)}" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hosts_title)
+            .setItems(labels) { _, i -> openWebUrl(hosts[i].url) }
+            .setNeutralButton(R.string.hosts_manage) { _, _ -> showHostManage(hosts) }
+            .setPositiveButton(R.string.hosts_add) { _, _ -> showHostInput("") }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showHostManage(hosts: List<DshHosts.Host>) {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hosts_manage)
+            .setItems(hosts.map { it.name }.toTypedArray()) { _, i -> showHostItem(hosts[i]) }
+            .setNegativeButton("返回", null)
+            .show()
+    }
+
+    private fun showHostItem(h: DshHosts.Host) {
+        AlertDialog.Builder(this)
+            .setTitle("${h.name} · ${h.id}")
+            .setItems(arrayOf("重命名", "更新链接", "删除")) { _, which ->
+                when (which) {
+                    0 -> showHostRename(h)
+                    1 -> showHostInput(h.url)
+                    else -> {
+                        DshHosts.remove(this, h.id)
+                        toast("已删除 ${h.name}")
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showHostRename(h: DshHosts.Host) {
+        val et = inputBox(h.name)
+        AlertDialog.Builder(this)
+            .setTitle("给它起个名字")
+            .setView(padded(et))
+            .setPositiveButton("保存") { _, _ ->
+                val nm = et.text.toString().trim()
+                if (nm.isNotEmpty()) {
+                    DshHosts.rename(this, h.id, nm)
+                    toast("改名成功")
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    // 手动添加或更新链接：从没推送过的实例、或 token 轮换后链接过期时用
+    private fun showHostInput(prefill: String) {
+        val et = inputBox(prefill)
+        et.hint = "https://主机:端口/?token=…"
+        AlertDialog.Builder(this)
+            .setTitle(R.string.hosts_add)
+            .setView(padded(et))
+            .setPositiveButton("保存") { _, _ ->
+                val u = et.text.toString().trim()
+                when {
+                    u.isEmpty() -> toast("先粘一条链接")
+                    // DSH 网页链接必带 ?token=：不带的多半是下载链接（v1.29.1）
+                    !u.contains("token=") -> toast("这条链接没带 ?token=，打开会 401，请复制完整链接")
+                    else -> {
+                        DshHosts.upsert(this, u, null)
+                        toast("已登记 ${DshHosts.hostOf(u)}")
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun inputBox(text: String) = EditText(this).apply {
+        setText(text)
+        textSize = 14f
+        inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        setSingleLine(true)
+        setTextColor(c(R.attr.dshTextPrimary))
+    }
+
+    private fun padded(v: View) = FrameLayout(this).apply {
+        setPadding(dp(16), dp(8), dp(16), 0)
+        addView(v)
+    }
+
+    // "最近出现"的相对时间：一眼看出哪台在活跃
+    private fun ago(ts: Long): String {
+        if (ts <= 0L) return "时间未知"
+        val d = System.currentTimeMillis() / 1000 - ts
+        return when {
+            d < 60 -> "刚刚"
+            d < 3600 -> "${d / 60} 分钟前"
+            d < 86400 -> "${d / 3600} 小时前"
+            else -> "${d / 86400} 天前"
+        }
     }
 
     private fun saveToken() {

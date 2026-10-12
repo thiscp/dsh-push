@@ -12,4 +12,9 @@
     <string name="token_cleared">通行证已清空，填一张新的</string>
     <string name="theme_btn">换主题</string>
     <string name="theme_title">给大肥鱼换身衣裳</string>
+    <string name="hosts_btn">DSH 入口</string>
+    <string name="hosts_title">进入哪台 DSH</string>
+    <string name="hosts_empty">还没有登记任何 DSH 实例——任意一台推来消息就会自动出现在这里；也可以直接粘贴一条带令牌的链接。</string>
+    <string name="hosts_add">添加/更新链接</string>
+    <string name="hosts_manage">管理实例</string>
 </resources>

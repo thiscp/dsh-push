@@ -37,6 +37,8 @@ class WebActivity : Activity() {
     private var web: WebView? = null
     private var errorLayer: View? = null
     private var errText: TextView? = null
+    // 标题栏文字（v1.30.0）：随加载的链接刷新成「DSH 网页 · 实例名」
+    private var titleView: TextView? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     // 网页文件选择的回调（v1.19.0）：onActivityResult 里喂结果
     private var fileCb: ValueCallback<Array<Uri>>? = null
@@ -117,13 +119,15 @@ class WebActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(14), dp(10), dp(14), dp(6))
         }
-        bar.addView(TextView(this).apply {
+        val tv = TextView(this).apply {
             text = "DSH 网页"
             textSize = 16f
             setTextColor(c(R.attr.dshTextPrimary))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-        })
+        }
+        titleView = tv
+        bar.addView(tv)
         bar.addView(Button(this).apply {
             text = "关闭"
             textSize = 12f
@@ -163,6 +167,13 @@ class WebActivity : Activity() {
                     // 站外协议（intent://、mailto: 等）交还系统
                     try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { }
                     return true
+                }
+
+                override fun onPageStarted(
+                    view: WebView?, url: String?, favicon: android.graphics.Bitmap?
+                ) {
+                    // 页内跳去别的机器（如下载链、跨实例链接）时标题跟着换（v1.30.0）
+                    url?.let { applyInstanceLabel(it) }
                 }
 
                 // 主框架加载失败 → 人设错误页（v1.12.0）
@@ -382,7 +393,24 @@ class WebActivity : Activity() {
 
         val url = intent?.getStringExtra("url") ?: ""
         if (url.isEmpty()) { finish(); return }
+        applyInstanceLabel(url)
         web?.loadUrl(url)
+    }
+
+    /** 标题栏与最近任务标签带上实例名（v1.30.0）：
+     *  按 host:port 反查 v1.29 的实例清单（名称来自推送 #name 或用户改名），
+     *  查不到退化为 host:port——工作 VM 还是本地台式机一眼可辨。 */
+    private fun applyInstanceLabel(url: String) {
+        if (url.isEmpty()) return
+        val id = DshHosts.hostOf(url)
+        val name = try {
+            DshHosts.all(this).firstOrNull { it.id == id }?.name
+        } catch (e: Exception) {
+            null
+        } ?: id
+        titleView?.text = "DSH 网页 · $name"
+        // 最近任务卡片标题同步——多开时也能分清哪张是哪台
+        title = "DSH · $name"
     }
 
     /** 错误页：睡觉鲸鱼 + 主机名 + 重试胶囊（v1.12.0） */
@@ -425,7 +453,10 @@ class WebActivity : Activity() {
         // 窗口复用：token 换新等直接在同一窗口加载新链接（v1.9.8）
         markMsgRead(intent)
         val u = intent?.getStringExtra("url") ?: ""
-        if (u.isNotEmpty()) web?.loadUrl(u)
+        if (u.isNotEmpty()) {
+            applyInstanceLabel(u)
+            web?.loadUrl(u)
+        }
     }
 
     // 消息通知的「打开 DSH」带 mid/ts → 该条标已读并撤掉这条通知（setAutoCancel 只管

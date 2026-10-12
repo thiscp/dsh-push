@@ -54,6 +54,11 @@ def web_url(c):
     except Exception as e: log("weburl fail: %s" % e)
     return ""
 
+def name_line(c):
+    # 实例友好名（v1.29.0）：多 DSH 入口清单用；各台在 token 文件里配 WEB_NAME=台式机/工作VM
+    n = (c.get("WEB_NAME") or "").strip().replace("\n", " ")
+    return ("\n#name " + n) if n else ""
+
 def main():
     c = cfg()
     raw = sys.stdin.read()
@@ -73,6 +78,7 @@ def main():
         body = "目录: %s" % cwd
         w = web_url(c)
         if w: body = body + "\n#web " + w
+        body = body + name_line(c)
     elif ev == "PreToolUse" and data.get("tool_name") in ("ask_user_question", "exit_plan_mode"):
         tid = data.get("tool_use_id") or ""
         if not dedup("q-" + (tid or "x")): return
@@ -102,7 +108,7 @@ def main():
             body = body + "\n#qid %s" % (reg_qs[0].get("id") or "q0")
         w = web_url(c)
         if w: body = body + "\n#web " + w
-        # 通知直答载荷：单问题 2-3 选项时追加机器 trailer（v1.9.0）
+        body = body + name_line(c)
         if tid and len(qs) == 1:
             allopts = [o.get("label", "") for o in (q.get("options") or []) if o.get("label")]
             if 2 <= len(allopts) <= 3 and all(
