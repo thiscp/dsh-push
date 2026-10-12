@@ -18,7 +18,9 @@ param(
   [switch]$SkipBuild,                   # reuse -Apk (or last G:\Android\dsh-push.apk) instead of building
   [string]$Apk,                         # local APK path when -SkipBuild
   [switch]$Fresh,                       # pm clear + reseed token prefs before install
-  [switch]$Deploy                       # on PASS upload to aliyun dl and print ?v= link
+  [switch]$Deploy,                      # on PASS upload to aliyun dl and print ?v= link
+  [string]$DeployNote,                  # changelog line for the update notification (default: version only)
+  [switch]$NoNotify                     # deploy silently without pushing the update notification
 )
 # Local infra overrides (hosts/tokens), see config.example.ps1 — not published
 if (Test-Path "$PSScriptRoot\config.local.ps1") { . "$PSScriptRoot\config.local.ps1" }
@@ -184,6 +186,21 @@ if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
   $chk = curl.exe -s -o "$OutDir\dl-check.apk" -w "%{http_code} %{size_download}" "$Ntfy/dl/dsh-push.apk?v=$vc"
   $same = (Get-FileHash "$OutDir\dl-check.apk" -Algorithm SHA256).Hash -eq (Get-FileHash $localApk -Algorithm SHA256).Hash
   Report "deploy" ($chk -match "^200" -and $same) "link: $Ntfy/dl/dsh-push.apk?v=$vc"
+  # Push update notification (v1.28.0+). HARD FACT 2026-10-12: this ntfy behind the aliyun edge
+  # nginx only parses a JSON body when POSTed to the ROOT with "topic" inside it - posting the
+  # same JSON to /<topic> stores the whole blob as plain text. So: POST $Ntfy, never $Ntfy/$Topic.
+  if ($Deploy -and -not $NoNotify -and ($chk -match "^200") -and $same) {
+    $vn = [regex]::Match((Get-Content "$Repo\android-app\app\build.gradle.kts" -Raw), 'versionName\s*=\s*"([^"]+)"').Groups[1].Value
+    $dl = "$Ntfy/dl/dsh-push.apk?v=$vc"
+    $note = if ($DeployNote) { $DeployNote } else { "updated to v$vn" }
+    $note = $note.Replace('\','\\').Replace('"','\"')
+    $pj = '{"topic":"' + $Topic + '","title":"dsh-push update v' + $vn + '","message":"' + $note + '\n#web ' + $dl + '","priority":4,"click":"' + $dl + '"}'
+    $pf = Join-Path $OutDir "upd-note.json"
+    [IO.File]::WriteAllText($pf, $pj, (New-Object Text.UTF8Encoding $false))
+    $r = curl.exe -s -X POST -H "Authorization: Bearer $WriteToken" -H "Content-Type: application/json" --data-binary "@$pf" $Ntfy
+    $nid = try { ($r | ConvertFrom-Json).id } catch { "?" }
+    Report "update-notify" ($r -match '"title":"dsh-push update') "id: $nid"
+  }
 }
 
 # ---------- summary ----------

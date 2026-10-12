@@ -36,7 +36,7 @@ class PushService : Service() {
         const val CH_URGENT = "dsh_urgent2"
         const val CH_SERVICE = "dsh_svc"
         const val NOTIF_SERVICE_ID = 2
-        const val APP_VER = "1.27.0"
+        const val APP_VER = "1.28.0"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
@@ -48,15 +48,22 @@ class PushService : Service() {
         // 自由作答落点的问题 id：#qid <首问id>（v1.11.0 钩子追加；旧 hook 没这行，降级 q0）
         val qidRegex = Regex("\n#qid (\\S+)$", RegexOption.MULTILINE)
 
-        // 任意入口作答成功/过期都回写消息状态，主界面开着即时重排（v1.9.6）
-        fun markAnswered(ctx: android.content.Context, callId: String, label: String) {
+        // 任意入口作答成功/过期都回写消息状态，主界面开着即时重排（v1.9.6）。
+        // v1.28.0：作答即已读——亲手答过=看过；唯一例外是监督者代答（read=false），
+        // 用户没亲眼见过这条，未读点留着
+        fun markAnswered(ctx: android.content.Context, callId: String, label: String,
+                         read: Boolean = true) {
             try {
                 val p = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
                 val arr = JSONArray(p.getString("msgs", "[]") ?: "[]")
                 var changed = false
                 for (k in 0 until arr.length()) {
                     val o = arr.optJSONObject(k) ?: continue
-                    if (o.optString("callId") == callId) { o.put("answered", label); changed = true }
+                    if (o.optString("callId") == callId) {
+                        o.put("answered", label)
+                        if (read) o.put("read", true)
+                        changed = true
+                    }
                 }
                 if (changed) {
                     p.edit().putString("msgs", arr.toString()).apply()
@@ -321,8 +328,11 @@ class PushService : Service() {
                             }
                         }
                     } catch (e: Exception) { }
+                    // 网页/relay 端作答也走这条回声：作答即已读（v1.28.0）；
+                    // 监督者代答前缀除外——用户没看过，未读留着
+                    val auto = ansLabel.startsWith("【监督者自动唤醒】")
                     markAnswered(this, ansCallId,
-                        if (ansLabel.isEmpty()) "已作答" else ansLabel)
+                        if (ansLabel.isEmpty()) "已作答" else ansLabel, read = !auto)
                 }
                 return
             }
