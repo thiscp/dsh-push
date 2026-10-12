@@ -73,6 +73,24 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
 | `openspec/` | 规格驱动开发记录：基线规格 + 全部已归档变更提案 |
 | `docs/` | 截图与开发日志 |
 
+## AI 开发工作流硬事实（踩过的坑，别再踩）
+
+1. **openspec 归档**：`MODIFIED` 块会**整块替换**基线里的同名需求，所以必须把该需求在基线里的
+   **全部既有场景原样带上**（改标题也算删除）。自检：基线里该需求的每个 `#### Scenario:` 标题
+   都要在 delta 里出现，否则 `openspec archive` 直接拒绝并点名漏了哪个。
+2. **发布一条命令**：`verify/dsh-app-verify.ps1 -Deploy -DeployNote "更新说明"` —— 自动构建、
+   装机验收、上架 aliyun 下载链接、**并推更新通知**（带 App 内下载按钮 + 点通知直达下载）。
+   只想静默上架加 `-NoNotify`。版本号两处一起 bump（`build.gradle.kts` 的 versionCode/Name
+   与 `PushService.APP_VER`），否则 APP 顶部版本显示会对不上。
+3. **ntfy 推送格式**：要带 title/优先级/click 的 **JSON body 必须 POST 到根路径**
+   `https://ntfy.cpyh.xyz` 并把 `topic` 写进 body；POST 到 `/dsh` 会把整坨 JSON 当正文存
+   （阿里云边缘 nginx 的解析差异，实测）。纯文本 + `X-Title`/`X-Priority` 头则照常走 `/dsh`。
+4. **Windows 脚本编码**：`verify/*.ps1` 刻意保持纯 ASCII（PowerShell 5.1 会把无 BOM 的 UTF-8
+   当 ANSI 读，中文变乱码进而炸引号）；确需中文的脚本**必须带 UTF-8 BOM**。
+5. **双胞胎主机**：验收机（跑 DSH 与流水线）与模拟器宿主是**两台同名同用户的 Windows**
+   （台式机 vs 笔记本）。`verify/config.local.ps1` 里的 `$EmuIp` 指向模拟器宿主；ssh 现场取证
+   时先单独 `echo %COMPUTERNAME%` 确认是哪台。
+
 ## 素材授权
 
 代码为 **MIT**（见 [LICENSE](LICENSE)）。角色立绘为第三方二创，**CC BY-NC-SA 4.0（非商用）**，署名表见 `android-app/assets-src/galgame/NOTICE.md`；商用请替换立绘素材。
