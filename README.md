@@ -90,6 +90,13 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
 5. **双胞胎主机**：验收机（跑 DSH 与流水线）与模拟器宿主是**两台同名同用户的 Windows**
    （台式机 vs 笔记本）。`verify/config.local.ps1` 里的 `$EmuIp` 指向模拟器宿主；ssh 现场取证
    时先单独 `echo %COMPUTERNAME%` 确认是哪台。
+6. **外部 exe 写不进工作区**：这台 Windows 上 python/ffmpeg 等外部进程被 AppContainer 限制，
+   对 F: 工作区**只读**（NTFS ACL 本身没问题，`icacls` 查不出来）；产物一律写到
+   `%LOCALAPPDATA%\Temp` 再由 PowerShell `Copy-Item` 拷进仓库。素材生成走
+   `tools/gen_pose_anim.py --out <Temp>` 就是这个原因。
+7. **成功页动画取证姿势**：模拟器上 `screenrecord` 只出 1 帧（废）、`exec-out screencap`
+   单次 ~1.5-2s——2.6s 的动画窗口根本抢不到。用 QA 钩子 `am start -n xyz.cpyh.dshpush/.SuccessPoseActivity
+   --ei holdMs 9000` 延长停留后连拍三张，再 diff 立绘区（发梢/裙摆动、头不动 = 动画在播）。
 
 ## 素材授权
 

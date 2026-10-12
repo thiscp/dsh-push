@@ -130,8 +130,9 @@ class QuickAnswerActivity : Activity() {
         loadingDlg = null
     }
 
-    // 提交成功（v1.26.0）：主题全身立绘弹跳入场后原地摇摆浮动，约 1.4s 自动关闭；
-    // 底色跟随主题 dshCardBg（深色主题不穿帮）；摇摆是运行时属性动画，零动图素材
+    // 提交成功（v1.31.0）：主题"活立绘"动画 WebP（发丝裙摆波动+呼吸）弹跳入场后循环播放，
+    // 停留约 2.6s 自动关闭；API<28 或解码失败退回 v1.26 运行时摇摆（静图+属性动画），零依赖。
+    // 底色跟随主题 dshCardBg（深色主题不穿帮）
     private fun showSuccessThenFinish() {
         val pose = ThemePrefs.poseRes(this)
         val iv = ImageView(this).apply {
@@ -146,25 +147,42 @@ class QuickAnswerActivity : Activity() {
         val d = AlertDialog.Builder(this).setView(box).setCancelable(false).create()
         d.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0x00000000))
         d.setOnDismissListener { breathers.forEach { it.cancel() }; breathers.clear() }
+        // 活立绘动画（v1.31.0）：系统 ImageDecoder 播动画 WebP（API 28+，官方内置能力）
+        var anim: android.graphics.drawable.AnimatedImageDrawable? = null
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            val animRes = ThemePrefs.poseAnimRes(this)
+            if (animRes != 0) try {
+                val dr = android.graphics.ImageDecoder.decodeDrawable(
+                    android.graphics.ImageDecoder.createSource(resources, animRes))
+                if (dr is android.graphics.drawable.AnimatedImageDrawable) {
+                    iv.setImageDrawable(dr); anim = dr
+                }
+            } catch (e: Exception) { }
+        }
         d.show()
         iv.pivotX = w / 2f; iv.pivotY = h.toFloat()   // 摇摆以脚底为轴
         iv.scaleX = 0.2f; iv.scaleY = 0.2f
         iv.animate().scaleX(1f).scaleY(1f).setDuration(450)
             .setInterpolator(OvershootInterpolator(2.2f)).withEndAction {
-                ObjectAnimator.ofFloat(iv, "rotation", 0f, -2.5f, 0f, 2.5f, 0f).apply {
-                    duration = 1300
-                    repeatCount = ObjectAnimator.INFINITE
-                    interpolator = android.view.animation.AccelerateDecelerateInterpolator()
-                    start(); breathers.add(this)
-                }
-                ObjectAnimator.ofFloat(iv, "translationY", 0f, -dp(6).toFloat(), 0f).apply {
-                    duration = 900
-                    repeatCount = ObjectAnimator.INFINITE
-                    interpolator = android.view.animation.AccelerateDecelerateInterpolator()
-                    start(); breathers.add(this)
+                if (anim != null) {
+                    anim.repeatCount = -1
+                    anim.start()
+                } else {
+                    ObjectAnimator.ofFloat(iv, "rotation", 0f, -2.5f, 0f, 2.5f, 0f).apply {
+                        duration = 1300
+                        repeatCount = ObjectAnimator.INFINITE
+                        interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                        start(); breathers.add(this)
+                    }
+                    ObjectAnimator.ofFloat(iv, "translationY", 0f, -dp(6).toFloat(), 0f).apply {
+                        duration = 900
+                        repeatCount = ObjectAnimator.INFINITE
+                        interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+                        start(); breathers.add(this)
+                    }
                 }
             }.start()
-        iv.postDelayed({ d.dismiss(); finish() }, 1400)
+        iv.postDelayed({ d.dismiss(); finish() }, if (anim != null) 2600L else 1400L)
     }
 
     private fun askQuestion(questions: JSONArray, index: Int, collected: JSONArray) {

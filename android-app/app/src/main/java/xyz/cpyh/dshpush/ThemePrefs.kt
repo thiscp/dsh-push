@@ -44,6 +44,18 @@ object ThemePrefs {
         else -> 0
     }
 
+    /** 当前主题的"活立绘"动画（res/raw 动画 WebP，API 28+ 播放；v1.31.0）。
+     *  素材由 tools/gen_pose_anim.py 从静态立绘离线合成（发丝/裙摆/尾尖波动+呼吸）。 */
+    fun poseAnimRes(ctx: Context): Int = when (KEYS[current(ctx)]) {
+        "day" -> R.raw.pose_anim_maid
+        "night" -> R.raw.pose_anim_serious
+        "sakura" -> R.raw.pose_anim_shy
+        "matcha" -> R.raw.pose_anim_confused
+        "starry" -> R.raw.pose_anim_starry
+        "caramel" -> R.raw.pose_anim_cheerful
+        else -> 0
+    }
+
     /** 快答浮窗用（Dialog 主题，保持对话框窗口形态） */
     fun dialogThemeRes(ctx: Context) = DLG[current(ctx)]
 
