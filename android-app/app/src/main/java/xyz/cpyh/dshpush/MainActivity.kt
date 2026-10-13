@@ -37,6 +37,7 @@ import java.util.Locale
 
 class MainActivity : Activity() {
     private lateinit var statusText: TextView
+    private lateinit var markAllBtn: Button
     private lateinit var msgList: LinearLayout
     private lateinit var emptyBox: LinearLayout
     private lateinit var tokenCard: LinearLayout
@@ -164,8 +165,26 @@ class MainActivity : Activity() {
         content.addView(header)
 
         // 状态卡片（全局网页胶囊已于 v1.9.5 退役：入口收敛到常驻通知与卡片自带按钮）
+        // v1.32.9：statusText 下加「全部已读」pill（右对齐，仅未读>0 时可见）
         statusText = TextView(this).apply { textSize = 13f; setTextColor(c(R.attr.dshTextPrimary)) }
-        content.addView(card(statusText, dp(14)))
+        markAllBtn = pill(Button(this)).apply {
+            text = "全部已读"
+            visibility = View.GONE
+            setOnClickListener {
+                val n = PushService.markAllRead(this@MainActivity)
+                toast("已全部标为已读（$n 条）")
+                // 列表与按钮可见性的刷新交给 markAllRead 里的 listener 回调，不自己再调
+            }
+        }
+        val statusBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(statusText)
+            addView(markAllBtn, LinearLayout.LayoutParams(-2, -2).apply {
+                gravity = Gravity.END
+                topMargin = dp(10)
+            })
+        }
+        content.addView(card(statusBar, dp(14)))
 
         // 通行证卡片：首次启动（或换令牌时）出现，保存后隐藏
         tokenInput = EditText(this).apply {
@@ -627,7 +646,8 @@ class MainActivity : Activity() {
         return if (tv.resourceId != 0) resources.getColor(tv.resourceId, theme) else tv.data
     }
 
-    // v1.18.0：markAllRead 退役——已读改为逐条显式（PushService.markRead）
+    // v1.18.0：markAllRead 退役——已读改为逐条显式（PushService.markRead）；
+    // v1.32.9 以「全部已读」显式按钮形态回归（PushService.markAllRead，见状态卡片）
 
     // 未读卡片标题：文字前两点宽的"● "，圆点着强调色（v1.9.9）
     private fun unreadTitle(s: String): CharSequence {
@@ -892,6 +912,8 @@ class MainActivity : Activity() {
             """.trimIndent())
         }
         statusText.setTextColor(if (batteryOk) c(R.attr.dshTextPrimary) else c(R.attr.dshWarn))
+        // 一键全部已读（v1.32.9）：仅在有未读时出现；点完 unread 归零，listener 再刷时自己隐藏
+        markAllBtn.visibility = if (unread > 0) View.VISIBLE else View.GONE
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()

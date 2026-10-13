@@ -38,7 +38,7 @@ class PushService : Service() {
         const val NOTIF_SERVICE_ID = 2
         // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
         const val EXTRA_SHOW_HOSTS = "showHosts"
-        const val APP_VER = "1.32.8"
+        const val APP_VER = "1.32.9"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
@@ -93,6 +93,35 @@ class PushService : Service() {
                     listeners.forEach { it.onNewMsg() }
                 }
             } catch (e: Exception) { }
+        }
+
+        // 一键全部已读（v1.32.9）：把 msgs 里当前未读的全部翻成已读，并逐条撤掉消息通知
+        // （含未答的提问通知——一键全部已读=清未读+撤消息通知，未答问题在 App 卡片上仍可作答）。
+        // 未读判定与 MainActivity.refresh() 一致：!optBoolean("read", true)——老消息没字段默认已读，
+        // 既不翻也不撤其通知。通知 id：提问消息存 nid，任务结束消息只存 mid（v1.18.0 起两者同哈希），
+        // nid 缺失按 mid 兜底，都没有（0）跳过。常驻服务通知（ID=2）不在 msgs 里，天然不受影响。
+        // 返回本次翻条数；0 条不写回也不吵 listeners。
+        fun markAllRead(ctx: android.content.Context): Int {
+            var flipped = 0
+            try {
+                val p = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+                val arr = JSONArray(p.getString("msgs", "[]") ?: "[]")
+                val nm = ctx.getSystemService(NotificationManager::class.java)
+                for (k in 0 until arr.length()) {
+                    val o = arr.optJSONObject(k) ?: continue
+                    if (!o.optBoolean("read", true)) {
+                        o.put("read", true)
+                        flipped++
+                        val nid = o.optInt("nid", 0).let { if (it == 0) o.optInt("mid", 0) else it }
+                        if (nid != 0) nm.cancel(nid)
+                    }
+                }
+                if (flipped > 0) {
+                    p.edit().putString("msgs", arr.toString()).apply()
+                    listeners.forEach { it.onNewMsg() }
+                }
+            } catch (e: Exception) { }
+            return flipped
         }
     }
 

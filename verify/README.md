@@ -77,6 +77,11 @@ powershell -File verify\dsh-app-verify.ps1
 - `REQUEST_INSTALL_PACKAGES` 是特殊权限：`pm grant` 无效，要 `appops set <pkg> REQUEST_INSTALL_PACKAGES allow`
 - 断言通道 = `adb shell cat /data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml`（XML 里引号转义成 `&quot;`，正则按转义后写）+ `screencap` 截图
 - `uiautomator dump` 常报 "could not get idle state"（APP 有动画）——别依赖它，用截图
+- **MainActivity 上 uiautomator dump 是必挂不是偶发**（v1.32.9 QA 实测）：常驻呼吸/星闪动画挡住 idle，`window_animator_scale=0` 也救不回来（11.4s 超时）。原生 UI 按钮坐标一律从 **`adb shell dumpsys activity top`** 的视图层级解析：bounds 是**相对父级**的要沿祖先累加；可见性看 flags 首字符（`V`/`G`）、可点看 flags 含 `C`；状态卡 = 消息列表 ScrollView 之前最后一个可见 LinearLayout。解析器现成：`verify\qa-markallread.ps1` 的 `Parse-Tree`
+- **toast 文案的唯一可靠通道** = `dumpsys notification` 里的 `Toast Queue:` → `TextToastRecord{... text=...}`，**只在 toast 存活期（~2s）可见** → 必须与 `input tap` 串在同一条远端命令链里，**且中间隔 ~1 秒**：`input tap & ping -n 2 127.0.0.1 >nul & dumpsys notification --noredact`。`input tap` 是注入即返回，App 处理点击→cancel 通知→toast 入队要 0.3~0.8s，0 延迟立刻 dump 会抢跑（v1.32.9 QA 实测：「通知没撤 + toast 没弹」的假 FAIL 全是这个成因，晚一拍的 dump 里都已生效）
+- **从 ssh 远端读 UTF-8 内容（prefs/dumpsys）走 stdout 捕获**：job 里先 `[Console]::OutputEncoding=[Text.Encoding]::UTF8` 再收（PS 默认按控制台码页解码，中文 toast/标题会变乱码假失败）；**别在远端命令里放设备侧 `>` `|`**——PS 5.1 递给 ssh.exe 的内嵌双引号会丢，远端 cmd.exe 会把 `>` 抢去做本地重定向（报「系统找不到指定的路径」）。要中文断言就按码点传参（`[char]0x5DF2` 拼），`.ps1` 本体保持 ASCII。只有二进制（PNG）才 `screencap -p /sdcard/x.png` 落盘 + `adb pull` + scp
+- **Start-Job 里别用 `cmd /c "adb ..."`**：PS 对含引号参数再转义，cmd 收到坏路径（「系统找不到指定的路径」）；直连 `& ssh <target> <单参数命令串>` 是被验证过的姿势
+- **设备 serial 从 `adb devices` 现取**，别硬编码（踩过：`qa-readstate.ps1` 写死 `emulator-5556`，后来设备实际是 `emulator-5554`，脚本整条哑掉）
 - 截图落盘用 `cmd /c "adb exec-out screencap -p > file.png"`（PS 的 Out-File 会坏字节流）
 
 **推送与测试**
@@ -178,6 +183,11 @@ powershell -File verify\dsh-app-verify.ps1
 - **产物名带版本号**：编译脚本不要把输出写死成某个文件名（踩过：写死 `dsh-push-1322.apk`，
   后面编 v1.32.3/v1.32.4 时把真正的 v1.32.2 包覆盖了，"旧版本对照"装到的其实是新包）。
   统一用 `dsh-push-<versionName>.apk`。
+- **`verify\build-install.ps1` 不同步源码**——它只做「vm1 上 gradle + 回传 APK + 装机」，编译的是 vm1 仓里的旧源码。
+  改完本地代码必须先手动同步（姿势同 `qa-test.ps1` 开头三步）：`ssh vm1 "rm -rf work/projects/dsh-push/android-app/app/src"`
+  → `scp -r android-app\app\src` → `scp android-app\app\build.gradle.kts`。症状极具欺骗性：明明修了编译错误，vm1 还报同一条。
+  完整流水线 `dsh-app-verify.ps1` 自带这步（build-vm1 先 rm+scp src/build.gradle.kts/settings/gradle.properties），
+  坑只咬单独用 build-install.ps1 的人（v1.32.9 自测实测踩中）。
 
 **web.log 里的 token 是活的，别用旧值**
 - `?token=` 每次 DSH 重启都换，`C:\Users\<user>\.dsh\web.log` 里**最后一条** `dsh web: http://...?token=` 才有效。

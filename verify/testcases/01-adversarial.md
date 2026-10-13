@@ -210,3 +210,86 @@
 - **证据**: （待填）
 
 > 归因提示（2026-10-13 v1.32.7 FINDING-4）：这批按钮是 **DSH Web 上游**自己排的紧凑布局，不是伴侣 App 的注入造成的；所以"扩命中区"这件事在成组按钮上**要么改上游间距、要么按中心距限宽**，App 侧硬放大是错的路子。
+
+---
+
+## 一键全部已读对抗组（QA-A20~A24，v1.32.9 新增）
+
+> 这组全部由 `verify\qa-markallread.ps1` 驱动（模式名写在每条步骤里），取证口径与硬事实见 **QA-C09 的备注块**（uiautomator 在 MainActivity 必挂、坐标走 `dumpsys activity top`、toast 走 `dumpsys notification` Toast Queue、prefs/dump 走设备侧 redirect+pull）。
+> ID 说明：A17/A18/A19 已在 `qa-round-driver.mjs` 与 v1.32.7/v1.32.8 报告、STATUS-task19 里占用（A19=命中区几何审计常驻用例），所以本组从 **A20** 起。
+
+### QA-A20 一键全部已读之后新推一条必须仍是未读
+- **场景**: 用户刚清完未读，桌面 DSH 又交付一个任务——新消息绝不能被"已读态"粘连。
+- **前置**: `qa-markallread.ps1 -Mode newmsg`（先跑完 core 序列，再补推 1 条 `qa-` 消息）。
+- **步骤**:
+  1. core 序列跑完（全部已读、按钮已隐藏）后脚本自动补推第 3 条 `qa-` 消息
+  2. prefs：新条目 `read=false`；未读数回到 **1**
+  3. `dumpsys activity top`：状态卡里 pill **重新可见**
+  4. `screencap` → `read_image`：「● 1 条未读」行重新出现、新卡片不淡化、其余卡片仍淡化
+- **预期**: 新消息独立未读；pill 随未读数重新出现；已读过的旧卡片保持淡化不回亮。
+- **实际**: 2026-10-13 20:43 `-Mode newmsg`（tag qa-newmsg1791924227）：core 序列全绿后补推 1 条 → 新条目 `read=false`、未读数=1、`dumpsys activity top` 里 pill 重新可见；肉眼判 late 截图：「● 1 条未读」重现、pill 重现、新卡片带蓝点不淡化带「已读」钮、旧卡片保持淡化。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-newmsg-late.png`（1.16MB 肉眼判全对）；`acttop-qa-newmsg1791924227-late.txt`（pill 重现）；`prefs-qa-newmsg1791924227-*.xml`
+
+### QA-A21 一键全部已读不得改动 answered/__expired 徽章态
+- **场景**: 已答/已过期的卡片带「已答：xxx」「已过期」徽章；一键已读只该动 read 字段，把徽章洗掉就是越权。
+- **前置**: `qa-markallread.ps1 -Mode answered`（推 1 条提问 + 监督者代答回声 → 条目 answered 非空且 read=false，是唯一未读）。
+- **步骤**:
+  1. tap 前记下该条目 `answered` 原文（含监督者前缀）
+  2. 点「全部已读」
+  3. prefs：`answered` 字段**逐字节不变**；徽章 pill 文案不变（截图肉眼）
+  4. 顺带覆盖 __expired：`-Mode inapp` 里选项作答产生的 `answered="__expired"` 条目在截图里徽章仍是「已过期」
+- **预期**: read 翻 true、answered/徽章原样；卡片淡化态与徽章共存不冲突。
+- **实际**: 2026-10-13 20:44 `-Mode answered`（tag qa-answered1791924270）：tap 前 answered=「【监督者自动唤醒】 qa proxy」且 read=false；tap 后 `answered` **逐字节不变**（脚本 `-eq` 对照，中文经 UTF-8 stdout 捕获链路无损）、read=true；`-Mode inapp`（tag qa-inapp1791924337）里 `answered="__expired"` 条目截图徽章仍是「已过期」且卡片同时淡化（共存不冲突）。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-answered-before.png` / `qa-answered-after.png`；`qa-inapp-opttap.png`（「已过期」徽章入镜）；`prefs-qa-answered1791924270-*.xml`
+
+### QA-A22 监督者代答（read=false）应被一键全部已读翻成已读
+- **场景**: v1.28.0 起监督者代答保持未读（用户没亲眼见过）；Lead 拍板：用户明确点了「全部已读」= 看过，所以这些也要翻已读。
+- **前置**: 同 QA-A21 的 answered 模式（监督者回声条目就是唯一未读）。
+- **步骤**:
+  1. tap 前 prefs：该条目 `answered` 以「【监督者自动唤醒】」开头且 `read=false`（qa-readstate 两分支之一，先确认没回归）
+  2. 点「全部已读」→ prefs：该条目 `read=true`
+  3. toast N 必须把这条**计入**（判定 `!optBoolean("read",true)` 与 refresh() 一致）
+- **预期**: 监督者代答未读被翻已读；未读行消失；若这条没被翻（或 toast N 少算）= 判定口径与 refresh() 不一致，P1。
+- **实际**: 同 `-Mode answered` 轮（tag qa-answered1791924270）：tap 前该条目 answered 以「【监督者自动唤醒】」开头且 read=false（qa-readstate 分支 B 当日也全绿，无回归）；tap 后 read=true；toast N=2 把这条计入（tap 前未读=2 一致）。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-answered-after.png`（未读行消失、该卡淡化但徽章保留）；`notif-qa-answered1791924270-qa-answered-after.txt`（toast N=2）；`prefs-qa-answered1791924270-*.xml`
+
+### QA-A23 「全部已读」连点两次幂等
+- **场景**: 用户手抖连点，或点完没反应又补一下。
+- **前置**: `qa-markallread.ps1 -Mode doubletap`（core 序列 + 同坐标补第二下）。
+- **步骤**:
+  1. 第一下后 pill 应已隐藏 → 第二下落在 statusText/卡片空白处
+  2. 第二次 tap 后 `dumpsys notification`：**不得出现 N=0 的新 toast**（出现=按钮没隐藏，P1）
+  3. prefs：仍全部 read=true（无重复写坏）；`pidof` 进程仍在（不崩）
+- **预期**: 幂等；第二次点击无副作用。
+- **实际**: 2026-10-13 21:00 `-Mode doubletap`（tag qa-doubletap1791925215，Dump-Notif 修复后复跑）：第一下后 pill 隐藏；同坐标第二下后 `dumpsys notification` **无 N=0 toast**（toastN=-1，真实内容断言）；prefs 仍全部 read=true；`pidof` 进程存活 pid=13626。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-doubletap-after.png`（1.24MB 肉眼判：全部淡化、pill 隐藏、toast「已全部标为已读（2 条）」入镜）；`notif-qa-doubletap1791925215-tap2.txt`（无 N=0 toast）；`prefs-qa-doubletap1791925215-qa-mard-prefs-tap2.xml`
+
+### QA-A24 未答提问的通知被撤后，App 内卡片选项按钮仍可作答且回声正常
+- **场景**: 一键全部已读会连未答提问的通知一起撤掉（Lead 拍板）；但提问本身还活着——用户之后从 App 卡片上点选项必须还能作答，不能因为"通知没了"就断链。
+- **前置**: `qa-markallread.ps1 -Mode inapp`（推 1 条带 `#opts q0=optA|optB` 的提问，callId 用不存在的 qa- 串 → 提交必 404 → 落 `__expired`，不碰真实会话）。
+- **步骤**:
+  1. tap「全部已读」→ `dumpsys notification`：该提问的通知 nid 消失（未答提问通知也撤）
+  2. `dumpsys activity top`：卡片里 optA 选项 pill 仍在（已读只淡化不禁用）→ `input tap` 真点
+  3. prefs：该条目 `answered="__expired"`（提交链路活着）
+  4. toast：`TextToastRecord` 出现「这个问题已经过期了」（回声通道活着）
+- **预期**: 撤通知 ≠ 撤作答能力；选项点击仍能提交并得到正确回声。
+- **实际**: 2026-10-13 20:45 `-Mode inapp`（tag qa-inapp1791924337）：tap「全部已读」后该提问通知 nid=1579278699 从 dump 消失；`dumpsys activity top` 找到卡片 optA pill (418,1769) 580x192 并 `input tap` 真点 → prefs `answered="__expired"`（提交链路活着）；toast `TextToastRecord` 出现「这个问题已经过期了」（回声通道活着）；肉眼判截图：徽章「已过期」+ toast 入镜、卡片淡化。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-inapp-opttap.png`（1.25MB）；`notif-qa-inapp1791924337-qa-inapp-opttap.txt`（过期 toast）；`acttop-qa-inapp1791924337-opts.txt`（optA 坐标）；`prefs-qa-inapp1791924337-*.xml`
+
+### QA-A25 一键已读 cancel 一个早已不存在的通知 nid 必须静默无害（developer 移交角度）
+- **场景**: 消息通知早被用户划掉/点掉（AUTO_CANCEL），但 prefs 里该条仍 read=false；一键已读会对这个"不存在的通知" `nm.cancel(nid)`——Android 对不存在的通知是 no-op，但绝不能抛异常或写坏 prefs。
+- **前置**: 现网天然存在这种条目（夜间验收推的消息通知早已消失、prefs 仍 read=false）；`qa-markallread.ps1 -Mode core` 每次都会大面积命中这种条目。
+- **步骤**:
+  1. tap 前 prefs 里未读条目数 > `dumpsys notification` 里 dshpush 消息通知数（差集即"通知已不存在的未读条目"，天然覆盖）
+  2. 点「全部已读」
+  3. 断言：`pidof` 进程仍在（无崩溃）；tap 后 prefs 的 msgs **仍能整段 JSON 解析**（没写坏）；toast N 仍把这些条目计入
+- **预期**: 静默无害；崩溃或 msgs 解析失败 = P0/P1。
+- **实际**: 每轮 core 天然大面积命中（tap 前未读 3~6 条 vs dump 里 dshpush 消息通知仅 2~4 条，差集即"通知已不存在的未读条目"，如夜间监督遗留条目）；所有轮次断言：`pidof` 进程始终存活（pid=13626 全程未变）、tap 后 msgs 整段 JSON 仍可解析、toast N 把这些条目全部计入。
+- **结果**: PASS（core/newmsg/answered/doubletap/inapp/single 六轮顺带覆盖）
+- **证据**: 各轮 `[PASS] A25: app process alive...` / `[PASS] A25: msgs JSON still well-formed...` 日志 + `prefs-qa-*-after.xml`；差集证据见 `notif-qa-core1791925178-qa-core-after.txt`（通知数 < 未读条目数）
+

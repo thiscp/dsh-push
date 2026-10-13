@@ -110,3 +110,40 @@
 - **实际**: （待填）
 - **结果**: （待填）
 - **证据**: （待填）
+
+### QA-C09 一键全部已读（状态卡「全部已读」pill，v1.32.9）
+- **场景**: 用户攒了一堆未读（任务结束消息、提问回声），不想逐条点「已读」；状态卡片 statusText 下方有「全部已读」pill（仅未读>0 可见），点一下全部翻已读。
+- **前置**: v1.32.9+ 装机；`verify\qa-markallread.ps1 -Mode core` 自动推 2 条 `qa-` 前缀 + epoch 唯一串的未读消息（生产 topic，最少条数）。
+- **步骤**（断言四件套，脚本全自动）:
+  1. `powershell -File verify\qa-markallread.ps1 -Mode core`
+  2. **prefs**：tap 前 `run-as cat dshpush.xml` 数出未读 N（判定 `!optBoolean("read",true)`，与 refresh() 一致）；tap 后**全部条目 read=true、未读数=0**
+  3. **通知**：`dumpsys notification --noredact` 里自己两条消息的 `key=0|xyz.cpyh.dshpush|<nid>|null|` 消失（nid==mid）；**常驻服务通知 `key=0|xyz.cpyh.dshpush|2|null|` 仍在**（channel dsh_svc）
+  4. **toast**：与 tap **同一条远端命令链、中间隔 1 秒**的 `dumpsys notification` 出现 `Toast Queue:` → `TextToastRecord{... text=已全部标为已读（N 条）}`，N==tap 前未读数
+  5. **视觉**：tap 前后各一张 `screencap`+pull（>100KB），`read_image` 整页判：「● N 条未读」行消失、**所有**卡片淡化（alpha 0.6 视觉）、pill 自己隐藏、壁纸/立绘不被破坏
+- **预期**: 四件套全绿；未答提问的通知也被撤（见 QA-A24）；监督者代答的未读也被翻已读（见 QA-A22）；服务通知与 answered/__expired 徽章态不受影响。
+- **实际**: 2026-10-13 20:59 `-Mode core`（tag qa-core1791925178，v1.32.9/vc75/emulator-5554）：tap 前未读 4（含 2 条 qa-core + 2 条历史）；pill 中心 (1136,1324) 352x192；tap 后 prefs 未读=0、两条 read=true；两条消息通知 nid 在 tap+1s 的 dump 与 ~10s 后的 late dump 里都已消失（服务通知 id=2 始终在）；toast `TextToastRecord text=已全部标为已读（4 条）` N==tap 前未读 4；A25 顺带过（进程存活 pid=13626、msgs JSON 完好）。首轮（19:08）曾 3 条 FAIL，根因是**脚本抢跑**：`input tap` 注入即返回，0 延迟 dumpsys 抢在 App 处理前——加 1s 间隔后全绿（硬事实已钉进本用例备注与 README）。
+- **结果**: PASS（脚本断言 13/13 + 肉眼整页判前后两张均过）
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-core-before.png` / `qa-core-after.png`（1.1-1.25MB，肉眼判：「● N 条未读」行消失、pill 隐藏、全部卡片淡化、立绘完好，after 里 toast「已全部标为已读（4 条）」入镜）；`acttop-qa-core1791925178-before/after.txt`（pill 可见→消失的结构证据）；`notif-qa-core1791925178-qa-core-after.txt` / `-late.txt`（nid 撤销双时点）；`prefs-qa-core1791925178-*.xml`
+
+> **QA-C09 取证硬事实（2026-10 实测钉死，写脚本前必读；与 README「adb 与 APP 数据」同源）**：
+> 1. **MainActivity 上 `uiautomator dump` 必失败**（常驻呼吸/星闪动画挡住 idle，实测 11.4s 超时；`window_animator_scale=0` 也救不回来）→ 按钮坐标一律从 **`adb shell dumpsys activity top`** 视图层级解析：状态卡 = 消息列表 ScrollView 之前最后一个可见（flags 首字符 `V`）的 LinearLayout 兄弟，pill = 卡内第一个可见 clickable（flags 含 `C`）Button，bounds 是**相对父级**的要沿祖先累加成屏幕坐标。
+> 2. **toast 文案通道** = `dumpsys notification` 的 `Toast Queue:` / `TextToastRecord{... text=...}`，**只在 toast 存活期（~2s）可见** → 和 `input tap` 串同一条远端命令链、**中间隔 1 秒**（`input tap & ping -n 2 127.0.0.1 >nul & dumpsys notification --noredact`）：`input tap` 注入即返回，App 处理点击→cancel→toast 入队要 0.3~0.8s，0 延迟抢跑会「通知没撤 + toast 没弹」全假 FAIL（v1.32.9 首轮实测）。
+> 3. **prefs/dumpsys 走 ssh stdout 捕获**（job 里先 `[Console]::OutputEncoding=UTF8` 再解码，否则中文乱码假失败）；**远端命令里不放设备侧 `>`/`|`**——PS 5.1 递给 ssh 的内嵌引号会丢，远端 cmd 会抢走 `>`。PNG 才走 screencap 落盘+pull+scp。
+> 4. 设备 serial 以 `adb devices` 为准（现网 `emulator-5554`；`qa-readstate.ps1` 里写死的 5556 已过时）。
+> 5. 消息通知 id = `mid` = `(title+body+ts).hashCode()`；服务通知固定 id=2。
+> 6. **推送前必须先拉起 App**（`am start MainActivity`）：force-stop 后 WS 断开，ntfy 发了也没人听（developer 自测收尾常 force-stop，直接推会 40s 假「never arrived」）。
+
+### QA-C10 逐条「已读」按钮回归（v1.18.0 路径，v1.32.9 改动定向）
+- **场景**: v1.32.9 给状态卡加了「全部已读」pill，逐条「已读」按钮（`PushService.markRead`）是被改动邻居，必须证明没被牵连：只翻自己那一条、别人的未读/通知纹丝不动、不弹「已全部标为已读」toast。
+- **前置**: `verify\qa-markallread.ps1 -Mode single`（推 1 条未读，环境里已有其它未读条目时最有说服力——现网夜间监督条目天然提供）。
+- **步骤**（脚本全自动）:
+  1. tap 前 `dumpsys notification` 快照 + 记下其它未读条目及其 nid
+  2. `dumpsys activity top` 取第一卡片（=最新=自己）的「已读」按钮坐标，`input tap`
+  3. prefs：未读数只减 1、自己 read=true、其它未读条目仍 read=false
+  4. 通知：自己的 nid 状态**不变**（`markRead` 设计上不撤通知，v1.18.0 起如此——撤通知是 `markAllRead` 专属）；其它 nid 状态不变；服务通知仍在
+  5. toast：无「已全部标为已读」toast（toastN=-1）；pill 与其它未读行仍可见
+- **预期**: 只动自己；通知生命周期不变；无 toast。若逐条按钮撤了通知或弹了 toast = 改动越权，P1。
+- **实际**: 2026-10-13 20:59 `-Mode single`（tag qa-single1791925128）：tap 前未读 3（自己 + 夜间监督「⚠ 会话在跑长工具」+ qa28B 提问）；按钮 (304,1956) 352x192；tap 后未读 3→2、自己 read=true；自己 nid=1805901831 通知状态不变（pre/dump1 对照）；两条其它未读的 nid（387565073/1276874354）状态不变、条目仍 read=false；无 mark-all toast；pill+「● 2 条未读」仍可见。首轮曾 1 条 FAIL＝我预期写错（误要求逐条按钮撤通知），对照 `PushService.markRead` 源码确认设计后改为「状态不变」断言。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-single-before.png` / `qa-single-after.png`（肉眼判：自己卡片淡化且「已读」钮消失、其它未读卡保持蓝点+「已读」钮、pill 与未读行仍在、无 toast）；`notif-qa-single1791925128-pre.txt` / `-qa-single-after.txt`；`acttop-qa-single1791925128-before.txt`
+

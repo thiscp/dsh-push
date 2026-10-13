@@ -17,6 +17,13 @@ function Push([string]$title, [string]$msg, [int]$prio) {
 $rnd = Get-Random -Maximum 99999
 $cidA = "qa28a$rnd"; $cidB = "qa28b$rnd"
 
+# serial from adb devices (was hardcoded emulator-5556 - stale, see README known-pitfalls)
+$devOut = (cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""G:\Android\Sdk\platform-tools\adb.exe devices""") 2>&1 | Out-String
+$Serial = $null
+foreach ($l in ($devOut -split "`n")) { if ($l -match '^(emulator-\d+)\s+device') { $Serial = $Matches[1]; break } }
+if (-not $Serial) { "FAIL: no emulator device in adb devices"; exit 1 }
+"SERIAL: $Serial"
+
 Push "DSH 等你选择 [qa28A]" "测试A：普通文字作答应自动已读`n📱 作答: $Ntfy/answer/$cidA`n#qid q0" 4
 Start-Sleep 7
 Push "DSH 已答" "#ans $cidA 我自己打的字" 1
@@ -26,7 +33,7 @@ Start-Sleep 5
 Push "DSH 已答" "#ans $cidB 【监督者自动唤醒】用户未在期限内应答" 1
 Start-Sleep 7
 
-$raw = (cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""G:\Android\Sdk\platform-tools\adb.exe -s emulator-5556 shell run-as xyz.cpyh.dshpush cat /data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml""") 2>&1 | Out-String
+$raw = (cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""G:\Android\Sdk\platform-tools\adb.exe -s $Serial shell run-as xyz.cpyh.dshpush cat /data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml""") 2>&1 | Out-String
 $raw = $raw -replace '&quot;', '"' -replace '&amp;', '&'
 foreach ($pair in @(@($cidA, "A normal-answer"), @($cidB, "B supervisor-proxy"))) {
     $cid = $pair[0]; $name = $pair[1]
@@ -43,7 +50,7 @@ foreach ($pair in @(@($cidA, "A normal-answer"), @($cidB, "B supervisor-proxy"))
     }
 }
 
-(cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""G:\Android\Sdk\platform-tools\adb.exe -s emulator-5556 shell rm -f /sdcard/qa28.png & G:\Android\Sdk\platform-tools\adb.exe -s emulator-5556 shell screencap -p /sdcard/qa28.png & G:\Android\Sdk\platform-tools\adb.exe -s emulator-5556 pull /sdcard/qa28.png G:\Android\qa28.png""") 2>&1 | Out-Null
+(cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""G:\Android\Sdk\platform-tools\adb.exe -s $Serial shell rm -f /sdcard/qa28.png & G:\Android\Sdk\platform-tools\adb.exe -s $Serial shell screencap -p /sdcard/qa28.png & G:\Android\Sdk\platform-tools\adb.exe -s $Serial pull /sdcard/qa28.png G:\Android\qa28.png""") 2>&1 | Out-Null
 Remove-Item -Force F:\work\work_dsh\qa-shot-read.png -ErrorAction SilentlyContinue
 scp -o BatchMode=yes "$EmuUser@$EmuIp:G:/qa28.png" "F:\work\work_dsh\qa-shot-read.png" 2>&1 | Out-Null
 if (Test-Path F:\work\work_dsh\qa-shot-read.png) { "SHOT: F:\work\work_dsh\qa-shot-read.png" } else { "SHOT MISSING" }
