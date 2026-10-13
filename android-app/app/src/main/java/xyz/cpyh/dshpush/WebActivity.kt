@@ -194,16 +194,24 @@ class WebActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     hideError()
-                    // 窄屏（≤1023px）三处修补（v1.32.3）：
-                    //   ① 提问卡头部允许换行 + 问题文字占满整行。DSH Web 的卡头部是单行 flex
-                    //      (justify-content:space-between)，右侧按钮组 flex-shrink:0 且 nowrap，
-                    //      文字块是唯一可收缩项 → 一行放不下时被压成 width:0，汉字一列一字竖排。
-                    //   ② 侧栏改成浮层：中心列不再被 280px 侧栏压缩（DSH 自己在 1024px 以下会
-                    //      自动收起侧栏，但手机屏上手动展开后它不收缩，中心列只剩 132px）。
-                    //      展开态 position:fixed 盖在内容上、可滚动；点内容区自动收起。
-                    //   ③ 全部规则都放在 @media (max-width:1023px) 内 —— 桌面宽度布局零改动。
-                    // 选择器用 [class*=] 属性包含匹配，不硬编码 CSS-module 哈希；注入幂等
-                    //（先按 id 查重），并单独给监听器打标记，onPageFinished 多次触发不会重复挂。
+                    // 窄屏（≤1023px）修补（v1.32.5）：
+                    //   ① 提问卡头部允许换行 + 问题文字占满整行（同 v1.32.2 的做法，但只在窄屏生效）。
+                    //   ② 侧栏展开态改成浮层：中心列不被 280px 侧栏压缩，浮层盖在内容上、可滚动、
+                    //      点浮层之外的内容区自动收起。
+                    //   ③ 关键修复（v1.32.4）：把侧栏祖先链上的 backdrop-filter/filter/transform/contain
+                    //      中和掉，并让承载侧栏的 BynINW_sidebarCol overflow:visible。原因：本文件的玻璃化
+                    //      注入会给该列加 backdrop-filter:blur(12px)，而 backdrop-filter 会让元素成为
+                    //      fixed 后代的包含块 —— 于是 position:fixed 的浮层被锚定在那个 56px 宽、
+                    //      overflow:hidden 的网格列里，真机上只画出 56px 一条（getBoundingClientRect 仍
+                    //      报 280px，所以只量 computed style 会误判成好的）。
+                    //   ④ 展开态面板底色加到 92% 不透明（v1.32.5）：v1.32.4 去掉毛玻璃后，背后聊天文字会
+                    //      透上来和侧栏条目混在一起；bwPanelBg() 按当前 computed 色相把 alpha 调到 0.92
+                    //      （收起态/桌面宽度仍是毛玻璃的 0.45），并给展开态加 box-shadow 造层次。
+                    //      注意玻璃化注入用的是**内联** !important，优先级高于样式表，所以那一步必须
+                    //      跳过展开态面板（见下方 skipBg），中间不能只靠样式表压。
+                    //   ⑤ 全部规则限定在 @media (max-width:1023px)，桌面宽度零改动。
+                    // 选择器用 [class*=] 属性包含匹配，不硬编码 CSS-module 哈希；注入幂等（按 id 查重），
+                    // 监听器另有标记，onPageFinished 多次触发不会重复挂。
                     view?.evaluateJavascript(
                         "(function(){" +
                         "if(document.getElementById('bw-narrow-fix'))return;" +
@@ -212,22 +220,47 @@ class WebActivity : Activity() {
                         "[class*='mAtvLq_header']{flex-wrap:wrap!important}" +
                         "[class*='mAtvLq_headingBlock']{flex:1 1 100%!important;min-width:0}" +
                         "[class*='BynINW_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
+                        "[class*='BynINW_sidebarCol']{overflow:visible!important;backdrop-filter:none!important;" +
+                        "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
+                        "contain:none!important;will-change:auto!important}" +
                         "[class*='_2H3hWW_root']:not([class*='_2H3hWW_collapsed']){position:fixed!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
                         "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
-                        "box-shadow:0 8px 32px rgba(0,0,0,.28)!important}}\";" +
+                        "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}}\";" +
                         "document.head.appendChild(s);" +
+                        "function bwPanelBg(){var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                        "if(!sb)return;var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
+                        "getComputedStyle(sb).backgroundColor);if(!m)return;" +
+                        "var narrow=window.innerWidth<=1023;" +
+                        "var expanded=sb.className.indexOf('_2H3hWW_collapsed')<0;" +
+                        "var a=(narrow&&expanded)?0.92:0.45;" +
+                        "sb.style.setProperty('background-color'," +
+                        "'rgba('+m[1]+','+m[2]+','+m[3]+','+a+')','important');}" +
+                        "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
+                        "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
+                        "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                        "if(psb&&!window.__bwPanelBgObs){window.__bwPanelBgObs=1;" +
+                        "new MutationObserver(function(){bwPanelBg();})" +
+                        ".observe(psb,{attributes:true,attributeFilter:['class']});" +
+                        "window.addEventListener('resize',function(){bwPanelBg();});}" +
                         "if(window.__bwPanelClose)return;window.__bwPanelClose=1;" +
                         "document.addEventListener('pointerdown',function(e){" +
                         "if(window.innerWidth>1023)return;" +
                         "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
                         "if(!sb||sb.className.indexOf('_2H3hWW_collapsed')>=0)return;" +
-                        "if(e.clientX<=280)return;" +
+                        "var r=sb.getBoundingClientRect();" +
+                        "if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return;" +
                         "var b=document.querySelectorAll('button');" +
                         "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
                         "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0){b[i].click();return;}}" +
                         "},true);})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
+                    // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
+                    // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
+                    // 大容器先 transparent 再被 45% 覆盖，frame/中心列/包裹层每层 45% 白
+                    // 叠成 ~91% 白，壁纸整个消失（真机+模拟器都复现，只看面板截图没看出来）。
+                    // 注意（v1.32.4）：BynINW_sidebarCol / BynINW_frame 上不加 backdrop-filter ——
+                    // 它会让该元素成为 fixed 后代的包含块，把窄屏侧栏浮层锚死在被裁剪的网格列里
                     // + 毛玻璃模糊，壁纸全程可见且文字清晰；CSSOM 写内联样式（页面 CSP
                     // 拦动态 style 标签），MutationObserver 让后渲染的元素也自动玻璃化，
                     // 纱罩深浅按网页文字亮度自动选（深色页配深纱、浅色页配白纱）
@@ -247,11 +280,15 @@ class WebActivity : Activity() {
                         "if(!m)continue;if(m[4]!==undefined&&+" +
                         "parseFloat(m[4])<1)continue;" +
                         "var w=e.offsetWidth,h=e.offsetHeight;" +
-                        "if(w>vw*0.5&&h>vh*0.5)e.style.setProperty(" +
-                        "'background-color','transparent','important');" +
-                        "else{e.style.setProperty('background-color','rgba('+" +
+                        "var cn=(e.className||'').toString();" +
+                        "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
+                        "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
+                        "if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
+                        "'background-color','transparent','important');}" +
+                        "else if(!skipBg){e.style.setProperty('background-color','rgba('+" +
                         "m[1]+','+m[2]+','+m[3]+',0.45)','important');" +
-                        "if(w>vw*0.08&&h>vh*0.03){" +
+                        "if(w>vw*0.08&&h>vh*0.03&&" +
+                        "!(/BynINW_(sidebarCol|frame)/.test(cn))){" +
                         "e.style.setProperty('backdrop-filter','blur(12px)'," +
                         "'important');e.style.setProperty('-webkit-backdrop-" +
                         "filter','blur(12px)','important');}}}" +

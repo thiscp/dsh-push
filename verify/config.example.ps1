@@ -2,7 +2,7 @@
 # Copy to config.local.ps1 and fill in. Values here override script param defaults
 # (but also override same-named command-line args - keep this file as the single source).
 # Rule: reach devices over their Tailscale IP, never over LAN. LAN addresses drift (a laptop
-# went <lan-laptop> -> 192.168.1.6) and its firewall drops new connections to the LAN address,
+# went <lan-laptop> -> <lan-laptop>) and its firewall drops new connections to the LAN address,
 # so ssh/scp just time out. Tailscale fixes both. Keep the LAN IP only as a documented fallback.
 $EmuIp       = "<tailnet-laptop>"           # emulator host = the LAPTOP, by tailscale IP (fallback: LAN <lan-laptop>)
 $EmuUser     = "user"                    # ssh user on emulator host

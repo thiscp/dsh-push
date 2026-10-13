@@ -11,7 +11,7 @@
 # HARD FACTS baked into this script (all paid for in blood; see verify/README.md):
 #  * EVERY ssh/scp carries "-o BatchMode=yes -o ConnectTimeout=10". A stale host address must
 #    fail in ~10 seconds. 2026-10-13: a stale LAN IP (<lan-laptop> - the laptop had drifted to
-#    192.168.1.6) made the 3rd ssh sit there for 34 minutes printing nothing.
+#    <lan-laptop>) made the 3rd ssh sit there for 34 minutes printing nothing.
 #  * EVERY child process runs under a watchdog: per-step timeout + a whole-pipeline budget.
 #    On timeout the script prints which step / which command / what error and exits non-zero.
 #    Run "-WatchdogSelfTest" to prove the watchdog really kills and exits (see the report).

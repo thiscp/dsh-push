@@ -212,7 +212,9 @@ if (-not (DevicePresent)) {
   `$avd = "`$env:USERPROFILE\.android\avd\dsh-p16.avd"
   Remove-Item "`$avd\hardware-qemu.ini.lock" -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item "`$avd\multiinstance.lock" -Recurse -Force -ErrorAction SilentlyContinue
-  schtasks /Run /TN dsh-emu-sw | Out-Null
+  # dsh-emu is the real-GPU task (it works when the laptop has a console session; the sw
+  # variant exists for non-interactive sessions). Never run both.
+  schtasks /Run /TN dsh-emu | Out-Null
   for (`$i=0; `$i -lt 60; `$i++) { Start-Sleep 4; if (DevicePresent) { break } }
 }
 & `$adb root | Out-Null

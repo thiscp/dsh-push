@@ -460,7 +460,7 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 - **THEN** 仍打开该卡片推送来源的链接，行为与 v1.28 一致
 
 ### Requirement: 内置浏览器提问卡窄屏防塌陷
-应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载。补丁 SHALL 包含三条规则：①提问卡头部允许换行（`flex-wrap:wrap`），使右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下时落到下一行；②提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）；③窄屏会话侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），且侧栏展开态 SHALL 以浮层形式呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态 SHALL 回到 DSH 自身的 56px 图标轨道且只显示图标、不残留被裁的会话标题文字。窄屏展开侧栏时，点击内容区（浮层之外）SHALL 触发收起。该样式 SHALL 用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底选取，MUST NOT 硬编码完整哈希类名。注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。
+应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载。补丁 SHALL 包含三条规则：①提问卡头部允许换行（`flex-wrap:wrap`），使右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下时落到下一行；②提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）；③窄屏会话侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），且侧栏展开态 SHALL 以浮层形式呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态 SHALL 回到 DSH 自身的 56px 图标轨道且只显示图标、不残留被裁的会话标题文字。窄屏展开侧栏时，点击内容区（浮层之外）SHALL 触发收起。该样式 SHALL 用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底选取，MUST NOT 硬编码完整哈希类名。注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。补丁 SHALL 同时中性化承载侧栏的网格列（`BynINW_sidebarCol`，以及 `BynINW_frame`）上的包含块触发属性：`backdrop-filter`/`-webkit-backdrop-filter`/`filter`/`transform`/`contain`/`will-change` SHALL 被置为 none/auto，该列 SHALL `overflow:visible`，使 `position:fixed` 的侧栏浮层相对视口而非该 56px 列定位、MUST NOT 被其裁剪；玻璃化注入 MUST NOT 再给这两个容器写 `backdrop-filter`（内联 `!important` 的优先级高于补丁样式表）。「点击内容区收起」的判定 SHALL 依据浮层的实际矩形（点落在浮层矩形内 MUST NOT 触发收起），MUST NOT 依赖硬编码的宽度阈值。
 
 #### Scenario: 手机窄屏下提问卡文字横排可读
 - **WHEN** 用户在手机 App 内置浏览器里打开含待答提问卡的 DSH Web 页面（视口约 412 CSS px）
@@ -481,3 +481,49 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 #### Scenario: 重复加载不重复注入
 - **WHEN** 同一 WebView 内页面反复加载（onPageFinished 多次触发）
 - **THEN** 页面里只存在一个补丁 `<style>` 节点、事件监听只挂一次，样式与行为保持一致
+
+#### Scenario: 展开的侧栏在真机渲染上不被裁剪
+- **WHEN** 用户在窄屏 App 内置浏览器里真点击展开侧栏，并用设备截图查看
+- **THEN** 侧栏以完整 280px 宽度盖在内容上，会话标题完整可读、无被裁碎片；且截图时刻 DOM 复核显示侧栏为展开态（`position:fixed`、可见宽度 280px、承载列为 `backdrop-filter:none` + `overflow:visible`）
+
+#### Scenario: 点浮层之外的区域才收起
+- **WHEN** 侧栏浮层展开占用 x∈[0,280]，用户点在浮层矩形内 / 浮层之外
+- **THEN** 点在浮层矩形内不收起；点在浮层之外的内容区才收起并回到图标轨道
+
+### Requirement: 配对载荷导入
+
+App SHALL 支持以**一份配对载荷**完成推送通道配置，载荷 schema SHALL 与
+`deploy/relay-user-add.sh` / `dsh-push-pair` 输出的对象一致：
+`{v, relay, host, topic, writeToken, readToken, hostToken}`（`v` 为 1）。App 侧只使用其中的
+`relay`（服务器基址）、`topic`（订阅主题）、`readToken`（订阅凭据）三项；`host` 与 `hostToken`
+属主机侧、App MUST NOT 使用，`writeToken` MUST NOT 被 App 使用（只写权限，拿它也发不出通知）。
+导入入口 SHALL 至少支持"粘贴 JSON 文本"，并在存在系统扫码/文件选择能力时支持"扫码"或"选文件"；
+导入成功后 SHALL 写回既有配置键（ntfy 基址 / topic / 读令牌），使既有的订阅、常驻通知与通知栏
+直达作答逻辑无需改动即可工作。载荷非法（非 JSON、`v` 不是 1、缺 `relay`/`topic`/`readToken` 任一项）
+时 App SHALL 拒绝导入并给出可读原因，MUST NOT 写坏既有配置。
+
+#### Scenario: 粘贴载荷完成配置
+
+- **WHEN** 用户在 App 里粘贴一份合法配对载荷并确认
+- **THEN** App 写入 relay 基址、topic 与读令牌，立即（或下一次连接时）以该 topic 订阅成功，
+  随后主机发出的 `DSH 等你选择 […]` / `DSH 任务结束 […]` 通知照常到达
+
+#### Scenario: 手填路径保持可用
+
+- **WHEN** 用户不用导入，仍按现有方式手填基址/topic/令牌
+- **THEN** 行为与导入前完全一致（导入是新增路径，不是替换）
+
+#### Scenario: 载荷不含 App 不需要的令牌
+
+- **WHEN** 载荷里带 `hostToken` 或 `writeToken`
+- **THEN** App 忽略这两项，不落盘、不使用、不显示（避免把只写令牌或队列令牌带到手机侧）
+
+#### Scenario: 非法载荷拒绝导入
+
+- **WHEN** 粘贴内容不是 JSON、`v` 不是 1、或缺少 `relay`/`topic`/`readToken`
+- **THEN** App 提示缺哪一项并保留原有配置不变
+
+#### Scenario: 导入即可替换旧通道
+
+- **WHEN** 用户从旧通道（手工配置、`topic: dsh`）导入一份新的每用户载荷
+- **THEN** 新配置整体生效（同一份配置只指向一个 topic），不会同时订阅两个 topic 造成重复通知

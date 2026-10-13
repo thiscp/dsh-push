@@ -84,14 +84,14 @@ powershell -File verify\dsh-app-verify.ps1
 - **模拟器默认订阅生产 topic `dsh` + 生产读令牌 = 镜像真手机的全部推送**（方便对照），但作答路由会被模拟器抢走。
 - **模拟器订阅哪个 topic 是编译期常量**（`PushService.kt` 的 `WS_URL = wss://ntfy.cpyh.xyz/dsh/ws`，prefs 里没有覆盖口），
   `-Topic` 只改发布端 —— 换测试 topic 时模拟器收不到，`push-received`/`mid-unique`/`entry-unread` 三项必然 FAIL；
-  而现网 ntfy 已到 topic 总数上限，新建 topic 直接 `429 {"code":42904,...limit reached...}`。要跑出全绿只能用
+  **2026-10-13 更正**：ntfy 的 `global-topic-limit` 已由 5 提到 **50**，但上限只是**第二道门** —— 本机 `auth-default-access: deny` 且逐 topic 精确授权，所以对任何新 topic 发消息一律 **403 forbidden(40301)**（与上限无关）；要跑测试 topic 得先显式授权一个专用 topic：`docker exec ntfy ntfy access <user> <topic> write-only`（订阅方再加 `read-only`），现网已备好 `dsh-verify`（dshpub 写 / dshphone 读）。不加授权就只能
   `-Topic dsh`（代价：手机收到一条 `auto-verify <epoch>` 测试推送，不是 APK 更新通知）。
 - 推送正文里别放和断言正则冲突的字样（本项目 mid 断言曾被正文里的 "mid" 字样干扰）
 
 **连模拟器机（笔电）**
 - **规则：设备访问一律走 Tailscale 固定 IP，不用 LAN 地址。** 笔电用 `ssh user@<tailnet-laptop>`（同一台机，hostname
   仍是 `DESKTOP-CPYH`）最稳；判断"是不是这台笔电"用 `ssh user@<tailnet-laptop> hostname`，别靠 IP。
-- **LAN 地址有两个坑，都会让 ssh/scp 静默超时**：① **会漂** —— 2026-10-13 从 `<lan-laptop>` 漂到 `192.168.1.6`，
+- **LAN 地址有两个坑，都会让 ssh/scp 静默超时**：① **会漂** —— 2026-10-13 从 `<lan-laptop>` 漂到 `<lan-laptop>`，
   `config.local.ps1` 里的旧值把夜间验收直接打成 SKIP；② **新连接被防火墙拦** —— `ssh user@<lan-laptop>` →
   `Connection timed out`（实测）。地址写错代价很大：那次流水线在第三次 ssh 处静默挂了 **34 分钟**才被人收口，
   所以现在每条 ssh/scp 都带 `-o ConnectTimeout=10` + 看门狗兜底。
@@ -99,19 +99,77 @@ powershell -File verify\dsh-app-verify.ps1
   `LastTaskResult=1`。改跑 `dsh-emu-sw`（`-gpu swiftshader_indirect`）立刻能起；强杀过模拟器先清
   `%USERPROFILE%\.android\avd\dsh-p16.avd\{hardware-qemu.ini.lock,multiinstance.lock}`。
   **别在这台笔电上 `Get-Process chrome|Stop-Process` 之类的广域杀进程**——会连带把 adb/模拟器搞没。
+  **2026-10-13 修正（真 GPU 可用）**：笔电有**登录着的 console 会话**时，`dsh-emu`（`-gpu host`）能正常起 ——
+  实测 24 秒 boot_completed=1、`screencap` 墙钟 **767ms**（软件渲染要几秒甚至挂死）。所以**别无条件换 sw**：
+  先试 `dsh-emu`，崩了再退 `dsh-emu-sw`；而且**别在别人用真 GPU 跑的时候自己切模式**（会毁掉"真 GPU 能否稳住"的观测）。
+- **笔电重启后 `sshd` 不会自启**（"远程进不去"的头号原因）：先让用户执行
+  `Set-Service sshd -StartupType Automatic; Start-Service sshd`，否则一切 ssh/scp 都是 `Connection timed out`。
+- **`adb devices` 看到设备 ≠ 客机健康（这条决定你重试逻辑的顺序）**：客机"框架半死"时 `adb devices -l` 照样
+  列出 `emulator-5554  device`，但**每条 `adb shell` 都会永久挂住**（`getprop`/`cmd wifi status`/`ps -A` 全无输出；
+  宿主上还会越堆越多的卡死 adb 客户端）。踩过：重试脚本把"设备在不在"当第一判据、冷启动兜底排在它后面，
+  于是**被循环开头的第一个 `adb devices` 卡死**，日志里只有 `=== attempt 1 ===` 一行、什么都没干成。
+  正确姿势：**每个 adb 调用都要带超时**，并且**第一步就做活性判据**——用带 10s 预算的 `adb shell echo ok`
+  （例如 `Start-Job` + `Wait-Job -Timeout 10`），不活就直接上报/冷启动，别去调 `adb devices` 当健康检查。
 
 **WebView 远程调试（量 HTML 布局、点 DOM、驱动应用内浏览器）**
 - 应用内浏览器（WebActivity）没导出，`am start -n xyz.cpyh.dshpush/.WebActivity --es url <url>` 就能开；
-  之后 `adb shell cat /proc/net/unix | findstr webview_devtools_remote` 拿到 pid，
-  `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`，在这**笔电本机**用 CDP 驱动
+  socket 名 = `webview_devtools_remote_<应用 pid>`（pid 用 `adb shell pidof xyz.cpyh.dshpush` 取，见下条），
+  然后 `adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`，在这**笔电本机**用 CDP 驱动
   （`adb forward` 规则在模拟器宿主上，所以 CDP 客户端必须在宿主跑，不能从台式机直连 9222）。
+- **`/proc/net/unix` 的路径列会被截断**（显示成 `..._remote_3`），**不要从那里解析 socket 名**：
+  名字就是 `webview_devtools_remote_<应用 pid>`，用 `adb shell pidof xyz.cpyh.dshpush` 取 pid 再拼，
+  否则 forward 指向不存在的名字，CDP 会报 `other side closed`。
 - **devtools socket 只在应用加载过页面后存在**：`am start` 之后要轮询等（约 25s），否则报
   `no webview devtools socket`。`adb root` 会重启 adb server 并清掉 forward，所以顺序必须是
   root → 启动 → 等 → forward。
 - 手机横屏/竖屏下 WebView 的逻辑视口就是设备宽度（实测 **412 CSS px**，dpr 2.625），而 v1.9.8 起
   UA 去掉了 `" Mobile"` —— 即"桌面版渲染 + 412px 视口"。这是提问卡/侧栏窄宽度排版问题的前提条件。
+- **`Input.dispatchMouseEvent` 的坐标是网页视口坐标，`adb shell input tap` 的坐标是屏幕坐标**：
+  应用自己在 WebView 上面画了一条标题栏，所以屏幕坐标要加上那条高度才会落在页面上（实测直接拿
+  DOM rect 去 `input tap` 会点空）。要么用 CDP 的 Input 事件，要么先量出 WebView 的屏幕偏移。
 - 现成脚本：`powershell -File verify\card-layout-verify.ps1 -DshWebUrl <带 token 的 URL>` 会在模拟器上装机、
   开应用内浏览器、进会话、量提问卡并把 `card-layout.png` + `card-layout-report.json` 拉回本机并打印 PASS/FAIL。
+  没有待答卡时（问题已被作答/过期）它会退化成"用真 CSS 类名复刻一张卡"再量，报告里 `cardSource` 注明来源。
+
+**改应用注入 JS（Kotlin 里内嵌 JS）——两层转义，必须抽出来校验**
+- `WebActivity.onPageFinished` 里的注入是一堆 **Kotlin 字符串拼接出来的 JS**，所以**每个反斜杠都要按两层算**：
+  Kotlin 源码写 `\\d` → JS 里才是 `\d`。踩过：正则写成 `\\\\d`（Kotlin 4 个反斜杠）→ JS 收到 `\\d` ==
+  **匹配字面反斜杠 + d**，`exec()` 返回 null，函数**静默 return**（面板底色没生效，没有任何报错）。
+- 校验办法（改完注入 JS 必跑）：把 `.kt` 里那段 `evaluateJavascript(...)` 的**双引号字符串抽出来、按 Kotlin 规则
+  反转义（`\\`→`\`、`\"`→`"`）拼成一个 `.js`，再 `node --check` 它（`tmp\extract-patch.mjs` 就是这么做的）。
+  顺便核对关键正则的反斜杠个数：源码里应是**两个**反斜杠而不是四个。
+- 另一条同源坑：**内联 `!important` 优先级高于样式表 `!important`**。所以想让样式表规则赢，必须让写内联样式的那段
+  注入**主动让开这个元素**（例如玻璃化那步加 `skipBg`），光靠 `!important` + 更高特异性压不住。
+
+**验收纪律：肉眼截图是硬门槛，computed style 不算数（2026-10-13 翻车教训）**
+- **`getComputedStyle` 说 `position:fixed` + `width:280px`，跟"实际画出来只有 56px 宽被裁"可以同时成立。**
+  踩过的实例：玻璃化注入给 `BynINW_sidebarCol`（56px 宽网格列、`overflow:hidden`）加了
+  `backdrop-filter:blur(12px)`，而 `backdrop-filter`/`filter`/`transform`/`contain` 会让该元素成为
+  **fixed 后代的包含块** → 那条 fixed 侧栏浮层被锚死在 56px 列里再被裁掉；`getBoundingClientRect()`
+  仍报 280px，所以只量样式/矩形会误判为"好的"，而真机/截图里只有一条碎片。
+- **CDP 的 `Page.captureScreenshot` 拍不出这种裁剪**（同一时刻 `adb screencap` 拍得到）。
+  判断"渲染对不对"必须用 **`adb screencap`（或 `adb exec-out screencap -p > file`）**，然后 **自己 `read_image`
+  看那张图**。顺带一条：`cmd /c "adb exec-out screencap -p > file"` 偶尔产出 0 字节文件，
+  稳妥写法是 `adb shell screencap -p /data/local/tmp/x.png` + `adb pull`，并且**校验文件大小 >100KB**。
+- **截图必须和状态复核绑定**：真点击之后**立刻**截图，并在同一时刻用 CDP 复核 DOM 状态
+  （展开/收起、可见宽度）。否则会出现"点击成功 → 应用被网络回连触发 reload → 截图拍到回到轨道"的空欢喜。
+- 给 fixed 后代做注入时：不要给它的**祖先链**加 `backdrop-filter`/`filter`/`transform`/`contain`；
+  非要用就得同时给那些祖先写 `backdrop-filter:none!important` 等中和规则 —— 注意**内联 `!important` 优先级
+  高于样式表 `!important`**，所以注入 JS 那边也要跳过这些容器，光写样式表压不住。
+- **截图要看整页壁纸，不能只盯改动的那块**（v1.32.6 教训）：主题壁纸是 WebView **后面**的原生 ImageView，
+  只有 `adb screencap` 拍得到（CDP 截图里网页透明处显示成白/黑，看不出壁纸）。v1.32.5 把玻璃化的
+  `if(大容器)transparent else {45%}` 重构成两个**非互斥**分支，大容器被 45% 白覆盖、多层叠加成 ~91% 白，
+  壁纸整个消失 —— 当时验收只看了面板区域就放行了。现成工具：`verify\gate-shot.ps1`（一次 ssh 内：
+  重启 WebActivity → 收起态截图 → CDP 点「Open sidebar」→ DOM 复核（大容器必须 `rgba(0, 0, 0, 0)`、
+  面板 280px/fixed/alpha）→ 展开态截图 → `screencap -p /sdcard` + `adb pull` 拉回本地），两张图都要 `read_image`。
+
+**装机 / 产物命名（别互相覆盖）**
+- **`adb install -r` 对版本降级会静默失败**（`INSTALL_FAILED_VERSION_DOWNGRADE`），旧版本不会被装上、
+  仍是新包 —— 做"旧版本对照"必须 `adb install -r -d <apk>`，并在装完后**打印
+  `dumpsys package <pkg> | findstr versionCode`** 证明装进去的到底是哪个版本。
+- **产物名带版本号**：编译脚本不要把输出写死成某个文件名（踩过：写死 `dsh-push-1322.apk`，
+  后面编 v1.32.3/v1.32.4 时把真正的 v1.32.2 包覆盖了，"旧版本对照"装到的其实是新包）。
+  统一用 `dsh-push-<versionName>.apk`。
 
 **web.log 里的 token 是活的，别用旧值**
 - `?token=` 每次 DSH 重启都换，`C:\Users\<user>\.dsh\web.log` 里**最后一条** `dsh web: http://...?token=` 才有效。
@@ -137,3 +195,58 @@ OriginOS 定制层行为：图标陈旧不刷新、后台被杀策略、深链�
 
 发布前先自证脱敏（不推远端）：`powershell -File verify\export-public.ps1 -DryRun` —— 只跑 scrub 映射 + 密钥闸门，
 逐条打印「哪个个人值被替换成了什么占位符」（IP 显示原值，token/用户名只显示计数），命中泄漏就非 0 退出、绝不静默放行。
+
+## 模拟器自愈与 GPU 回退阶梯（笔电 `DESKTOP-CPYH`，2026-10-13）
+
+笔电是模拟器机：`dsh-app-verify.ps1` 通过 ssh 过去、清 AVD 锁、起模拟器、装机、断言、截图。
+现在**不需要人介入**：计划任务 `emu-selfheal`（Interactive，开机 + 登录 + 每 5 分钟）与
+`emu-selfheal-svc`（**S4U**，同样的触发，只管 sshd）一起覆盖"有人登录/没人登录"两种情形，
+脚本是 `G:\Android\emu-selfheal.ps1`（ASCII，PS 5.1），判定结果全部写 `G:\Android\emu-ladder.log`。
+
+### 阶梯怎么走
+
+1. **sshd 自愈**：不在 Running 就 `Start-Service`，StartType 不是 Automatic 就顺手设成 Automatic。
+   （今天就是因为 sshd 没自启把所有人锁在门外；实测 `Stop-Service sshd` 后跑一次脚本 → `Running` 恢复。）
+2. **幂等**：已经有模拟器且 `adb shell` 能回话 → 只写一行 `already healthy`，什么都不动。
+3. **rung 1 = 真 GPU**（`-gpu host`），预算 90s；**rung 2 = 软件 GPU**（`-gpu swiftshader_indirect`），预算 240s。
+   判据是**客机真的起来**：`adb shell getprop sys.boot_completed` = 1 **且** `adb shell echo ok` 有回应
+   —— **`adb devices` 看得到 ≠ 客机健康**（`offline`/框架半死都会骗人）。
+4. **僵尸判定**：qemu 在、`adb shell` 连续 3×20s 不回话 → `taskkill /F /T`；10s 后还在（今天那种杀不掉的
+   qemu 僵尸）→ 日志写死 **"THIS MACHINE NEEDS A REBOOT"** 并推**一条** ntfy（这是这个脚本唯一会推的情况）。
+
+### 真 GPU 需要交互会话
+
+`-gpu host` 要一个带 GPU 上下文的 console 会话：有人登录着（`query session` 里 `console  <user>  Active`）时
+实测 **18s 起好**；`Interactive` 身份的 `dsh-emu` 任务在**没人登录时根本不会运行**，而以非交互身份跑
+`-gpu host` 会崩（`glTexImage2D 0x502`）。所以阶梯在检测到"没有交互会话"时**直接跳到 rung 2**（软件 GPU，
+`swiftshader_indirect` 冷启实测 24s），而不是白等 90s。
+
+### 踩坑：**锁住的日志文件会让 `run-emu.cmd` 秒退**
+
+2026-10-13 实测：某次强杀后 `G:\Android\emu-out.txt` / `emu-err.txt` 被一个"看不见的"进程占着
+（`Get-Process` 里没有 qemu/emulator，但 `[IO.File]::Open(...,'Append')` 报"文件正由另一进程使用"），
+于是 `run-emu.cmd` 那句重定向**打不开文件**，`cmd` **6 秒内 exit 1 且一个字节都没写** ——
+表现为"真 GPU 起不来"，看着像显卡问题，其实是文件锁。
+**阶梯因此不再走 `run-emu*.cmd`**：它自己注册一个一次性任务 `emu-ladder-rung` →
+`G:\Android\emu-ladder-rung.cmd`，把 GPU 模式与 AVD 名通过 `emu-ladder.gpu` / `emu-ladder.avd` 两个小文件传进去，
+日志写自己的 `emu-ladder-rung.log/.err`（不会撞锁）。`run-emu*.cmd` 保持原样不动
+（`20989215E6B5DB02DC777A2B517E67CF` / `BF80AC225A37A5C2F65F6E2898DD53C4`）。
+
+### 验收（2026-10-13 真跑，四条全过）
+
+| 项 | 证据 |
+|---|---|
+| a sshd 自愈 | `Stop-Service sshd` → `Stopped` → 跑脚本 → `sshd: Running -> Started (StartType=Automatic)` → `Running` |
+| b 真 GPU 阶梯 | 杀掉模拟器 → `no emulator process running` → `rung 1: real GPU` → `[host-gpu] boot_completed=1 and shell responsive after 18s` → `RESULT: host-GPU ladder OK in 18s (real GPU)`（qemu 命令行含 `-gpu host`，`adb devices` = device） |
+| c 回退 | 用 `-BreakHostRung`（把 rung 1 的 AVD 名换成不存在的名字）→ `[host-gpu] 6s: no qemu process -> attempt failed` → `rung 2` → `[sw-gpu] boot_completed=1 ... after 24s` → `RESULT: software-GPU fallback OK in 24s`；`run-emu*.cmd` md5 前后一致 |
+| d 幂等 | 健康时再跑 → 只写 `already healthy: guest responsive, boot_completed=1 -> nothing to do`，不杀不动 |
+
+### 手工用法
+
+```powershell
+# 笔电上（管理员）：
+powershell -NoProfile -ExecutionPolicy Bypass -File G:\Android\emu-selfheal.ps1     # 走阶梯
+powershell -NoProfile -ExecutionPolicy Bypass -File G:\Android\emu-selfheal.ps1 -SshdOnly   # 只保 sshd（S4U 兄弟任务用）
+Get-Content G:\Android\emu-ladder.log -Tail 20                                       # 看判定结果
+Get-ScheduledTask emu-selfheal,emu-selfheal-svc | Select TaskName,State              # 看两个任务
+```

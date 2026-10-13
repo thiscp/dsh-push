@@ -63,7 +63,7 @@
 
 1. **作答 = 注入一条带特殊 source 的用户消息**：`source = { kind: "user-question-reply", callId: <ask_user_question 的工具调用 id>, outcome: "answered" }`，content 是答案批（按 question id 配对）。host 侧 `agent/inbox/claimed` 按 `callId` 认领并唤醒等待的工具调用。
 2. **通道 = API Gateway 的一次性 RPC**：`connection.rpc.call('/api', <endpoint>, { args })`——HTTP POST 到 `/api`（Typert RPC，端点描述符是字符串，如 `session-controller.client.control`；session remote 命名空间含 `prompt` 方法）。**不需要常驻 WebSocket**。
-3. **鉴权**：401 Unauthorized / Forbidden（浏览器信任判定）；启动参数带 `--trusted-host <tailnet-work>/192.168.12.18/192.168.149.128/28.0.0.1`——**answer-relay 从 Tailscale 侧发起、源 IP 为 <tailnet-relay>（不在 trusted-host 里），需带 web token 或把阿里云 tailscale IP 加进 trusted-host**（二选一，实测定）。
+3. **鉴权**：401 Unauthorized / Forbidden（浏览器信任判定）；启动参数带 `--trusted-host <tailnet-work>/<vm-lan>/<vm-lan>/28.0.0.1`——**answer-relay 从 Tailscale 侧发起、源 IP 为 <tailnet-relay>（不在 trusted-host 里），需带 web token 或把阿里云 tailscale IP 加进 trusted-host**（二选一，实测定）。
 4. **已实证（任务 2.2，2026-10-10 17:45，tcpdump 抓包 + curl/Node 复现全通过）**：
 
    **鉴权**：`GET /?token=<tok>` → 303 + `Set-Cookie: dsh-auth-<...>`（签名、绑 Host）；此后所有 `/api/*` 带该 cookie。curl 用 `-c/-b jar` 即可。Host 头必须与签发时一致（走 3080 代理时 Host 天然保留）。
