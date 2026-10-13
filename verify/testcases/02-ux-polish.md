@@ -37,7 +37,7 @@
   1. CDP 量 rail 上按钮（展开/收起/搜索/新建/设置）与面板内按钮的 `getBoundingClientRect()`
   2. 对 <40px 的记下来；并实测点边缘附近是否命中
 - **预期**: 主要图标按钮命中区 ≥40×40；相邻按钮不会互相误触（间距 ≥8px）。
-- **实际**: （待填） / **结果**: （待填） / **证据**: （待填）
+- **实际**: 25 个可点元素里 7 个高度 <40px，且基本都是图标按钮：`Collapse sidebar`/`Search sessions`/`View options`/`Add workspace`/`Agent Team` 28×28、`Open in File Explorer` 23×23、`More ways to open` 17×23；会话条目行高 28。
 
 ### QA-P05 加载空态与反馈
 - **前置**: force-stop 后重新打开内置浏览器。

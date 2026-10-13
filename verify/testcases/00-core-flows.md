@@ -72,9 +72,9 @@
   3. CDP 点浮层右侧的内容区（x>280）
   4. `screencap` → `qa-C05-collapsed.png`；复核 `collapsed=true`、宽 55.6
 - **预期**: 展开是完整 280px 浮层、会话标题完整不被裁、背后文字不串上来；点浮层之外收起回 56px 图标轨道且无被裁碎片。
-- **实际**: （待填）
-- **结果**: （待填）
-- **证据**: （待填）
+- **实际**: 展开：`position=fixed`、`width=280`、`visibleW=280`、`bg=rgba(249,250,251,0.92)`、`shadow=rgba(0,0,0,.35) 0 8px 32px`、`patchCount=1`；点浮层之外 `collapsed=true`。截图：面板 280px 完整、条目与标题无被裁。
+- **结果**: PASS（附 P2：0.92 下背后正文仍有可见水印，见 QA-P03）
+- **证据**: tmp\shots\qa\qa-C05-expanded.png、qa-C05-collapsed.png
 
 ### QA-C06 会话切换
 - **场景**: 用户在侧栏里切到另一个会话再切回来。

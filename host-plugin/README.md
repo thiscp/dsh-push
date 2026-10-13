@@ -353,6 +353,10 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 通知层骨架的取舍（research 作者建议、本插件采用）：**监听器 prepend + `return next()`**，
 前台作答权留给 DSH Web UI —— 浏览器在线时体验与现在完全一致，插件只在旁边推通知。
 代价是"窗口期内的手机作答"必须等前台等待结束（timed 模式的 timeout，或 UI 作答）。
+实测（2026-10-13，台式机 c-full）：timed `timeout:180` 的提问，手机在 t+30s 经 relay 作答 →
+插件日志 `state=open` 排队重试 → t+180s 工具返回 `pending` → 提问进投影（continued）→
+下一轮 poll 立即 `answered (continued)` 折回会话。**手机优先的用户应打开 `claimForeground`**，
+否则每次手机作答都要白等剩余超时时间。
 打开 `claimForeground` 后插件会 hold 住 waterfall 并把手机答案与 UI 答案赛跑（谁先到谁生效），
 `mode: legacy`（无 timeout、永久阻塞）的问题也能被手机答，但它与 UI 抢答权，属于实验开关。
 
