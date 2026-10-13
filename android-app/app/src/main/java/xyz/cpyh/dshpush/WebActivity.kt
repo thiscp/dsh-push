@@ -11,6 +11,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -40,6 +42,19 @@ class WebActivity : Activity() {
     // 标题栏文字（v1.30.0）：随加载的链接刷新成「DSH 网页 · 实例名」
     private var titleView: TextView? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
+    // 网络感知（v1.32.8）：
+    //   offline     —— 默认网络丢失（onLost）；离线横幅按它显隐
+    //   retryAttempt—— 首连失败的退避计数（1s/2s/4s/... 封顶 30s），加载成功清零
+    //   retryPending—— 已排期的重试；手动重试/恢复成功时取消，避免双重加载
+    //   loadErrored —— 本次加载的主文档出错过（onPageFinished 对错误页也会触发，
+    //                  不能拿它当"成功"信号，必须靠这个旗标区分）
+    private var offline = false
+    private var retryAttempt = 0
+    private var retryPending: Runnable? = null
+    private var loadErrored = false
+    private val ui = Handler(Looper.getMainLooper())
+    // 最初那次 loadUrl 的地址：WebView 自己报不出可用地址时用它兜底（v1.32.8）
+    private var lastUrl: String = ""
     // 网页文件选择的回调（v1.19.0）：onActivityResult 里喂结果
     private var fileCb: ValueCallback<Array<Uri>>? = null
 
@@ -172,15 +187,22 @@ class WebActivity : Activity() {
                 override fun onPageStarted(
                     view: WebView?, url: String?, favicon: android.graphics.Bitmap?
                 ) {
+                    // 新的一次导航＝新的一次尝试：成败由回调重新判定（v1.32.8）
+                    loadErrored = false
+                    url?.let { if (it.startsWith("http")) lastUrl = it }
                     // 页内跳去别的机器（如下载链、跨实例链接）时标题跟着换（v1.30.0）
                     url?.let { applyInstanceLabel(it) }
                 }
 
-                // 主框架加载失败 → 人设错误页（v1.12.0）
+                // 主框架加载失败 → 人设错误页（v1.12.0）+ 退避自动重试（v1.32.8）
                 override fun onReceivedError(
                     view: WebView?, request: WebResourceRequest?, error: WebResourceError?
                 ) {
-                    if (request?.isForMainFrame == true) showError()
+                    if (request?.isForMainFrame == true) {
+                        loadErrored = true
+                        showError()
+                        scheduleRetry("onReceivedError")
+                    }
                 }
 
                 override fun onReceivedHttpError(
@@ -189,11 +211,24 @@ class WebActivity : Activity() {
                 ) {
                     if (request?.isForMainFrame == true &&
                         (errorResponse?.statusCode ?: 0) >= 500
-                    ) showError()
+                    ) {
+                        loadErrored = true
+                        showError()
+                        scheduleRetry("onReceivedHttpError")
+                    }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
+                    // 加载成功才清退避；错误页也会走到这里，所以要靠 loadErrored 区分（v1.32.8）
+                    if (loadErrored) {
+                        scheduleRetry("onPageFinished(error-page)")
+                    } else {
+                        retryAttempt = 0
+                        cancelRetry()
+                    }
                     hideError()
+                    // 断网期间页面重载过 → 横幅要重新挂上（页面 DOM 是新的）
+                    if (offline) showNetBanner()
                     // 窄屏（≤1023px）修补（v1.32.5）：
                     //   ① 提问卡头部允许换行 + 问题文字占满整行（同 v1.32.2 的做法，但只在窄屏生效）。
                     //   ② 侧栏展开态改成浮层：中心列不被 280px 侧栏压缩，浮层盖在内容上、可滚动、
@@ -486,7 +521,15 @@ class WebActivity : Activity() {
                 setTextColor(c(R.attr.dshAccent))
                 stateListAnimator = null
                 setPadding(dp(20), dp(8), dp(20), dp(8))
-                setOnClickListener { hideError(); web?.reload() }
+                setOnClickListener {
+                    // 手动重试＝兜底（v1.32.8）：取消已排期的退避、清零计数，避免和自动重试打架
+                    cancelRetry()
+                    retryAttempt = 0
+                    loadErrored = false
+                    hideError()
+                    val target = currentUrl()
+                    if (target.isNotEmpty()) web?.loadUrl(target)
+                }
             })
         }
         errorLayer = layer
@@ -502,6 +545,7 @@ class WebActivity : Activity() {
         val url = intent?.getStringExtra("url") ?: ""
         if (url.isEmpty()) { finish(); return }
         applyInstanceLabel(url)
+        lastUrl = url
         web?.loadUrl(url)
     }
 
@@ -533,16 +577,98 @@ class WebActivity : Activity() {
         errorLayer?.visibility = View.GONE
     }
 
-    /** 错误页显示期间网络恢复 → 自动重试（v1.12.0，API 24+） */
+    // ---- 网络感知（v1.32.8）------------------------------------------------------------
+    // 离线横幅：注入到网页 DOM 里（不是原生层），因为原生错误层只在"加载失败"时出现，
+    // 而断网时页面往往还好好儿地渲染着（WebSocket 断了、或用的是缓存），用户需要立刻看到提示。
+    // 命中区纪律（verify/TESTER.md 规则 6）：横幅 fixed 在顶部、z-index 最高，但 **pointer-events:none**
+    // —— 它压在页面头部一排图标按钮上时，点击事件照样穿透给下面的按钮（elementFromPoint 也返回按钮），
+    // 所以不会出现"看着能点、点了没反应"；这条要用 elementFromPoint + 真实输入双证来验。
+    private fun bannerJs(show: Boolean): String {
+        val id = "bw-net-banner"
+        return if (show) {
+            "(function(){var d=document.getElementById('$id');" +
+                "if(!d){d=document.createElement('div');d.id='$id';" +
+                "d.textContent='\u7f51\u7edc\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u7b49\u5f85\u6062\u590d\u2026';" +
+                "d.style.cssText='position:fixed;left:0;right:0;top:0;z-index:2147483000;" +
+                "background:rgba(18,24,40,0.92);color:#fff;font-size:12px;line-height:1.2;" +
+                "padding:8px 10px;text-align:center;pointer-events:none;font-family:inherit;" +
+                "box-shadow:0 2px 8px rgba(0,0,0,0.35)';" +
+                "(document.body||document.documentElement).appendChild(d);}" +
+                "d.style.display='block';return 1;})()"
+        } else {
+            "(function(){var d=document.getElementById('$id');if(d)d.remove();return 1;})()"
+        }
+    }
+
+    private fun showNetBanner() {
+        web?.evaluateJavascript(bannerJs(true), null)
+    }
+
+    private fun hideNetBanner() {
+        web?.evaluateJavascript(bannerJs(false), null)
+    }
+
+    /** 首连失败的退避重试：1s → 2s → 4s → 8s → 16s → 30s（封顶），成功后清零。 */
+    private fun scheduleRetry(why: String) {
+        if (retryPending != null) return
+        if (isFinishing || isDestroyed) return
+        val secs = when {
+            retryAttempt <= 0 -> 1
+            retryAttempt >= 5 -> 30
+            else -> 1 shl retryAttempt
+        }
+        val r = Runnable {
+            retryPending = null
+            if (isFinishing || isDestroyed) return@Runnable
+            val target = currentUrl()
+            if (target.isEmpty()) return@Runnable
+            retryAttempt += 1
+            loadErrored = false   // 本次尝试成败由回调重新判定
+            web?.loadUrl(target)
+        }
+        retryPending = r
+        ui.postDelayed(r, secs * 1000L)
+    }
+
+    private fun cancelRetry() {
+        retryPending?.let { ui.removeCallbacks(it) }
+        retryPending = null
+    }
+
+    /** 当前该重载的地址：优先 WebView 正在用的 http(s) 地址，退化到最初那次 loadUrl。 */
+    private fun currentUrl(): String {
+        val u = web?.url ?: ""
+        if (u.startsWith("http://") || u.startsWith("https://")) return u
+        return lastUrl
+    }
+
+    /** 网络状态变化（v1.32.8）：断网 → ≤2s 出横幅；恢复 → 撤横幅，且页面处于断开态就自动重载。 */
     private fun watchNetwork() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
             ?: return
         val cb = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    offline = true
+                    showNetBanner()
+                }
+            }
+
             override fun onAvailable(network: Network) {
                 runOnUiThread {
-                    if (errorLayer?.visibility == View.VISIBLE) {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    offline = false
+                    hideNetBanner()
+                    // 断开态（错误层在 / 主文档加载失败 / 还没加载成功过）→ 自动重载，不需要用户手点
+                    val broken = errorLayer?.visibility == View.VISIBLE || loadErrored
+                    if (broken) {
+                        cancelRetry()
+                        retryAttempt = 0
+                        loadErrored = false
                         hideError()
-                        web?.reload()
+                        val target = currentUrl()
+                        if (target.isNotEmpty()) web?.loadUrl(target)
                     }
                 }
             }
@@ -550,6 +676,11 @@ class WebActivity : Activity() {
         netCallback = cb
         try {
             cm.registerDefaultNetworkCallback(cb)
+            // 注册那一刻就断着网的情况：主动问一次，别等下次变化
+            if (cm.activeNetwork == null) {
+                offline = true
+                web?.post { showNetBanner() }
+            }
         } catch (e: Exception) {
             netCallback = null
         }
@@ -563,6 +694,10 @@ class WebActivity : Activity() {
         val u = intent?.getStringExtra("url") ?: ""
         if (u.isNotEmpty()) {
             applyInstanceLabel(u)
+            lastUrl = u
+            loadErrored = false
+            cancelRetry()
+            retryAttempt = 0
             web?.loadUrl(u)
         }
     }
@@ -592,6 +727,7 @@ class WebActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelRetry()   // 关窗后别再排期加载（v1.32.8）
         netCallback?.let { cb ->
             try {
                 (getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager)
