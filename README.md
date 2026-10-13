@@ -69,6 +69,7 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
 |---|---|
 | `android-app/` | 安卓 APP 源码（Kotlin，无第三方 UI 库，~10 个文件）+ 素材源文件与授权 |
 | `deploy/` | 服务端脚本权威副本：ntfy 推送钩子、作答 relay/桥、边缘 nginx（见其 README） |
+| `host-plugin/` | **DSH 宿主插件（进程内）**：`userQuestions` seam 推通知 + relay 队列回收手机作答，替代"外部通知器 + 外部作答桥"（见其 README） |
 | `verify/` | 一键验收流水线（编译→装机→推送断言→截图）+ AI 作业手册 `verify/README.md`；本机配置放 `verify/config.local.ps1`（模板见 `config.example.ps1`） |
 | `openspec/` | 规格驱动开发记录：基线规格 + 全部已归档变更提案 |
 | `docs/` | 截图与开发日志 |
@@ -97,9 +98,13 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
 7. **成功页动画取证姿势**：模拟器上 `screenrecord` 只出 1 帧（废）、`exec-out screencap`
    单次 ~1.5-2s——2.6s 的动画窗口根本抢不到。用 QA 钩子 `am start -n xyz.cpyh.dshpush/.SuccessPoseActivity
    --ei holdMs 9000` 延长停留后连拍三张，再 diff 立绘区（发梢/裙摆动、头不动 = 动画在播）。
+8. **手机作答（`host-plugin/`）依赖 `tool-ask-user` 的 timed 模式**：`ctx.userQuestions.answer()`
+   只认投影里 `state=continued` 的问题，而只有 `wait.timed === true`（`mode: timed`）的问题才会
+   被 fold。三个 profile 现状都是默认 `mode: legacy` → 插件只能推通知、作答落地不了。
+   另两条实测坑（宿主 fetch 会把同一 URL 的响应喂回第一次的、投影 state 是
+   `{questions:{active,settled}}` 嵌套结构）写在 `host-plugin/README.md`，改轮询代码前先读。
 
 ## 素材授权
-
 代码为 **MIT**（见 [LICENSE](LICENSE)）。角色立绘为第三方二创，**CC BY-NC-SA 4.0（非商用）**，署名表见 `android-app/assets-src/galgame/NOTICE.md`；商用请替换立绘素材。
 
 ## 免责声明

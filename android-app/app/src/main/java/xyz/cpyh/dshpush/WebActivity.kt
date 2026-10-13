@@ -194,6 +194,39 @@ class WebActivity : Activity() {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     hideError()
+                    // 窄屏（≤1023px）三处修补（v1.32.3）：
+                    //   ① 提问卡头部允许换行 + 问题文字占满整行。DSH Web 的卡头部是单行 flex
+                    //      (justify-content:space-between)，右侧按钮组 flex-shrink:0 且 nowrap，
+                    //      文字块是唯一可收缩项 → 一行放不下时被压成 width:0，汉字一列一字竖排。
+                    //   ② 侧栏改成浮层：中心列不再被 280px 侧栏压缩（DSH 自己在 1024px 以下会
+                    //      自动收起侧栏，但手机屏上手动展开后它不收缩，中心列只剩 132px）。
+                    //      展开态 position:fixed 盖在内容上、可滚动；点内容区自动收起。
+                    //   ③ 全部规则都放在 @media (max-width:1023px) 内 —— 桌面宽度布局零改动。
+                    // 选择器用 [class*=] 属性包含匹配，不硬编码 CSS-module 哈希；注入幂等
+                    //（先按 id 查重），并单独给监听器打标记，onPageFinished 多次触发不会重复挂。
+                    view?.evaluateJavascript(
+                        "(function(){" +
+                        "if(document.getElementById('bw-narrow-fix'))return;" +
+                        "var s=document.createElement('style');s.id='bw-narrow-fix';" +
+                        "s.textContent=\"@media (max-width:1023px){" +
+                        "[class*='mAtvLq_header']{flex-wrap:wrap!important}" +
+                        "[class*='mAtvLq_headingBlock']{flex:1 1 100%!important;min-width:0}" +
+                        "[class*='BynINW_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
+                        "[class*='_2H3hWW_root']:not([class*='_2H3hWW_collapsed']){position:fixed!important;" +
+                        "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
+                        "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
+                        "box-shadow:0 8px 32px rgba(0,0,0,.28)!important}}\";" +
+                        "document.head.appendChild(s);" +
+                        "if(window.__bwPanelClose)return;window.__bwPanelClose=1;" +
+                        "document.addEventListener('pointerdown',function(e){" +
+                        "if(window.innerWidth>1023)return;" +
+                        "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                        "if(!sb||sb.className.indexOf('_2H3hWW_collapsed')>=0)return;" +
+                        "if(e.clientX<=280)return;" +
+                        "var b=document.querySelectorAll('button');" +
+                        "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
+                        "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0){b[i].click();return;}}" +
+                        "},true);})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // + 毛玻璃模糊，壁纸全程可见且文字清晰；CSSOM 写内联样式（页面 CSP
                     // 拦动态 style 标签），MutationObserver 让后渲染的元素也自动玻璃化，

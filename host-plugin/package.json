@@ -1,0 +1,74 @@
+{
+  "name": "dsh-push-host",
+  "version": "0.1.0",
+  "description": "DSH host-side phone push: question events to ntfy + in-process answering via relay polling (replaces the external notifier + answer bridge)",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis",
+    "push",
+    "ntfy",
+    "notification"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "cpyh",
+    "url": "https://github.com/thiscp"
+  },
+  "contributors": [
+    {
+      "name": "DeepSeek Harness agents"
+    }
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./credentials": "./lib/credentials.mjs",
+    "./pairing": "./lib/pairing.mjs",
+    "./pairing-lib": "./lib/pairing-lib.mjs",
+    "./relay": "./lib/relay.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-push-pair": "./lib/pairing.mjs"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thiscp/dsh-push.git",
+    "directory": "host-plugin"
+  },
+  "homepage": "https://github.com/thiscp/dsh-push/tree/master/host-plugin#readme",
+  "bugs": {
+    "url": "https://github.com/thiscp/dsh-push/issues"
+  },
+  "scripts": {
+    "test": "node plugin-selftest.mjs",
+    "pair": "node lib/pairing.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "version": "1",
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/schemastery": "^3.18.2"
+  }
+}

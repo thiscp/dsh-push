@@ -6,7 +6,8 @@
 param(
   [string]$Msg = "sync from private repo $(Get-Date -Format yyyy-MM-dd)",
   [string]$Private = "$PSScriptRoot\..",
-  [string]$Public  = "$PSScriptRoot\..\..\dsh-push-public"
+  [string]$Public  = "$PSScriptRoot\..\..\dsh-push-public",
+  [switch]$DryRun   # scrub + secret gate only: no mirror, no commit, no push (self-proof of the map)
 )
 $ErrorActionPreference = "Stop"
 $stage = "$env:TEMP\dsh-public-export"
@@ -34,6 +35,7 @@ $map = [ordered]@{
   '<tailnet-relay>'   = '<tailnet-relay>'
   '<lan-laptop>'     = '<lan-laptop>'
   'user@'            = 'user@'
+  "'user'"           = "'user'"
   'Users\<user>'       = 'Users\<user>'
   'Users\\<user>'      = 'Users\\<user>'
   '$EmuUser     = "user"' = '$EmuUser     = "user"'
@@ -42,10 +44,32 @@ $map = [ordered]@{
   'tk_REPLACE_WRITE' = 'tk_REPLACE_WRITE'
 }
 $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.kt","*.xml"
+$scrubHits = [ordered]@{}
+foreach ($k in $map.Keys) { $scrubHits[$k] = 0 }
 Get-ChildItem $stage -Recurse -Include $exts -File | ForEach-Object {
   $t = [IO.File]::ReadAllText($_.FullName); $o = $t
-  foreach ($k in $map.Keys) { $t = $t.Replace($k, $map[$k]) }
+  foreach ($k in $map.Keys) {
+    $c = ([regex]::Matches($t, [regex]::Escape($k))).Count
+    if ($c -gt 0) { $scrubHits[$k] = $scrubHits[$k] + $c; $t = $t.Replace($k, $map[$k]) }
+  }
   if ($t -ne $o) { [IO.File]::WriteAllText($_.FullName, $t, (New-Object Text.UTF8Encoding $false)) }
+}
+
+# 3b. -DryRun self-proof, printed BEFORE the gate so the scrub evidence survives a gate failure.
+#     IP values are shown (they are the ones a release reviewer must be able to check); every
+#     other mapped value (tokens, usernames) is reported as a count only - never echoed.
+if ($DryRun) {
+  Write-Host ("DRYRUN stage: " + $stage)
+  Write-Host "DRYRUN scrub map - personal values found in the export and replaced:"
+  foreach ($k in $map.Keys) {
+    if ($scrubHits[$k] -gt 0) {
+      if ($k -match '^\d+\.\d+\.\d+\.\d+$') {
+        Write-Host ("DRYRUN   " + $k + " -> " + $map[$k] + "  x" + $scrubHits[$k])
+      } else {
+        Write-Host ("DRYRUN   <masked: " + $map[$k] + ">  x" + $scrubHits[$k])
+      }
+    }
+  }
 }
 
 # 4. secret gate: fail loudly if anything personal leaked through
@@ -54,6 +78,12 @@ $bad = Select-String -Path (Get-ChildItem $stage -Recurse -Include $exts -File).
 if ($bad) {
   $bad | ForEach-Object { Write-Host "LEAK: $($_.Path):$($_.LineNumber): $($_.Line.Trim().Substring(0,[Math]::Min(80,$_.Line.Trim().Length)))" }
   throw "secret gate failed - add new values to the scrub map and rerun"
+}
+
+# 4b. -DryRun stops before the public workdir or any remote is touched.
+if ($DryRun) {
+  Write-Host "DRYRUN OK: scrub map applied, secret gate passed, public workdir untouched, nothing pushed."
+  exit 0
 }
 
 # 5. mirror stage -> public workdir (keep .git)

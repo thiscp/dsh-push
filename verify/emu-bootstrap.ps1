@@ -48,18 +48,33 @@ if (-not (Test-Path $avdDir)) {
 $cfg = "$avdDir\config.ini"
 (Get-Content $cfg -Raw) -replace "hw.ramSize=.*", "hw.ramSize=$RamMB" | Set-Content $cfg -Encoding ASCII
 
-# ---------- 5. wrapper cmd + scheduled task (ONLY sanctioned launcher: sshd kills session children) ----------
+# ---------- 5. wrapper cmds + scheduled tasks (scheduled task = the only sanctioned launcher:
+# sshd reaps the session's children) ----------
+# HARD FACT (verify/README.md): "-gpu host" crashes in a NON-interactive session (gfxstream
+# "glTexImage2D ... error 0x502", LastTaskResult=1) - which is exactly how a scheduled task runs.
+# So the DEFAULT task is `dsh-emu-sw` (-gpu swiftshader_indirect): it is the one
+# dsh-app-verify.ps1 / bw-iter.ps1 run, and a fresh box without it looks like "emulator never
+# started" to the nightly. The old `dsh-emu` (-gpu host) wrapper is kept only for a human sitting
+# at the desktop console session; nothing automated should use it.
 $emuExe = "$Root\Sdk\emulator\emulator.exe"
+@"
+@echo off
+"$emuExe" -avd $AvdName -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -cores $Cores -memory $RamMB > $Root\emu-sw-out.txt 2> $Root\emu-sw-err.txt
+"@ | Set-Content "$Root\run-emu-sw.cmd" -Encoding ASCII
 @"
 @echo off
 "$emuExe" -avd $AvdName -no-window -no-audio -no-boot-anim -gpu host -cores $Cores -memory $RamMB > $Root\emu-out.txt 2> $Root\emu-err.txt
 "@ | Set-Content "$Root\run-emu.cmd" -Encoding ASCII
+schtasks /Create /TN dsh-emu-sw /TR "$Root\run-emu-sw.cmd" /SC ONCE /ST 00:00 /F | Out-Null
 schtasks /Create /TN dsh-emu /TR "$Root\run-emu.cmd" /SC ONCE /ST 00:00 /F | Out-Null
-$t = Get-ScheduledTask -TaskName dsh-emu
-$t.Settings.DisallowStartIfOnBatteries = $false
-$t.Settings.StopIfGoingOnBatteries = $false
-Set-ScheduledTask -TaskName dsh-emu -Settings $t.Settings | Out-Null
-schtasks /Run /TN dsh-emu | Out-Null
+foreach ($tn in @("dsh-emu-sw","dsh-emu")) {
+  $t = Get-ScheduledTask -TaskName $tn
+  $t.Settings.DisallowStartIfOnBatteries = $false
+  $t.Settings.StopIfGoingOnBatteries = $false
+  Set-ScheduledTask -TaskName $tn -Settings $t.Settings | Out-Null
+}
+Write-Host "starting the emulator via dsh-emu-sw (swiftshader); dsh-emu (-gpu host) is desktop-session only"
+schtasks /Run /TN dsh-emu-sw | Out-Null
 
 # ---------- 6. wait for boot ----------
 $adb = "$Root\Sdk\platform-tools\adb.exe"

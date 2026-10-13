@@ -1,0 +1,7 @@
+# dsh-push-host bundle patch: mounts the phone-push plugin under the stable plugin id
+# `push-host`. The plugin owns no DSH seam of its own — it injects the question service
+# (and falls back to the DSH web API when that seam is unavailable), pushes notifications
+# to ntfy and answers questions with what the phone submitted through the relay.
+- insert:
+    - id: push-host
+      name: 'dsh-push-host'

@@ -3,7 +3,9 @@
 # tap "xiaoyugan A", screenshot the success pose animation.
 # Run in background right before issuing the real ask_user_question. ASCII only.
 $ErrorActionPreference = "Continue"
-$EmuIp = "<lan-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
+# tailscale IP only: LAN IPs drift (.20 -> .1.6 on 2026-10-13) and the laptop firewall drops
+# new connections to the LAN address. LAN fallback (dead since 2026-10-13): <lan-laptop>
+$EmuIp = "<tailnet-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
 $EmuRootFwd = $EmuRoot.Replace('\','/')
 Start-Sleep 15
 $emu = @'

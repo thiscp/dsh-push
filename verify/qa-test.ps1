@@ -2,7 +2,9 @@
 # the emulator, auto-tap the first option, screenshot the success pose animation.
 # ASCII only. Run from the orchestrator (this Windows box).
 $ErrorActionPreference = "Continue"
-$EmuIp = "<lan-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
+# tailscale IP only: LAN IPs drift (.20 -> .1.6 on 2026-10-13) and the laptop firewall drops
+# new connections to the LAN address. LAN fallback (dead since 2026-10-13): <lan-laptop>
+$EmuIp = "<tailnet-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
 $EmuRootFwd = $EmuRoot.Replace('\','/')
 $Vm1 = "user@<tailnet-vm1>"
 $Repo = "F:\work\work_dsh\dsh-push"

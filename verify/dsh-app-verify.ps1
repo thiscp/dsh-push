@@ -1,8 +1,30 @@
 # dsh-app-verify.ps1 - one-click APP verification pipeline.
-# Flow: ensure emulator up -> (optional) build on vm1 -> install on Android-16 emulator
-#       -> publish test push -> assert prefs -> screenshot -> (optional) deploy to aliyun.
+#
+# Flow (order is load-bearing, see HARD FACTS below):
+#   preflight ssh (fail fast) -> seed token prefs -> build on vm1 -> push APK to emulator host
+#     -> ONE ssh session: ensure emulator (clear AVD locks / run dsh-emu-sw / wait for boot)
+#        + install + publish test push + assert prefs + screenshot
+#     -> pull screenshot -> (optional) deploy to aliyun -> SUMMARY
 # Run from the orchestrator machine (the one holding ssh keys to all hosts).
 # ASCII only on purpose: Windows PowerShell 5.1 misreads BOM-less UTF-8 scripts.
+#
+# HARD FACTS baked into this script (all paid for in blood; see verify/README.md):
+#  * EVERY ssh/scp carries "-o BatchMode=yes -o ConnectTimeout=10". A stale host address must
+#    fail in ~10 seconds. 2026-10-13: a stale LAN IP (<lan-laptop> - the laptop had drifted to
+#    192.168.1.6) made the 3rd ssh sit there for 34 minutes printing nothing.
+#  * EVERY child process runs under a watchdog: per-step timeout + a whole-pipeline budget.
+#    On timeout the script prints which step / which command / what error and exits non-zero.
+#    Run "-WatchdogSelfTest" to prove the watchdog really kills and exits (see the report).
+#  * The emulator is started AND driven inside ONE ssh session. Splitting it (start in ssh #1, come
+#    back in ssh #2 to install/drive) failed twice on 2026-10-13: the install succeeds and then
+#    "am start" answers "adb.exe: error: no devices/emulators found". The cause is NOT pinned down
+#    (a later check saw the emulator survive a session end, so it looks like a race at session
+#    release rather than a guaranteed reap) - same session is simply the recipe that works.
+#    (The test push is therefore published from inside that same session, with curl on the host.)
+#  * The launcher task is dsh-emu-sw (-gpu swiftshader_indirect). dsh-emu (-gpu host) crashes in
+#    non-interactive sessions (gfxstream "glTexImage2D ... 0x502", LastTaskResult=1).
+#  * Emulator host address is the Tailscale IP (DESKTOP-CPYH). The LAN address drifts and its
+#    firewall blocks new connections - see config.local.ps1 / config.example.ps1.
 param(
   [string]$EmuIp     = "127.0.0.1",      # emulator host (see config.local.ps1 / config.example.ps1)
   [string]$EmuUser   = "user",
@@ -20,68 +42,156 @@ param(
   [switch]$Fresh,                       # pm clear + reseed token prefs before install
   [switch]$Deploy,                      # on PASS upload to aliyun dl and print ?v= link
   [string]$DeployNote,                  # changelog line for the update notification (default: version only)
-  [switch]$NoNotify                     # deploy silently without pushing the update notification
+  [switch]$NoNotify,                    # deploy silently without pushing the update notification
+  [int]$TotalTimeoutSec = 1800,         # whole-pipeline watchdog (2026-10-13 hang was 34 min)
+  [int]$SshTimeoutSec   = 60,           # default budget for one ssh/scp/curl command
+  [int]$BuildTimeoutSec = 900,          # gradle assembleDebug on vm1
+  [int]$EmuBootSec      = 300,          # emulator boot poll (cold start, swiftshader is slow)
+  [int]$AssertSec       = 120,          # prefs assert poll inside the drive session
+  [switch]$WatchdogSelfTest             # diagnostic: prove a hung command is killed + non-zero exit
 )
-# Local infra overrides (hosts/tokens), see config.example.ps1 — not published
+# Local infra overrides (hosts/tokens), see config.example.ps1 - not published
 if (Test-Path "$PSScriptRoot\config.local.ps1") { . "$PSScriptRoot\config.local.ps1" }
 $ErrorActionPreference = "Continue"
-# PS 5.1 gotcha: ${var.Method('q','q')} interpolation silently yields "" - precompute instead
+# A confirmation prompt is a silent hang when nobody is at the keyboard (nightly runs over ssh).
+$ConfirmPreference = "None"
+New-Item -ItemType Directory -Force $OutDir | Out-Null
 $EmuRootFwd = $EmuRoot.Replace('\','/')
+
+# ---------- self logging (the nightly report cites this path) ----------
+$runStamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$LogFile = "$OutDir\verify-$runStamp.log"
+try { Start-Transcript -Path $LogFile -Force | Out-Null } catch { Write-Host "WARN: transcript unavailable" }
+
+# ---------- watchdog plumbing (every child process is watched) ----------
+$SSH_OPTS = "-o BatchMode=yes -o ConnectTimeout=10"
+$script:sw = [Diagnostics.Stopwatch]::StartNew()
+$script:pn = 0
+function ElapsedSec { [int][Math]::Floor($script:sw.Elapsed.TotalSeconds) }
+function Log([string]$m) { Write-Host ("+{0,5}s {1}" -f (ElapsedSec), $m) }
+function Get-FileText([string]$f) { if (Test-Path $f) { [IO.File]::ReadAllText($f) } else { "" } }
+function Flatten([string]$t) {
+  if (-not $t) { return "(empty)" }
+  $ls = @($t -split "`r?`n" | Where-Object { $_.Trim() -ne "" })
+  if ($ls.Count -eq 0) { return "(empty)" }
+  return ($ls -join " | ")
+}
+function Finish([int]$code) {
+  Write-Host ("LOG: " + $LogFile)
+  try { Stop-Transcript | Out-Null } catch { }
+  exit $code
+}
 $script:results = @()
 function Report([string]$name, [bool]$ok, [string]$detail) {
   $script:results += [pscustomobject]@{ Name = $name; Ok = $ok; Detail = $detail }
   Write-Host ("[{0}] {1}{2}" -f ($(if ($ok) { "PASS" } else { "FAIL" })), $name, $(if ($detail) { " - " + $detail } else { "" }))
 }
-function RunRemote([string]$localPath, [string]$remoteName) {
-  # scp a generated script to the emulator host and run it; returns stdout lines
-  scp -o BatchMode=yes "$localPath" "${EmuUser}@${EmuIp}:$EmuRootFwd/$remoteName" | Out-Null
-  (cmd /c "ssh -o BatchMode=yes $EmuUser@$EmuIp ""C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File $EmuRoot\$remoteName""") 2>$null
+# Abort = the only "cannot continue" exit path. Always names step + command + error + budget.
+function Abort-Step([string]$step, [string]$why, [string]$cmd, [string]$err, [string]$out) {
+  Log ("FATAL step=" + $step)
+  Log ("FATAL why=" + $why)
+  Log ("FATAL cmd=" + $cmd)
+  Log ("FATAL stderr=" + (Flatten $err))
+  Log ("FATAL stdout=" + (Flatten $out))
+  Log ("FATAL budget: elapsed=" + (ElapsedSec) + "s of total=" + $TotalTimeoutSec + "s")
+  Report $step $false $why
+  Write-Host ("SUMMARY: ABORTED at step " + $step + " after " + (ElapsedSec) + "s - " + $why)
+  Finish 3
 }
-New-Item -ItemType Directory -Force $OutDir | Out-Null
-$epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-$stamp = Get-Date -Format "HHmmss"
+# Child process under a watchdog: stdout/stderr to files, optional stdin from a file.
+# Uses .NET Process (not Start-Process): on this box Start-Process -PassThru reports a null
+# ExitCode, which would turn "exit 255" into an unreadable empty reason. Redirection is done by
+# cmd itself ("/c <line> > out 2> err [< in]") so the command line reaches cmd verbatim.
+function Start-Watched([string]$step, [string]$cmdLine, [int]$timeoutSec, [string]$stdinFile) {
+  $script:pn++
+  $o = "$OutDir\proc-$($script:pn).out"
+  $e = "$OutDir\proc-$($script:pn).err"
+  Remove-Item $o,$e -Force -ErrorAction SilentlyContinue
+  Log ("RUN  step=" + $step + " timeout=" + $timeoutSec + "s")
+  Log ("CMD  " + $cmdLine)
+  $full = "/c " + $cmdLine + ' > "' + $o + '" 2> "' + $e + '"'
+  if ($stdinFile) { $full = $full + ' < "' + $stdinFile + '"' }
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = "cmd.exe"
+  $psi.Arguments = $full
+  $psi.UseShellExecute = $false
+  $psi.CreateNoWindow = $true
+  $p = [System.Diagnostics.Process]::Start($psi)
+  return [pscustomobject]@{ Step = $step; Cmd = $cmdLine; Proc = $p; Out = $o; Err = $e
+                            Timeout = $timeoutSec; TimedOut = $false; ExitCode = $null
+                            OutText = ""; ErrText = ""; Why = "" }
+}
+function Wait-Watched($h) {
+  $left = $TotalTimeoutSec - (ElapsedSec)
+  if ($left -lt 1) { $left = 1 }
+  $lim = $h.Timeout
+  $limitedBy = "step timeout " + $h.Timeout + "s"
+  if ($left -lt $lim) {
+    $lim = $left
+    $limitedBy = "whole-pipeline budget " + $TotalTimeoutSec + "s (elapsed " + (ElapsedSec) + "s)"
+  }
+  if ($lim -lt 1) { $lim = 1 }
+  $done = $h.Proc.WaitForExit($lim * 1000)
+  if (-not $done) {
+    $h.TimedOut = $true
+    $h.Why = "still running with no result after " + $lim + "s - " + $limitedBy + "; watchdog killed it"
+    Log ("TIMEOUT step=" + $h.Step + " - killing process tree pid " + $h.Proc.Id + " (" + $limitedBy + ")")
+    taskkill /T /F /PID $h.Proc.Id 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 700
+  } else {
+    $h.Proc.WaitForExit()   # documented: flushes redirected output
+    $h.ExitCode = $h.Proc.ExitCode
+  }
+  $h.OutText = Get-FileText $h.Out
+  $h.ErrText = Get-FileText $h.Err
+  Log ("DONE step=" + $h.Step + " rc=" + $h.ExitCode + " out_bytes=" + $h.OutText.Length + " elapsed=" + (ElapsedSec) + "s")
+  return $h
+}
+# Run one command; any timeout or non-zero exit aborts with the full diagnostic block.
+function Invoke-Watched([string]$step, [string]$cmdLine, [int]$timeoutSec, [string]$stdinFile) {
+  $h = Start-Watched $step $cmdLine $timeoutSec $stdinFile
+  $h = Wait-Watched $h
+  if ($h.TimedOut) { Abort-Step $step $h.Why $h.Cmd $h.ErrText $h.OutText }
+  if ($h.ExitCode -ne 0) { Abort-Step $step ("command failed: exit code " + $h.ExitCode + " (stderr above)") $h.Cmd $h.ErrText $h.OutText }
+  return $h
+}
+# Which assertion does a dead drive session map to? (last STAGE= line it managed to print)
+function Stage-Report([string]$text, [string]$fallback) {
+  $st = ""
+  $m = [regex]::Matches($text, 'STAGE=(\S+)')
+  if ($m.Count -gt 0) { $st = $m[$m.Count - 1].Groups[1].Value }
+  $map = @{ "emu-check" = "emulator-up"; "install" = "install"; "publish" = "push-received"
+            "assert" = "push-received"; "screenshot" = "screenshot" }
+  if ($map.ContainsKey($st)) { return $map[$st] }
+  return $fallback
+}
 
-# ---------- 0. token prefs seed (used by -Fresh and bootstrap) ----------
+# ---------- 0. watchdog self-test (diagnostic: no network, no device) ----------
+if ($WatchdogSelfTest) {
+  Log "SELFTEST: handing a deliberately hung command (Start-Sleep 120) to the watchdog, timeout 5s"
+  $h = Start-Watched "watchdog-selftest" 'powershell -NoProfile -Command "Start-Sleep -Seconds 120"' 5 $null
+  $h = Wait-Watched $h
+  if (-not $h.TimedOut) { Log "SELFTEST FAILED: hung command was not killed"; Finish 4 }
+  Abort-Step "watchdog-selftest" $h.Why $h.Cmd $h.ErrText $h.OutText
+}
+
+# ---------- 1. preflight: is the emulator host reachable at all? (fail fast in ~10s) ----------
+$pre = Invoke-Watched "emulator-up" ("ssh " + $SSH_OPTS + " " + $EmuUser + "@" + $EmuIp + " hostname") 20 $null
+$emuHost = ($pre.OutText -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
+Log ("emulator host reachable: " + $emuHost + " (" + $EmuIp + ")")
+
+# ---------- 2. token prefs seed (used by -Fresh and bootstrap) ----------
 $seed = "$OutDir\dshpush.xml"
 [IO.File]::WriteAllText($seed, "<?xml version='1.0' encoding='utf-8' standalone='yes' ?>`n<map>`n    <string name=`"token`">$ReadToken</string>`n</map>`n", (New-Object Text.UTF8Encoding $false))
-scp -o BatchMode=yes "$seed" "${EmuUser}@${EmuIp}:$EmuRootFwd/dshpush.xml" | Out-Null
+Invoke-Watched "seed-prefs" ("scp " + $SSH_OPTS + " `"$seed`" `"${EmuUser}@${EmuIp}:$EmuRootFwd/dshpush.xml`"") $SshTimeoutSec $null | Out-Null
 
-# ---------- 1. ensure emulator is up (scheduled task is the only sanctioned launcher) ----------
-$emuCheck = @'
-$ErrorActionPreference="Continue"
-$adb = "G:\Android\Sdk\platform-tools\adb.exe"
-$dev = ((& $adb devices) 2>&1) -join " "
-if ($dev -notmatch "emulator-\d+\s+device") {
-  schtasks /Run /TN dsh-emu | Out-Null
-  & $adb wait-for-device 2>&1 | Out-Null
-}
-for ($i = 0; $i -lt 60; $i++) {
-  $b = ((& $adb shell getprop sys.boot_completed) 2>&1) -join ""
-  if ($b -match "1") { break }
-  Start-Sleep 4
-}
-& $adb root 2>&1 | Out-Null
-Start-Sleep 2
-& $adb wait-for-device 2>&1 | Out-Null
-$serial = ""
-foreach ($l in ((& $adb devices) 2>&1)) { if ($l -match "^(emulator-\d+)\s+device") { $serial = $Matches[1]; break } }
-$api = ((& $adb -s $serial shell getprop ro.build.version.sdk) 2>&1) -join ""
-"SERIAL=$serial BOOT=1 API=$api"
-'@
-$f = "$OutDir\emu-check.ps1"; [IO.File]::WriteAllText($f, $emuCheck, (New-Object Text.UTF8Encoding $false))
-$up = RunRemote $f "verify-emu-check.ps1" | Where-Object { $_ -match "SERIAL=" } | Select-Object -First 1
-if (-not $up) { Report "emulator-up" $false "no SERIAL line from emulator host"; exit 1 }
-$serial = ($up -replace ".*SERIAL=(emulator-\d+).*", '$1')
-$api = ($up -replace ".*API=", '')
-Report "emulator-up" ($up -match "BOOT=1") "serial=$serial api=$api"
-
-# ---------- 2. build on vm1 (unless -SkipBuild) ----------
+# ---------- 3. build on vm1 (unless -SkipBuild) ----------
 $localApk = "$OutDir\dsh-push.apk"
 if (-not $SkipBuild) {
-  ssh -o BatchMode=yes $Vm1 "rm -rf work/projects/dsh-push/android-app/app/src" | Out-Null
-  scp -o BatchMode=yes -r "$Repo\android-app\app\src" "${Vm1}:work/projects/dsh-push/android-app/app/" | Out-Null
-  scp -o BatchMode=yes "$Repo\android-app\app\build.gradle.kts" "${Vm1}:work/projects/dsh-push/android-app/app/" | Out-Null
-  scp -o BatchMode=yes "$Repo\android-app\build.gradle.kts" "$Repo\android-app\settings.gradle.kts" "$Repo\android-app\gradle.properties" "${Vm1}:work/projects/dsh-push/android-app/" | Out-Null
+  Invoke-Watched "build-vm1" ("ssh " + $SSH_OPTS + " " + $Vm1 + " `"rm -rf work/projects/dsh-push/android-app/app/src`"") $SshTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " -r `"$Repo\android-app\app\src`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $SshTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\app\build.gradle.kts`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $SshTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\build.gradle.kts`" `"$Repo\android-app\settings.gradle.kts`" `"$Repo\android-app\gradle.properties`" `"${Vm1}:work/projects/dsh-push/android-app/`"") $SshTimeoutSec $null | Out-Null
   $vm1Build = @'
 set -e
 export JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64
@@ -90,26 +200,105 @@ cd ~/work/projects/dsh-push/android-app
 gradle assembleDebug -q < /dev/null
 stat -c %s app/build/outputs/apk/debug/app-debug.apk
 '@
-  $f = "$OutDir\vm1-build.sh"; [IO.File]::WriteAllText($f, $vm1Build, (New-Object Text.UTF8Encoding $false))
-  $out = (cmd /c "ssh -F NUL $Vm1 ""tr -d '\r' | bash -s"" < ""$f""") 2>&1
-  $size = ($out | Where-Object { $_ -match '^\d{6,}$' } | Select-Object -Last 1)
-  if (-not $size) { Report "build-vm1" $false ($out -join " | "); exit 1 }
-  scp -o BatchMode=yes "${Vm1}:work/projects/dsh-push/android-app/app/build/outputs/apk/debug/app-debug.apk" "$localApk" | Out-Null
+  $f = "$OutDir\vm1-build.sh"
+  [IO.File]::WriteAllText($f, $vm1Build, (New-Object Text.UTF8Encoding $false))
+  $bd = Invoke-Watched "build-vm1" ("ssh -F NUL " + $SSH_OPTS + " " + $Vm1 + " `"tr -d '\r' | bash -s`"") $BuildTimeoutSec $f
+  $size = ($bd.OutText -split "`r?`n" | Where-Object { $_ -match '^\d{6,}$' } | Select-Object -Last 1)
+  if (-not $size) { Abort-Step "build-vm1" "gradle produced no apk size line" $bd.Cmd $bd.ErrText $bd.OutText }
+  Invoke-Watched "fetch-apk" ("scp " + $SSH_OPTS + " `"${Vm1}:work/projects/dsh-push/android-app/app/build/outputs/apk/debug/app-debug.apk`" `"$localApk`"") $SshTimeoutSec $null | Out-Null
   Report "build-vm1" $true "apk $size bytes"
 } else {
   if ($Apk) { Copy-Item $Apk $localApk -Force }
-  else { scp -o BatchMode=yes "${EmuUser}@${EmuIp}:$EmuRootFwd/dsh-push.apk" "$localApk" | Out-Null }
+  else { Invoke-Watched "fetch-apk" ("scp " + $SSH_OPTS + " `"${EmuUser}@${EmuIp}:$EmuRootFwd/dsh-push.apk`" `"$localApk`"") $SshTimeoutSec $null | Out-Null }
   Report "build-vm1" (Test-Path $localApk) "skipped, reused $localApk"
 }
-scp -o BatchMode=yes "$localApk" "${EmuUser}@${EmuIp}:$EmuRootFwd/dsh-push.apk" | Out-Null
+Invoke-Watched "push-apk" ("scp " + $SSH_OPTS + " `"$localApk`" `"${EmuUser}@${EmuIp}:$EmuRootFwd/dsh-push.apk`"") $SshTimeoutSec $null | Out-Null
 
-# ---------- 3. install (+ optional fresh seed) ----------
-$install = @'
+# ---------- 4. the ONE drive session: emulator + install + push + assert + screenshot ----------
+# All device-facing work happens inside this single ssh session. Do NOT split it: see HARD FACTS.
+$epoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$stamp = Get-Date -Format "HHmmss"
+$driveTpl = @'
 $ErrorActionPreference="Continue"
-$adb = "G:\Android\Sdk\platform-tools\adb.exe"
-$S = @("-s","__SERIAL__")
+$ConfirmPreference="None"   # a confirmation prompt over ssh blocks forever: stdin is the channel
+$adb   = "G:\Android\Sdk\platform-tools\adb.exe"
+$curl  = "C:\Windows\System32\curl.exe"
+$avdCm = "G:\Android\run-emu-sw.cmd"
+$task  = "dsh-emu-sw"
+$apk   = "G:\Android\dsh-push.apk"
+$bootSec   = __BOOTSEC__
+$assertSec = __ASSERTSEC__
+$epoch = "__EPOCH__"
+$topic = "__TOPIC__"
+$token = "__WTOKEN__"
+$ntfy  = "__NTFY__"
 function A { param($a) (& $adb @a 2>&1) -join " | " }
-"install: " + (A ($S + @("install","-r","-g","G:\Android\dsh-push.apk")))
+# Progress marker that also survives a broken ssh channel: printed AND written to the host disk.
+# When a run looks wedged, the first thing to read on the emulator host is G:\Android\verify-stage.txt.
+function Stage([string]$m) {
+  "STAGE=" + $m
+  try { Set-Content -LiteralPath "G:\Android\verify-stage.txt" -Value $m -Encoding ASCII -Confirm:$false } catch { }
+}
+function CurSerial {
+  $s = ""
+  foreach ($l in ((& $adb devices) 2>&1)) { if ($l -match "^(emulator-\d+)\s+device") { $s = $Matches[1]; break } }
+  return $s
+}
+"### DRIVE START pid=" + $PID + " " + (Get-Date -Format o)
+
+# [1] emulator lifecycle - this session owns the emulator from here on
+Stage "emu-check"
+$serial = CurSerial
+"EMU_BEFORE=" + $(if ($serial) { $serial } else { "none" })
+if (-not $serial) {
+  $avd = "dsh-p16"
+  if ((Test-Path $avdCm) -and ((Get-Content $avdCm -Raw) -match "-avd\s+(\S+)")) { $avd = $Matches[1] }
+  "AVD=" + $avd
+  $avdDir = "$env:USERPROFILE\.android\avd\$avd.avd"
+  foreach ($lf in @("hardware-qemu.ini.lock","multiinstance.lock")) {
+    $p = Join-Path $avdDir $lf
+    "LOCK_TRY=" + $p
+    if (Test-Path $p) {
+      # HARD FACT 2026-10-13: hardware-qemu.ini.lock is a DIRECTORY (it holds a "pid" file), and
+      # PS 5.1 Remove-Item on a non-empty directory WITHOUT -Recurse raises a CONFIRMATION PROMPT.
+      # Over ssh stdin is the channel, so it blocks forever at 0% CPU (this wedged a whole run
+      # right after "AVD=dsh-p16"). Always: -LiteralPath -Recurse -Force -Confirm:$false.
+      Remove-Item -LiteralPath $p -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+      if (Test-Path $p) { "LOCK_FAILED=" + $p } else { "LOCK_CLEARED=" + $p }
+    }
+    else { "LOCK_ABSENT=" + $p }
+  }
+  schtasks /Run /TN $task 2>&1 | Out-Null
+  "TASK_RUN=" + $task + " " + (Get-Date -Format HH:mm:ss)
+  $t0 = Get-Date
+  while (((Get-Date) - $t0).TotalSeconds -lt $bootSec) {
+    $serial = CurSerial
+    if ($serial) {
+      $b = ((& $adb -s $serial shell getprop sys.boot_completed) 2>&1) -join ""
+      if ($b -match "1") { break }
+    }
+    Start-Sleep 5
+  }
+}
+"EMU_AFTER=" + $(if ($serial) { $serial } else { "none" })
+if (-not $serial) {
+  "EMU_FAIL=no device after " + $bootSec + "s"
+  "emu-sw-err.txt tail:"
+  (Get-Content "G:\Android\emu-sw-err.txt" -Tail 10 -ErrorAction SilentlyContinue)
+  "### DRIVE DONE rc=1"
+  exit 1
+}
+$bt  = ((& $adb -s $serial shell getprop sys.boot_completed) 2>&1) -join ""
+$api = ((& $adb -s $serial shell getprop ro.build.version.sdk) 2>&1) -join ""
+"EMU_UP=SERIAL=" + $serial + " BOOT=" + $(if ($bt -match "1") { 1 } else { 0 }) + " API=" + $api
+& $adb root 2>&1 | Out-Null
+Start-Sleep 2
+& $adb wait-for-device 2>&1 | Out-Null
+$S = @("-s", $serial)
+
+# [2] install (+ optional fresh seed)
+Stage "install"
+"INSTALL=" + (A ($S + @("install","-r","-g",$apk)))
 if ("__FRESH__" -eq "1") {
   A ($S + @("shell","pm","clear","xyz.cpyh.dshpush")) | Out-Null
   Start-Sleep 2
@@ -123,73 +312,100 @@ if ("__FRESH__" -eq "1") {
 A ($S + @("shell","pm","grant","xyz.cpyh.dshpush","android.permission.POST_NOTIFICATIONS")) | Out-Null
 A ($S + @("shell","appops","set","xyz.cpyh.dshpush","REQUEST_INSTALL_PACKAGES","allow")) | Out-Null
 A ($S + @("shell","am","force-stop","xyz.cpyh.dshpush")) | Out-Null
-A ($S + @("shell","am","start","-n","xyz.cpyh.dshpush/.MainActivity")) | Out-Null
-"installed"
-'@
-$f = "$OutDir\install.ps1"
-[IO.File]::WriteAllText($f, ($install.Replace("__SERIAL__", $serial).Replace("__FRESH__", $(if ($Fresh) { "1" } else { "0" }))), (New-Object Text.UTF8Encoding $false))
-$inst = RunRemote $f "verify-install.ps1" | Out-String
-Report "install" ($inst -match "Success") ($inst -split "`n" | Select-String "install:" | Select-Object -First 1)
-Start-Sleep 8   # let WS connect
+"START=" + (A ($S + @("shell","am","start","-n","xyz.cpyh.dshpush/.MainActivity")))
+Start-Sleep 8   # let the app WebSocket connect before the test push goes out
 
-# ---------- 4. publish unique test push ----------
-curl.exe -s -X POST "$Ntfy/$Topic" -H "Authorization: Bearer $WriteToken" -H "Title: auto-verify $stamp" -d "auto-verify $epoch" | Out-Null
+# [3] publish the unique test push (from inside this session: no second ssh while the emulator lives)
+Stage "publish"
+$body = "auto-verify " + $epoch
+$code = & $curl -s -o "$env:TEMP\verify-push.txt" -w "%{http_code}" -X POST ($ntfy + "/" + $topic) -H ("Authorization: Bearer " + $token) -H ("Title: auto-verify " + (Get-Date -Format HHmmss)) -d $body
+"PUSH_HTTP=" + $code + " BODY=" + $body
 
-# ---------- 5. assert prefs: entry arrived, unread, unique mid (polls up to 40s) ----------
-$assert = @'
-$ErrorActionPreference="Continue"
-$adb = "G:\Android\Sdk\platform-tools\adb.exe"
+# [4] assert prefs: entry arrived, unread, unique mid
+Stage "assert"
 $hits = 0
-for ($i = 0; $i -lt 10; $i++) {
-  $p = ( (& $adb -s __SERIAL__ shell cat /data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml) 2>&1 ) -join ""
-  $m = [regex]::Matches($p, 'auto-verify __EPOCH__.*?mid&quot;:(-?\d+),&quot;read&quot;:(\w+)')
-  $hits = $m.Count
-  if ($hits -ge 1) {
-    "HITS=" + $hits
+$t0 = Get-Date
+while (((Get-Date) - $t0).TotalSeconds -lt $assertSec) {
+  $p = A ($S + @("shell","cat","/data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml"))
+  $m = [regex]::Matches($p, "auto-verify " + $epoch + ".*?mid&quot;:(-?\d+),&quot;read&quot;:(\w+)")
+  if ($m.Count -ge 1) {
     foreach ($x in $m) { "MID=" + $x.Groups[1].Value + " READ=" + $x.Groups[2].Value }
+    $hits = $m.Count
     break
   }
   Start-Sleep 4
 }
-if ($hits -eq 0) { "HITS=0" }
+"HITS=" + $hits
+
+# [5] screenshot (re-foreground MainActivity first: stale dialogs can cover it)
+Stage "screenshot"
+cmd /c "`"$adb`" -s $serial shell input keyevent KEYCODE_BACK" 2>&1 | Out-Null
+& $adb -s $serial shell am start -n xyz.cpyh.dshpush/.MainActivity 2>&1 | Out-Null
+Start-Sleep 3
+cmd /c "`"$adb`" -s $serial exec-out screencap -p > G:\Android\verify-shot.png"
+$sl = 0
+if (Test-Path "G:\Android\verify-shot.png") { $sl = (Get-Item "G:\Android\verify-shot.png").Length }
+"SHOT_BYTES=" + $sl
+"### DRIVE DONE rc=0"
 '@
-$f = "$OutDir\assert.ps1"
-[IO.File]::WriteAllText($f, ($assert.Replace("__SERIAL__", $serial).Replace("__EPOCH__", $epoch)), (New-Object Text.UTF8Encoding $false))
-$a = RunRemote $f "verify-assert.ps1" | Out-String
+$drive = $driveTpl.Replace("__BOOTSEC__", "$EmuBootSec").Replace("__ASSERTSEC__", "$AssertSec").Replace("__EPOCH__", "$epoch").Replace("__TOPIC__", $Topic).Replace("__WTOKEN__", $WriteToken).Replace("__NTFY__", $Ntfy).Replace("__FRESH__", $(if ($Fresh) { "1" } else { "0" }))
+$f = "$OutDir\drive.ps1"
+[IO.File]::WriteAllText($f, $drive, (New-Object Text.UTF8Encoding $false))
+Invoke-Watched "drive" ("scp " + $SSH_OPTS + " `"$f`" `"${EmuUser}@${EmuIp}:$EmuRootFwd/verify-drive.ps1`"") $SshTimeoutSec $null | Out-Null
+$driveTimeout = $EmuBootSec + $AssertSec + 240
+$dv = Start-Watched "drive" ("ssh " + $SSH_OPTS + " " + $EmuUser + "@" + $EmuIp + " `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File $EmuRoot\verify-drive.ps1 < NUL`"") $driveTimeout $null
+$dv = Wait-Watched $dv
+if ($dv.TimedOut -or $dv.ExitCode -ne 0) {
+  $rep = Stage-Report $dv.OutText "emulator-up"
+  $why = if ($dv.TimedOut) { $dv.Why } else { "drive session exited rc=" + $dv.ExitCode }
+  Abort-Step $rep ($why + " (last STAGE= line above says which sub-step)") $dv.Cmd $dv.ErrText $dv.OutText
+}
+$lines = @($dv.OutText -split "`r?`n")
+function Grab([string]$pat) { return (($lines | Where-Object { $_ -match $pat } | Select-Object -First 1)) }
+$emuUp = Grab '^EMU_UP='
+if (-not $emuUp) {
+  $rep = Stage-Report $dv.OutText "emulator-up"
+  Abort-Step $rep ("drive session produced no EMU_UP line; rc=" + $dv.ExitCode) $dv.Cmd $dv.ErrText $dv.OutText
+}
+$serial = ($emuUp -replace '.*SERIAL=(emulator-\d+).*', '$1')
+$api    = ($emuUp -replace '.*API=', '')
+Report "emulator-up" ($emuUp -match "BOOT=1") "serial=$serial api=$api"
+$inst = Grab '^INSTALL='
+if (-not $inst) { Abort-Step "install" "drive session produced no INSTALL line" $dv.Cmd $dv.ErrText $dv.OutText }
+$instOk = $inst -match "Success"
+Report "install" $instOk ($inst -replace '^INSTALL=', '')
+if (-not $instOk) {
+  Log "FATAL install did not report Success - refusing to assert against a stale app"
+  Write-Host ("SUMMARY: ABORTED at step install after " + (ElapsedSec) + "s - adb install failed")
+  Finish 3
+}
+$push = Grab '^PUSH_HTTP='
+$a = $dv.OutText
 $hitsM = [regex]::Match($a, 'HITS=(\d+)')
 $hits = if ($hitsM.Success) { [int]$hitsM.Groups[1].Value } else { 0 }
-$mids = ([regex]::Matches($a, 'MID=(-?\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique)
-Report "push-received" ($hits -ge 1) "entries with unique body: $hits"
-Report "mid-unique" ($mids.Count -eq $hits -and $hits -ge 1) "distinct mids: $($mids -join ',')"
+$mids = (([regex]::Matches($a, 'MID=(-?\d+)') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique))
+Report "push-received" ($hits -ge 1) ("entries with unique body: " + $hits + "; " + $(if ($push) { $push } else { "no PUSH_HTTP line" }))
+Report "mid-unique" ($mids.Count -eq $hits -and $hits -ge 1) ("distinct mids: " + ($mids -join ','))
 Report "entry-unread" ($a -match 'READ=false') ""
 
-# ---------- 6. screenshot (re-foreground MainActivity first: stale dialogs can cover it) ----------
+# ---------- 5. pull the screenshot ----------
 $shot = "$OutDir\verify-$stamp.png"
-$fg = "$OutDir\fg.ps1"
-$fgTpl = 'cmd /c "`"G:\Android\Sdk\platform-tools\adb.exe`" -s __SERIAL__ shell input keyevent KEYCODE_BACK" 2>&1 | Out-Null
-& "G:\Android\Sdk\platform-tools\adb.exe" -s __SERIAL__ shell am start -n xyz.cpyh.dshpush/.MainActivity 2>&1 | Out-Null
-Start-Sleep 3'
-[IO.File]::WriteAllText($fg, $fgTpl.Replace("__SERIAL__", $serial) + "`n", (New-Object Text.UTF8Encoding $false))
-RunRemote $fg "verify-fg.ps1" | Out-Null
-$remoteShot = "$OutDir\shot.ps1"
-$shotTpl = 'cmd /c "`"G:\Android\Sdk\platform-tools\adb.exe`" -s __SERIAL__ exec-out screencap -p > G:\Android\verify-shot.png"'
-[IO.File]::WriteAllText($remoteShot, $shotTpl.Replace("__SERIAL__", $serial) + "`n", (New-Object Text.UTF8Encoding $false))
-RunRemote $remoteShot "verify-shot.ps1" | Out-Null
-scp -o BatchMode=yes "${EmuUser}@${EmuIp}:$EmuRootFwd/verify-shot.png" "$shot" | Out-Null
+Invoke-Watched "screenshot" ("scp " + $SSH_OPTS + " `"${EmuUser}@${EmuIp}:$EmuRootFwd/verify-shot.png`" `"$shot`"") $SshTimeoutSec $null | Out-Null
 $ok = (Test-Path $shot) -and ((Get-Item $shot).Length -gt 100000)
 Report "screenshot" $ok "$shot"
 
-# ---------- 7. optional deploy ----------
+# ---------- 6. optional deploy ----------
 if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
   $vc = [regex]::Match((Get-Content "$Repo\android-app\app\build.gradle.kts" -Raw), 'versionCode\s*=\s*(\d+)').Groups[1].Value
-  scp -o BatchMode=yes $localApk "${Aliyun}:/var/www/certbot/dl/dsh-push.apk" | Out-Null
-  $chk = curl.exe -s -o "$OutDir\dl-check.apk" -w "%{http_code} %{size_download}" "$Ntfy/dl/dsh-push.apk?v=$vc"
+  Invoke-Watched "deploy" ("scp " + $SSH_OPTS + " `"$localApk`" `"${Aliyun}:/var/www/certbot/dl/dsh-push.apk`"") $SshTimeoutSec $null | Out-Null
+  $chkH = Invoke-Watched "deploy" ("curl.exe -s -o `"$OutDir\dl-check.apk`" -w `"%{http_code} %{size_download}`" `"$Ntfy/dl/dsh-push.apk?v=$vc`"") $SshTimeoutSec $null
+  $chk = $chkH.OutText
   $same = (Get-FileHash "$OutDir\dl-check.apk" -Algorithm SHA256).Hash -eq (Get-FileHash $localApk -Algorithm SHA256).Hash
   Report "deploy" ($chk -match "^200" -and $same) "link: $Ntfy/dl/dsh-push.apk?v=$vc"
   # Push update notification (v1.28.0+). HARD FACT 2026-10-12: this ntfy behind the aliyun edge
   # nginx only parses a JSON body when POSTed to the ROOT with "topic" inside it - posting the
   # same JSON to /<topic> stores the whole blob as plain text. So: POST $Ntfy, never $Ntfy/$Topic.
-  if ($Deploy -and -not $NoNotify -and ($chk -match "^200") -and $same) {
+  if (-not $NoNotify -and ($chk -match "^200") -and $same) {
     $vn = [regex]::Match((Get-Content "$Repo\android-app\app\build.gradle.kts" -Raw), 'versionName\s*=\s*"([^"]+)"').Groups[1].Value
     $dl = "$Ntfy/dl/dsh-push.apk?v=$vc"
     $note = if ($DeployNote) { $DeployNote } else { "updated to v$vn" }
@@ -197,7 +413,8 @@ if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
     $pj = '{"topic":"' + $Topic + '","title":"dsh-push update v' + $vn + '","message":"' + $note + '\n#web ' + $dl + '","priority":4,"click":"' + $dl + '"}'
     $pf = Join-Path $OutDir "upd-note.json"
     [IO.File]::WriteAllText($pf, $pj, (New-Object Text.UTF8Encoding $false))
-    $r = curl.exe -s -X POST -H "Authorization: Bearer $WriteToken" -H "Content-Type: application/json" --data-binary "@$pf" $Ntfy
+    $rH = Invoke-Watched "update-notify" ("curl.exe -s -X POST -H `"Authorization: Bearer $WriteToken`" -H `"Content-Type: application/json`" --data-binary `"@$pf`" $Ntfy") $SshTimeoutSec $null
+    $r = $rH.OutText
     $nid = try { ($r | ConvertFrom-Json).id } catch { "?" }
     Report "update-notify" ($r -match '"title":"dsh-push update') "id: $nid"
   }
@@ -207,4 +424,4 @@ if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
 $fail = ($script:results | Where-Object { -not $_.Ok }).Count
 Write-Host ""
 Write-Host ("SUMMARY: {0}/{1} passed" -f ($script:results.Count - $fail), $script:results.Count)
-exit $(if ($fail) { 1 } else { 0 })
+Finish $(if ($fail) { 1 } else { 0 })

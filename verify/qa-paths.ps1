@@ -6,7 +6,9 @@
 # push, answers it, screenshots the floating success pose. ASCII only.
 param([string]$Mode = "chip")
 $ErrorActionPreference = "Continue"
-$EmuIp = "<lan-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
+# tailscale IP only: LAN IPs drift (.20 -> .1.6 on 2026-10-13) and the laptop firewall drops
+# new connections to the LAN address. LAN fallback (dead since 2026-10-13): <lan-laptop>
+$EmuIp = "<tailnet-laptop>"; $EmuUser = "user"; $EmuRoot = "G:\Android"
 $EmuRootFwd = $EmuRoot.Replace('\','/')
 Start-Sleep 12
 $emu = @'
