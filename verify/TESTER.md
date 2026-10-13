@@ -108,3 +108,18 @@ FINDING-1 [P1] <一句话标题>
 - 禁无锚定的批量 kill；禁自己重启笔电或切模拟器 GPU 模式。
 - `.ps1` 纯 ASCII（中文输出走 `chcp 65001` 或码点）；含中文的 md 用编辑器/.NET 写。
 - 模拟器是共享资源：状态与预期不符时先 `force-stop` 重起再判定，别把"别人的中间态"当成 bug。
+
+---
+
+## 附录 A：CSS360 新基线与晚间新环境事实（2026-10-13 晚，**已验证**）
+
+> 本节是**硬事实**，写用例前必读；与旧轮次报告里的数字冲突时**以本节为准**。
+
+1. **几何基线版本 = CSS360（v1.32.8 起）**：AVD `dsh-p16` 已与用户真机同构——**分辨率由 AVD 物理配置 `config.ini` 保证**（`hw.lcd.width=1440` / `hw.lcd.height=3168` / `hw.lcd.density=640`，备份 `config.ini.bak-1440`），CDP 实测 `innerWidth=360 / dpr=4`。**`wm size/density` 动态 override 会丢**（实测只剩 density 640 → `innerWidth=270`），一律 `wm size reset` / `wm density reset`，不再当持久化手段。
+   → **A14 / A15 / P04 等命中区基线是旧 411 CSS 宽下量的，全部作废**：**下一轮 QA 首跑必须在 360 宽下重打基线**，旧数字不可对照。
+2. **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通）→ 只能**冷重启**：杀 `qemu-system*`+`emulator` → 清 AVD 锁（`hardware-qemu.ini.lock` 是目录，用 `-LiteralPath -Recurse -Force -Confirm:$false`）→ `schtasks /Run /TN dsh-emu-sw` → 轮询 `boot_completed`，**全程同一次 ssh**。现成脚本：`F:\work\work_dsh\tmp\emu-cold-1440.ps1`。
+3. **子代理发不了 `ask_user_question`**（harness 报 "owned by another live agent"）→ N5 类"真实折回"用例**必须借 lead 会话发问**。
+4. **桌面 web token 每次 DSH 重启必换**：脚本一律从 `C:\Users\<user>\.dsh\web.log` 取**最后一条** `dsh web:` 行的 `token=`，并把 `127.0.0.1:3081` 替换为 `<tailnet-windows>:3080`。
+5. **新用例 QA-A18（手机作答即时 vs 180s 折回）**：给 `web.log` 的 `[dsh-push-host]` 行打**毫秒时间戳**的 watcher；判据 = `answered (foreground)`（即时；`claimForeground=on`，实测 **3726ms**，`call_5841f145…`）还是 `returned pending` + `answered (continued)`（迟到作答，等 timed 超时后才折回）。完整链路见 `verify/QA-ROUND-v1.32.8.md`。
+6. **`ask_user_question` 的 timed 由 request waterfall 纠正**（pre-execute 猜不准，日志写 `timed corrected to true`）→ 不要在 pre-execute 阶段断言 timed。
+7. 笔电当前**无交互会话** → 自愈阶梯跑 swiftshader（截图慢属正常）；有人登录后自动升真 GPU（`-gpu host` 冷启 18s）。健康判据：`boot_completed=1` **且** `adb shell echo ok` 有回应（`adb devices` 看得到 ≠ 健康）。

@@ -41,6 +41,8 @@ $map = [ordered]@{
   "'user'"           = "'user'"
   'Users\<user>'       = 'Users\<user>'
   'Users\\<user>'      = 'Users\\<user>'
+  'C:/Users/<user>'    = 'C:/Users/<user>'
+  '/home/user'       = '/home/user'
   '$EmuUser     = "user"' = '$EmuUser     = "user"'
   '$EmuUser = "user"'     = '$EmuUser = "user"'
   'tk_REPLACE_READ'  = 'tk_REPLACE_READ'

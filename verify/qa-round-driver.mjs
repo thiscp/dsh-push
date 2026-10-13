@@ -613,6 +613,183 @@ const CASES_IMPL = {
     assertOk(rec.dom.rail && Math.abs(rec.dom.rail.w - 55.6) < 1.5, "collapsed rail is not ~56px: " + JSON.stringify(rec.dom.rail));
     return ["collapsed rail buttons measured for overflow/overlap"];
   },
+  // QA-A19 (standing case, task-21): hit-area GEOMETRY AUDIT. For every group of buttons that
+  // shares a row, compare the adjacent centre distance against the two hit-box widths: if
+  // centreDistance < (halfwidthA + halfwidthB) the boxes overlap -> the v1.32.7 round-1 P1 class
+  // of bug (tapping A's centre fires B) is caught mechanically from now on. Runs at three font
+  // scales; the baseline is CSS360 (innerWidth 360 / dpr 4), old 411-width numbers are void.
+  "QA-A19": async (rec) => {
+    const out = {};
+    for (const v of ["1.0", "1.15", "1.5"]) {
+      setFontScale(v);
+      await sleep(2600);
+      try { await connect(); } catch {}
+      try { await reloadAndWait(); } catch {}
+      try { await connect(); } catch {}
+      await toggleTap(true);
+      await sleep(1300);
+      const key = "font" + v.replace(".", "");
+      out[key] = JSON.parse(await ev(`(()=>{
+        const SEL="[class*='_2H3hWW_iconButton'],[class*='_9lTDKa_searchButton'],[class*='_9lTDKa_iconButton'],[class*='EBLgjq_trigger'],[class*='WgQWqa_main'],[class*='WgQWqa_chevron']";
+        const items=[...document.querySelectorAll(SEL)].map((e)=>{
+          const r=e.getBoundingClientRect(); const ic=e.querySelector('svg,img')||e; const ir=ic.getBoundingClientRect();
+          const panel=e.closest("[class*='_2H3hWW_root']");
+          const parent=e.parentElement; let pid=(parent&&parent.className||'').toString().slice(0,24)||parent?.tagName||'?';
+          return {label:((e.getAttribute('aria-label')||e.textContent)||'').trim().slice(0,20),
+            layer:panel?'panel':'page', parent:pid,
+            hit:{x:+r.x.toFixed(1),y:+r.y.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1),right:+r.right.toFixed(1),bottom:+r.bottom.toFixed(1)},
+            visual:{x:+ir.x.toFixed(1),y:+ir.y.toFixed(1),w:+ir.width.toFixed(1),h:+ir.height.toFixed(1)},
+            centre:+((r.x+r.right)/2).toFixed(1)};})
+          .filter((i)=>i.hit.w>1&&i.hit.h>1)
+          .filter((i)=>i.hit.x>=-0.5&&i.hit.right<=innerWidth+0.5);   // off-screen buttons are unreachable, not a hit-area bug
+        // group first by container (layer + parent), then by row inside that container: buttons from
+        // the overlay panel and from the page behind it must never be compared with each other
+        const rows=[];
+        for(const it of items){
+          let row=null;
+          for(const r of rows){
+            if(r.layer!==it.layer)continue;
+            const oy=Math.min(r.y1,it.hit.bottom)-Math.max(r.y0,it.hit.y);
+            if(oy > 0.5*Math.min(it.hit.h, r.y1-r.y0)){row=r;break;}
+          }
+          if(!row){row={layer:it.layer,y0:it.hit.y,y1:it.hit.bottom,items:[]};rows.push(row);}
+          row.y0=Math.min(row.y0,it.hit.y); row.y1=Math.max(row.y1,it.hit.bottom); row.items.push(it);
+        }
+        const pairs=[];
+        for(const r of rows){
+          if(r.items.length<2)continue;
+          r.items.sort((a,b)=>a.centre-b.centre);
+          for(let i=0;i<r.items.length-1;i++){
+            const A=r.items[i],B=r.items[i+1];
+            const gapCentre=+(B.centre-A.centre).toFixed(2);
+            const halfSum=+((A.hit.w+B.hit.w)/2).toFixed(2);
+            const overlap=+(halfSum-gapCentre).toFixed(2);
+            pairs.push({a:A.label,b:B.label,gapCentre,halfSum,overlap,widths:[A.hit.w,B.hit.w],height:[A.hit.h,B.hit.h],
+              verdict:overlap>0.5?"OVERLAP":"ok"});
+          }
+        }
+        const all=[...document.querySelectorAll(SEL)].map((e)=>{const r=e.getBoundingClientRect();
+          return {label:((e.getAttribute('aria-label')||e.textContent)||'').trim().slice(0,20),x:+r.x.toFixed(1),right:+r.right.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1)};})
+          .filter((i)=>i.w>1&&i.h>1);
+        const skipped=all.filter((i)=>!(i.x>=-0.5&&i.right<=innerWidth+0.5));
+        return JSON.stringify({innerWidth:innerWidth,dpr:devicePixelRatio,buttons:items.length,rowsAudited:rows.filter((r)=>r.items.length>1).length,
+          pairsAudited:pairs.length,pairs:pairs,
+          skippedOffscreen:skipped.map((i)=>i.label+' w='+i.w+' x='+i.x+'->'+i.right),
+          singles:rows.filter((r)=>r.items.length===1).map((r)=>r.items[0].label)});})()`));
+      rec.shots.push(shot("qa-A19-geom-" + key));
+    }
+    setFontScale("1.0");
+    await sleep(1500);
+    const bad = [];
+    for (const k of Object.keys(out)) for (const p of out[k].pairs) if (p.verdict !== "ok") bad.push(k + ":" + p.a + "|" + p.b + " overlap=" + p.overlap);
+    rec.dom = { ...out, summary: { scales: Object.keys(out), innerWidth: out.font10.innerWidth, dpr: out.font10.dpr, failures: bad } };
+    assertOk(bad.length === 0, "hit-box geometry audit FAILED (adjacent centre distance < sum of half widths): " + JSON.stringify(bad));
+    return ["geometry audit at 1.0/1.15/1.5; innerWidth=" + out.font10.innerWidth + " dpr=" + out.font10.dpr];
+  },
+  // QA-N1 (promoted from the v1.32.8 round): offline-banner timing. airplane-mode on -> how long
+  // until the banner is in the DOM (requirement: <=2s), airplane-mode off -> how long until it is
+  // gone and the page is usable again, plus the banner's own attributes and two screenshots.
+  "QA-N1": async (rec) => {
+    const R = {};
+    setAirplane(false);
+    await sleep(2000);
+    try { await connect(); } catch {}
+    R.shellReadyMs = await waitShell(30000);
+    const B = "!!document.getElementById('bw-net-banner')";
+    const attrs = () => ev(`(()=>{const d=document.getElementById('bw-net-banner');if(!d)return JSON.stringify({present:false});
+      const cs=getComputedStyle(d),r=d.getBoundingClientRect();
+      return JSON.stringify({present:true,text:(d.textContent||''),position:cs.position,zIndex:cs.zIndex,pointerEvents:cs.pointerEvents,
+        bg:cs.backgroundColor,rect:{x:+r.x.toFixed(1),y:+r.y.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1)},innerWidth:innerWidth});})()`);
+    const t0 = Date.now();
+    setAirplane(true);
+    let appear = -1;
+    while (Date.now() - t0 < 6000) { try { if (await ev(B)) { appear = Date.now() - t0; break; } } catch {} await sleep(100); }
+    R.appearMs = appear;
+    try { R.banner = JSON.parse(await attrs()); } catch (e) { R.banner = null; R.bannerErr = String(e.message).slice(0, 120); }
+    R.textExact = R.banner ? R.banner.text === "\u7f51\u7edc\u5df2\u65ad\u5f00\uff0c\u6b63\u5728\u7b49\u5f85\u6062\u590d\u2026" : false;
+    R.topFixed = R.banner ? R.banner.position === "fixed" && R.banner.rect.y === 0 : false;
+    R.pointerNone = R.banner ? R.banner.pointerEvents === "none" : false;
+    rec.shots.push(shot("qa-N1-banner"));
+    const t1 = Date.now();
+    setAirplane(false);
+    let gone = -1;
+    while (Date.now() - t1 < 10000) { try { if (!(await ev(B))) { gone = Date.now() - t1; break; } } catch {} await sleep(100); }
+    R.goneMs = gone;
+    R.shellAfter = (() => { try { return ev(SHELL); } catch { return null; } })();
+    rec.shots.push(shot("qa-N1-after"));
+    rec.dom = R;
+    assertOk(appear >= 0 && appear <= 2000, "banner did not appear within 2s of losing the network: " + appear);
+    assertOk(gone >= 0, "banner was not removed within 10s of the network coming back: " + gone);
+    assertOk(R.textExact && R.topFixed && R.pointerNone, "banner attributes wrong: " + JSON.stringify(R.banner));
+    assertOk(rec.shots.every((s) => s.ok), "a screenshot is smaller than 100KB");
+    return ["banner appearMs=" + appear + " goneMs=" + gone + " textExact=" + R.textExact];
+  },
+  // QA-N4 (promoted from the v1.32.8 round): while the offline banner is up, does it steal taps?
+  // elementFromPoint grid over the header buttons (centre + four visual edges + both hit-box edges)
+  // with an explicit isBanner flag, then REAL CDP taps at the button centres through a capture-phase
+  // spy (disarmable) to prove the taps still land on the buttons.
+  "QA-N4": async (rec) => {
+    const R = {};
+    setAirplane(false);
+    await sleep(1500);
+    try { await connect(); } catch {}
+    setAirplane(true);
+    const t0 = Date.now();
+    while (Date.now() - t0 < 6000) { try { if (await ev("!!document.getElementById('bw-net-banner')")) break; } catch {} await sleep(150); }
+    R.grid = JSON.parse(await ev(`(()=>{
+      const b=document.getElementById('bw-net-banner');
+      const br=b?b.getBoundingClientRect():null;
+      const own=(e)=>e?((e.getAttribute&&(e.getAttribute('aria-label')||e.textContent))||'').trim().slice(0,20):null;
+      const all=[...document.querySelectorAll("button,[role=button]")].filter((e)=>{const r=e.getBoundingClientRect();return r.width>8&&r.height>8&&r.y<120;});
+      const offscreen=all.filter((e)=>{const r=e.getBoundingClientRect();return r.x<0||r.right>innerWidth+0.5;})
+        .map((e)=>(((e.getAttribute('aria-label')||e.textContent)||'').trim().slice(0,20)+' @x'+Math.round(e.getBoundingClientRect().x)));
+      const cands=all.filter((e)=>{const r=e.getBoundingClientRect();return r.x>=-0.5&&r.right<=innerWidth+0.5;});
+      const items=[];
+      for(const e of cands){
+        const r=e.getBoundingClientRect(); const ic=e.querySelector('svg,img')||e; const ir=ic.getBoundingClientRect();
+        const pts={};
+        const sample=(k,x,y)=>{const el=document.elementFromPoint(x,y);pts[k]={owner:own(el?(el.closest&&el.closest("button,[role=button]")):null),isBanner:!!(el&&el.id==='bw-net-banner'),isSelf:own(el?(el.closest&&el.closest("button,[role=button]")):null)===own(e)};};
+        const cy=(ir.y+ir.bottom)/2, cx=(ir.x+ir.right)/2;
+        sample("centre",cx,cy); sample("vLeft",ir.x+1,cy); sample("vRight",ir.right-1,cy);
+        sample("vTop",cx,ir.y+1); sample("vBottom",cx,ir.bottom-1);
+        sample("hitLeft",r.x+0.5,cy); sample("hitRight",r.right-0.5,cy);
+        items.push({label:own(e),hit:{x:+r.x.toFixed(1),y:+r.y.toFixed(1),w:+r.width.toFixed(1),h:+r.height.toFixed(1)},
+          visual:{x:+ir.x.toFixed(1),y:+ir.y.toFixed(1),w:+ir.width.toFixed(1),h:+ir.height.toFixed(1)},
+          underBanner: br? (r.y < br.bottom) : false,
+          centreSelf: pts.centre.isSelf, allSelf: Object.keys(pts).every((k)=>pts[k].isSelf), pts});
+      }
+      return JSON.stringify({bannerPresent:!!b,bannerRect:br?{x:+br.x.toFixed(1),y:+br.y.toFixed(1),w:+br.width.toFixed(1),h:+br.height.toFixed(1)}:null,
+        innerWidth:innerWidth,count:items.length,offscreenCandidates:offscreen,items:items});})()`));
+    // real input at the centre of the first under-banner button, spy disarmed afterwards
+    await ev(`(()=>{if(!window.__qaSpy){window.__qaSpy=1;window.__hits=[];
+      const lab=(e)=>{const bb=e&&e.closest?e.closest("button,[role=button]"):null;const t=bb||e;
+        return t?(((t.getAttribute&&(t.getAttribute('aria-label')||t.textContent))||'').trim().slice(0,20)||t.tagName):null;};
+      document.addEventListener('pointerdown',(e)=>{if(!window.__qaSpy)return;window.__hits.push({t:'down',x:Math.round(e.clientX),y:Math.round(e.clientY),label:lab(e.target)});e.stopImmediatePropagation();e.preventDefault();},true);}return 1;})()`);
+    const target = R.grid.items.find((i) => i.underBanner && i.centreSelf) || R.grid.items[0];
+    if (target) {
+      const pt = JSON.parse(await ev(`(()=>{const b=[...document.querySelectorAll("button,[role=button]")].find(x=>((x.getAttribute('aria-label')||x.textContent)||'').trim().slice(0,20)===${JSON.stringify(target.label)});
+        if(!b)return "null";const r=b.getBoundingClientRect();const ic=b.querySelector('svg,img')||b;const ir=ic.getBoundingClientRect();
+        return JSON.stringify({x:+((ir.x+ir.right)/2).toFixed(1),y:+((ir.y+ir.bottom)/2).toFixed(1)});})()`));
+      if (pt) {
+        await ev("window.__hits=[]");
+        await tap(pt.x, pt.y);
+        await sleep(350);
+        R.realClick = { at: pt, tag: "n4-realclick-" + target.label, hits: JSON.parse(await ev("JSON.stringify(window.__hits||[])")) };
+        R.realClickHitSelf = R.realClick.hits.length > 0 && R.realClick.hits[0].label === target.label;
+      }
+    }
+    await ev("window.__qaSpy=0");
+    rec.shots.push(shot("qa-N4-banner-hits"));
+    setAirplane(false);
+    await sleep(1500);
+    rec.dom = R;
+    const bannerOwners = R.grid.items.flatMap((i) => Object.keys(i.pts).filter((k) => i.pts[k].isBanner).map((k) => i.label + "/" + k));
+    assertOk(bannerOwners.length === 0, "elementFromPoint returned the banner for: " + JSON.stringify(bannerOwners));
+    const centreOff = R.grid.items.filter((i) => !i.centreSelf).map((i) => i.label + "->" + i.pts.centre.owner);
+    assertOk(centreOff.length === 0, "with the banner up, these buttons' visual centres do not hit themselves: " + JSON.stringify(centreOff));
+    assertOk(R.realClickHitSelf !== false, "a real CDP tap at a button centre did not reach it: " + JSON.stringify(R.realClick));
+    return ["banner present while probing; " + R.grid.count + " header buttons, all centres self; real click ok=" + R.realClickHitSelf];
+  },
   // QA-P04: hit areas (DOM only)
   "QA-P04": async (rec) => {
     await toggleTap(true);
