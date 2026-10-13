@@ -131,6 +131,14 @@ powershell -File verify\dsh-app-verify.ps1
   开应用内浏览器、进会话、量提问卡并把 `card-layout.png` + `card-layout-report.json` 拉回本机并打印 PASS/FAIL。
   没有待答卡时（问题已被作答/过期）它会退化成"用真 CSS 类名复刻一张卡"再量，报告里 `cardSource` 注明来源。
 
+**QA 轮次（唱反调用例库 + 一次跑完整轮的 runner）**
+
+- 章程与用例库：`verify\TESTER.md`（角色/环境硬事实/验收铁律/报告格式/P0~P3）、`verify\testcases\{00-core-flows,01-adversarial,02-ux-polish}.md`；每轮结论报告落在 `verify\QA-ROUND-<版本>.md`。
+- 跑一轮：`powershell -File verify\qa-round.ps1`（默认 10 条），聚焦几条就 `-Cases "QA-C05,QA-P04"`。
+  它把 `verify\qa-round-driver.mjs` 送到模拟器宿主，**在同一条 ssh 会话里**跑完所有用例（页面内点击走 CDP 真输入，截图一律 `adb screencap` + `adb pull`，每张截图都与同一时刻的 DOM 复核绑定），再把截图与报告拉回 `-OutDir`。
+- 报告文件名**带时间戳**（`qa-report-<ISO 时间>.json`），同一天跑两轮不会互相覆盖（首轮就是被覆盖丢过 DOM 证据）；结尾对 <100KB 的截图告警（那是采集失败，不是"页面没变化"）。
+- runner **不启模拟器、不切 GPU 模式、不重启笔电**；超过 `-DriverTimeoutSec`（默认 1800s）判 BLOCKED 退出，客机半死时报告 Lead 而不是自己冷启动。
+
 **改应用注入 JS（Kotlin 里内嵌 JS）——两层转义，必须抽出来校验**
 - `WebActivity.onPageFinished` 里的注入是一堆 **Kotlin 字符串拼接出来的 JS**，所以**每个反斜杠都要按两层算**：
   Kotlin 源码写 `\\d` → JS 里才是 `\d`。踩过：正则写成 `\\\\d`（Kotlin 4 个反斜杠）→ JS 收到 `\\d` ==

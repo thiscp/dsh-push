@@ -210,6 +210,27 @@ class WebActivity : Activity() {
                     //      注意玻璃化注入用的是**内联** !important，优先级高于样式表，所以那一步必须
                     //      跳过展开态面板（见下方 skipBg），中间不能只靠样式表压。
                     //   ⑤ 全部规则限定在 @media (max-width:1023px)，桌面宽度零改动。
+                    //   ⑥ v1.32.7 修 QA FINDING-1/3（只动这段注入）：
+                    //      F1 大字体（font_scale 1.5）：会话标题截断后与时间戳贴死（"…3h" 无间隙）、
+                    //        列表末行被底部 Settings 页脚/渐隐压住 → 标题钉死可收缩、时间戳钉死不可收缩并
+                    //        留 8px 左间距、滚动列表补 40px 底部留白（上游 hIlkoa_time 本就有 flex-shrink:0。
+                    //        注意 [class*='_9lTDKa_list'] 同时命中外层 listArea（不可滚，pb 把裁切折线抬离
+                    //        页脚 40px）与真滚动容器 list（pb 给末行滚到底的余量）；1.5 档内容高于视口本来
+                    //        就要滚，修完滚到底末行完整露出、距 Settings 顶余量充足）。
+                    //      F3 命中区：7 个图标按钮 28×28/23×23/17×23 → 命中框按"相邻中心距"封顶、
+                    //        只纵向给 40（QA-ROUND-v1.32.7 FINDING-1/2/3 的教训：横向无脑 40 会让
+                    //        相邻框互叠，点 A 的中心实测触发 B——elementFromPoint + 真点击双证据）。
+                    //        手法仍是"放大+等量负 margin"，margin box 逐像素不变、整行零位移：
+                    //        · 侧栏 Workspaces 行三钮（中心距 32）：min 32×40、margin -6 -2 → 相切零重叠；
+                    //        · 头部 Open-in/More-ways 分体钮（实测盒中心距仅 20.2）：main 保自然宽 23、
+                    //          chevron min-width:20 且 left margin +1.3（把框推到 main 右缘恰好相切，
+                    //          分体钮相邻、纯负 margin 必咬 1.3px）、高都 40——物理上放不进两个 40 宽，
+                    //          宽度按中心距封顶（QA 建议）；
+                    //        · Agent Team 触发器：撤掉横向扩张（带标签态自然宽 85 已够宽，横向负 margin
+                    //          会把框伸进面板/邻居——FINDING-3 的死区+打架），只留纵向 -6 给 40 高；
+                    //        · 面板 Collapse 钮与收起态轨道钮无同排邻居，保持 40×40。
+                    //        FINDING-4 那批（More actions 等）本轮不动：它们间距也挤，扩了重演同一个洞。
+                    //      红线自查：玻璃化大容器 transparent 分支（壁纸唯一通道）没碰；280/0.92/56 没动。
                     // 选择器用 [class*=] 属性包含匹配，不硬编码 CSS-module 哈希；注入幂等（按 id 查重），
                     // 监听器另有标记，onPageFinished 多次触发不会重复挂。
                     view?.evaluateJavascript(
@@ -226,7 +247,24 @@ class WebActivity : Activity() {
                         "[class*='_2H3hWW_root']:not([class*='_2H3hWW_collapsed']){position:fixed!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
                         "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
-                        "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}}\";" +
+                        "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}" +
+                        "[class*='hIlkoa_title']{min-width:0!important;flex-shrink:1!important}" +
+                        "[class*='hIlkoa_time']{flex-shrink:0!important;margin-left:8px!important}" +
+                        "[class*='_9lTDKa_list']{padding-bottom:40px!important}" +
+                        "[class*='_2H3hWW_iconButton']{min-width:40px!important;min-height:40px!important;" +
+                        "display:inline-flex!important;align-items:center!important;" +
+                        "justify-content:center!important;margin:-6px!important}" +
+                        "[class*='_9lTDKa_searchButton'],[class*='_9lTDKa_iconButton']{" +
+                        "min-width:32px!important;min-height:40px!important;" +
+                        "display:inline-flex!important;align-items:center!important;" +
+                        "justify-content:center!important;margin:-6px -2px!important}" +
+                        "[class*='EBLgjq_trigger']{min-height:40px!important;margin:-6px 0!important}" +
+                        "[class*='WgQWqa_main']{min-height:40px!important;" +
+                        "display:inline-flex!important;align-items:center!important;" +
+                        "justify-content:center!important;margin:-8.5px 0!important}" +
+                        "[class*='WgQWqa_chevron']{min-width:20px!important;min-height:40px!important;" +
+                        "display:inline-flex!important;align-items:center!important;" +
+                        "justify-content:center!important;margin:-8.5px -3.9px -8.5px 1.3px!important}}\";" +
                         "document.head.appendChild(s);" +
                         "function bwPanelBg(){var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
                         "if(!sb)return;var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
