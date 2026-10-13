@@ -7,7 +7,17 @@
  * It imports the real `lib/index.js`; a local `node_modules/@deepseek-ai/schemastery` junction
  * is enough, the host provides that peer with its own closure at runtime.
  */
+import { writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { apply, resolveConfig } from './lib/index.js'
+import { buildPairingPayload } from './lib/pairing-lib.mjs'
+import { parseArgs } from './lib/pairing.mjs'
+
+// Hermetic: never read the machine's real credentials file. (2026-10-13: the real file gained
+// webBase/webName, and section 11's "empty webBase" case silently rehosted on it — a self-test
+// that passes only on machines without that field is not a self-test.)
+process.env.DSH_PUSH_CREDENTIALS = join(tmpdir(), 'dsh-push-selftest-no-creds.json')
 
 const checks = []
 function check(name, condition, detail = '') {
@@ -94,7 +104,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
 {
   reset()
   const { ctx, state } = makeCtx()
-  apply(ctx, { ...TOKENS, webName: 'win-test' })
+  apply(ctx, { ...TOKENS, webName: 'win-test', webLog: join(tmpdir(), 'dsh-push-selftest-no-web.log') })
   const listener = state.listeners.get('user-questions/request')
   check('listener registered on user-questions/request', typeof listener === 'function')
   check('poll interval scheduled at 3000ms', state.intervals.length === 1 && state.intervals[0].delay === 3000)
@@ -129,7 +139,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   check('push carries #qid trailer', body.includes('\n#qid q1'), body)
   check('push carries #opts for a single 2-option question', body.includes('\n#opts q1=first|second'), body)
   check('push carries #name trailer', body.includes('\n#name win-test'), body)
-  check('no #web trailer without webBase', !body.includes('#web'), body)
+  check('no #web trailer when web.log is missing (webBase empty too)', !body.includes('#web'), body)
   check('one notification per question (dedupe)', calls.push.length === 1, 'pushes=' + String(calls.push.length))
 }
 
@@ -287,7 +297,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
 {
   reset()
   const { ctx, state } = makeCtx()
-  apply(ctx, { ...TOKENS, webName: 'win-test' })
+  apply(ctx, { ...TOKENS, webName: 'win-test', webLog: join(tmpdir(), 'dsh-push-selftest-no-web.log') })
   const stopping = state.listeners.get('agent/turn-stopping')
   check('turn-stopping listener registered', typeof stopping === 'function')
 
@@ -362,6 +372,46 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   state.listeners.get('user-questions/request')({ questions: [question()], wait: { callId: 'env-1' } }, () => undefined)
   await tick()
   check('host token from the environment activates the relay side', calls.register.length === 1 && calls.register[0].callId === 'env-1')
+}
+
+// ── 11. #web trailer: webBase rehosts, empty webBase falls back to the logged URL (v0.1.1) ──
+{
+  const fixture = join(tmpdir(), 'dsh-push-selftest-web.log')
+  writeFileSync(fixture, 'dsh web: http://127.0.0.1:3080/?token=OLDtok\ndsh web: http://100.0.0.9:3080/?token=NEWtok\n', 'utf8')
+
+  reset()
+  let made = makeCtx()
+  apply(made.ctx, { ...TOKENS, webLog: fixture })
+  made.state.listeners.get('user-questions/request')(
+    { questions: [question()], wait: { callId: 'web-fallback' }, agent: { id: 'ag1', session: { id: 's1' } } },
+    () => undefined,
+  )
+  await tick()
+  let body = String(calls.push.at(-1)?.message ?? '')
+  check('empty webBase: #web uses the freshest logged URL as-is', body.includes('\n#web http://100.0.0.9:3080/?token=NEWtok'), body)
+
+  reset()
+  made = makeCtx()
+  apply(made.ctx, { ...TOKENS, webLog: fixture, webBase: 'http://<tailnet-windows>:3080/' })
+  made.state.listeners.get('user-questions/request')(
+    { questions: [question()], wait: { callId: 'web-rehost' }, agent: { id: 'ag1', session: { id: 's1' } } },
+    () => undefined,
+  )
+  await tick()
+  body = String(calls.push.at(-1)?.message ?? '')
+  check('webBase set: #web rehosted on the base with the freshest token', body.includes('\n#web http://<tailnet-windows>:3080/?token=NEWtok'), body)
+}
+
+// ── 12. pairing payload: optional webBase/webName + the new flags (v0.1.1) ──────────────
+{
+  const full = buildPairingPayload({
+    credentials: { host: 'h', topic: 't', ntfyToken: 'tk_w', phoneToken: 'tk_r', hostToken: 'hk', relayBase: 'https://r', webBase: 'http://100.0.0.9:3080', webName: 'my-box' },
+  })
+  check('payload carries webBase/webName when known', full.missing.length === 0 && full.payload.webBase === 'http://100.0.0.9:3080' && full.payload.webName === 'my-box', JSON.stringify(full.payload))
+  const bare = buildPairingPayload({ credentials: { host: 'h', topic: 't', ntfyToken: 'tk_w', phoneToken: 'tk_r', hostToken: 'hk', relayBase: 'https://r' } })
+  check('payload omits webBase/webName when unknown (v1 schema unchanged)', !('webBase' in bare.payload) && !('webName' in bare.payload) && bare.missing.length === 0, JSON.stringify(bare.payload))
+  const opts = parseArgs(['payload', '--web-base', 'http://x:3080', '--web-name=box'])
+  check('--web-base/--web-name parse into overrides', opts.overrides.webBase === 'http://x:3080' && opts.overrides.webName === 'box', JSON.stringify(opts.overrides))
 }
 
 const failed = checks.filter((entry) => !entry.ok)

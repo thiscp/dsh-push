@@ -10,6 +10,7 @@
  *                              ~/.config/dsh-push/credentials.json)
  *   --relay <url>              relay base to put in the payload (default: credentials.relayBase)
  *   --host/--topic/--write-token/--read-token/--host-token <value>   one-off overrides
+ *   --web-base/--web-name <value>  optional payload extras (host web link base / instance name)
  *   --pretty                   indent the JSON output
  *   --json                     machine-readable result for `verify`
  *   --help                     usage
@@ -35,6 +36,9 @@ options:
   --relay <url>               relay base written into the payload
   --host <id> --topic <name>  overrides for a one-off payload
   --write-token <tk_...> --read-token <tk_...> --host-token <hk_...>
+  --web-base <url>            host-side web base for the #web link (optional; written into the
+                              payload so the credentials file carries it too)
+  --web-name <name>           friendly instance name for #name (optional)
   --pretty                    indented JSON (payload)
   --json                      machine-readable JSON (verify)
   --help                      this text
@@ -58,6 +62,8 @@ export function parseArgs(argv = []) {
     '--write-token': 'ntfyToken',
     '--read-token': 'phoneToken',
     '--host-token': 'hostToken',
+    '--web-base': 'webBase',
+    '--web-name': 'webName',
   }
   const booleans = { '--pretty': 'pretty', '--json': 'json', '--help': 'help' }
   const queue = [...argv]
@@ -93,7 +99,7 @@ export function load(options = {}, env = process.env) {
   const path = credentialsPath({ credentialsFile: options.overrides?.credentialsFile ?? '' }, env)
   const file = loadCredentials(path)
   const credentials = { ...file.value }
-  for (const field of ['host', 'topic', 'ntfyToken', 'phoneToken', 'hostToken', 'relayBase']) {
+  for (const field of ['host', 'topic', 'ntfyToken', 'phoneToken', 'hostToken', 'relayBase', 'webBase', 'webName']) {
     const value = options.overrides?.[field]
     if (typeof value === 'string' && value.trim().length > 0) credentials[field] = value.trim()
   }

@@ -112,7 +112,7 @@ export const Config = z.object({
   credentialsFile: z.string().default(''),
   /** Where DSH writes its Web URL + token; only used for the `#web` trailer. */
   webLog: z.string().default(join(homedir(), '.dsh', 'web.log')),
-  /** Tailnet-facing Web base used to rebuild the `#web` link (empty = no link). */
+  /** Tailnet-facing Web base used to rebuild the `#web` link (empty = use the web.log URL as-is). */
   webBase: z.string().default(''),
   /** Friendly instance name appended as `#name` (multi-DSH chooser on the phone). */
   webName: z.string().default(''),
@@ -335,16 +335,25 @@ class PushHost {
     return base + '/answer/' + encodeURIComponent(callId)
   }
 
-  /** `#web` trailer: last `?token=` DSH printed to web.log, rehosted on the tailnet base. */
+  /**
+   * `#web` trailer: the last `?token=` URL DSH printed to web.log.
+   *
+   * With `webBase` set the link is rehosted onto that base (the address the phone can actually
+   * reach). With `webBase` empty the logged URL is used as-is (v0.1.1): a fresh install then still
+   * ships a web entry instead of silently dropping it — reachable exactly as far as whatever
+   * address DSH bound to, which is precisely what `webBase` exists to override.
+   */
   webUrl() {
     const base = this.config.webBase.trim()
-    if (base.length === 0) return ''
     const file = this.config.webLog.length > 0 ? this.config.webLog : join(homedir(), '.dsh', 'web.log')
     try {
       const text = readFileSync(file, 'utf8')
-      const matches = [...text.matchAll(/dsh web: http:\/\/\S+[?&]token=(\S+)/g)]
+      const matches = [...text.matchAll(/dsh web: (http:\/\/\S+[?&]token=\S+)/g)]
       if (matches.length === 0) return ''
-      return base.replace(/\/+$/, '') + '/?token=' + matches[matches.length - 1][1]
+      const logged = matches[matches.length - 1][1]
+      if (base.length === 0) return logged
+      const token = /[?&]token=(\S+)/.exec(logged)?.[1] ?? ''
+      return base.replace(/\/+$/, '') + '/?token=' + token
     } catch (error) {
       this.log('web.log unreadable (' + file + '): ' + String(error?.message ?? error))
       return ''

@@ -263,10 +263,14 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 & $node dsh-push-host\lib\pairing.mjs verify                # 真打 relay/ntfy 自检（5 项）
 & $node dsh-push-host\lib\pairing.mjs verify --json         # 机器可读
 & $node dsh-push-host\lib\pairing.mjs payload --credentials-file D:\creds\alice.json
+# v0.1.1：把网页入口一并写进载荷（存成凭据文件后插件即带 #web 直达链接，基址=手机可达的地址）
+& $node dsh-push-host\lib\pairing.mjs payload --pretty --web-base http://100.x.y.z:3080 --web-name 我的机器
 ```
 
 `payload` 输出**与 `relay-user-add.sh` 逐字同构**（`v` = 1、同样 7 个字段、同样字段顺序），
 所以不存在第二套 schema；缺字段时**拒绝输出**并列出缺哪几项，不会吐半份。
+`webBase`/`webName` 是**可选追加字段**（v0.1.1）：知道才写、不知道就不写（7 字段老载荷原样），
+`relay-user-add.sh` 不知道用户的网络所以从不输出它们——只有跑配对命令的人知道手机该拨哪个地址。
 
 `verify` 检查（只读 + 最多一条测试通知，不动别人的队列、不改 relay 状态）：
 
@@ -312,7 +316,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
   config:
     host: test1            # deploy/relay-user-add.sh 开出来的 hostId
     topic: dsh-test1       # 该 host 的 ntfy topic
-    webBase: https://<tailnet 网关>   # 只有配了才带 #web 直达链接
+    webBase: https://<tailnet 网关>   # #web 直达链接基址；不配则回退 web.log 里 DSH 自己打印的 URL（v0.1.1）
     webName: 台式机         # 多 DSH 入口选择器的显示名（#name）
     # credentialsFile: D:\creds\alice.json   # 不写就用 ~/.config/dsh-push/credentials.json
 ```
@@ -341,7 +345,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 | `echoAnswers` | `true` | 作答后发 `#ans` 静默回声（撤手机通知；relay 自己的回声写死在 topic `dsh`，多租户下到不了你家 topic） |
 | `claimForeground` | `false` | 打开则**抢前台**：把问题挂在 waterfall 上，手机答得更早；代价是与 Web UI 竞速，见下 |
 | `webLog` | `~/.dsh/web.log` | 只用来取最后一个 `?token=` 拼 `#web` |
-| `webBase` / `webName` | 空 | `#web` 直达链接基址 / `#name` 实例名 |
+| `webBase` / `webName` | 空 | `#web` 直达链接基址 / `#name` 实例名。**`webBase` 留空不再等于没有网页入口**（v0.1.1）：插件直接改用 web.log 里 DSH 自己打印的那条 URL——能不能打开取决于 DSH 实际绑的地址（绑 `127.0.0.1` 就只对本机可达）。手机要从别的网络打开，就把手机可达的地址写进 `webBase` |
 | `log` | `true` | `ctx.logger` + stdout 诊断 |
 
 ### `claimForeground` 为什么默认关

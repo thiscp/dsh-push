@@ -18,6 +18,14 @@
 /** Field order, identical to the payload `relay-user-add.sh` prints. */
 export const PAYLOAD_FIELDS = ['v', 'relay', 'host', 'topic', 'writeToken', 'readToken', 'hostToken']
 
+/**
+ * Optional extras (v0.1.1): written only when known. `relay-user-add.sh` cannot know the host's
+ * web base (only the operator knows which address the phone should dial), so these come from
+ * `dsh-push-pair payload --web-base/--web-name` or from the credentials file. Absent = the phone
+ * and the plugin behave exactly as before.
+ */
+export const PAYLOAD_OPTIONAL_FIELDS = ['webBase', 'webName']
+
 /** Payload schema version — the `v` that `relay-user-add.sh` writes. */
 export const PAYLOAD_VERSION = 1
 
@@ -36,7 +44,12 @@ export function buildPairingPayload(sources = {}) {
     hostToken: String(credentials.hostToken ?? '').trim(),
   }
   const missing = Object.keys(candidates).filter((field) => candidates[field].length === 0)
-  return { payload: { v: PAYLOAD_VERSION, ...candidates }, missing }
+  const payload = { v: PAYLOAD_VERSION, ...candidates }
+  for (const field of PAYLOAD_OPTIONAL_FIELDS) {
+    const value = String(credentials[field] ?? '').trim()
+    if (value.length > 0) payload[field] = value
+  }
+  return { payload, missing }
 }
 
 /** Human-readable one-liner for the operator's terminal (tokens shortened). */
