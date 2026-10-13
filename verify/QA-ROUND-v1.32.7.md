@@ -157,3 +157,31 @@ QA-ROUND v1.32.7(round2) 结论: PASS
 
 ## 结论
 **PASS —— 建议可以 -Deploy。** 首轮 FINDING-1/2/3 全部关闭且有 elementFromPoint + 真实输入双证；F1 的争议按容器认定修正（我首轮那条 +3.9 作废）；红线速查全绿。FINDING-4（那批 28px 按钮）本轮按约定未动，已立为 **QA-A16**（要扩先治上游间距）。
+
+---
+
+# QA-ROUND v1.32.7 · 发布后确认轮（线上包）
+
+```
+QA-ROUND v1.32.7(post-release) 结论: PASS
+被测: 从线上链接下载（不是本地构建）https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=73
+      10,989,076 bytes  sha256 A73A01190F63975146F55C2EE61DDD7347B6A78C902E8AE8E208FCD99C119E59
+      安装后回读 dumpsys: versionCode=73  versionName=1.32.7
+用例: A14 / A15 / C05（快轮 3 条）  环境: emulator-5554 / 真 GPU / 10:3x
+证据: F:\work\work_dsh\tmp\shots\v1327-online\（4 张 >100KB，含命中框描边图，逐张 read_image）
+```
+
+**线上包与 d630128 行为逐项一致**（数字与第二轮本地构建完全相同）：
+
+| 项 | 线上包实测 | 第二轮（本地构建 d630128） |
+|---|---|---|
+| A14 视觉中心命中自己 | `centreSelfHit.all = true`（唯一例外 Agent Team 展开态被浮层盖，属预期） | 同 |
+| A14 交界带判定 | `abutmentOk.all = true`；三处交界行值与第二轮逐点相同（`Search\|View` gap=0 四点落空→x208 起归 View；`View\|Add` 在 0 处切换；`Open-in\|More-ways` gap=**+1.3**，缝内落空、缝外各归各） | 同 |
+| A14 命中框几何 | 三钮 **32×40**（@174/@206/@238）、Open-in **23×40.2**、More-ways **20×40.2**（margin -8.5 -3.9 -8.5 **+1.3**）、Agent Team **28×40** | 同 |
+| A14 收起态 | `railState {w:55.6, collapsed:true}`、`railSelfHit.all = true` | 同 |
+| A15 轨道 | 55.6px；轨道内按钮 ≤40 且右边界 ≤44px 未顶出；纵向 8px 间隙无重叠 | 同 |
+| C05 面板/收起 | 展开 `fixed/280/visibleW 280/bg 0.92/shadow .35`；点浮层外 → `55.6 / 0.45 / shadow none`；`patchCount=1` | 同 |
+| 壁纸红线 | `BynINW_frame` / `BynINW_centerCol` / `chatChild` 全 `rgba(0, 0, 0, 0)`、veil 在；截图里立绘可见 | 同 |
+
+线上包与本地构建**字节数不同**（10,989,076 vs 11,068,832）属正常（发布产物与本地 assembleDebug 的打包差异），因此结论以**实际行为 + versionName/versionCode 双重核对**为准，而非文件哈希。
+设备收尾：`font_scale` / `uimode` / `wm size` / `airplane` 已复位、应用已 force-stop。
