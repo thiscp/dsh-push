@@ -387,7 +387,7 @@ App 内置网页窗口 SHALL 支持网页文件上传（`<input type=file>` 触�
 - **THEN** 错误页仍以不透明底显示睡觉鲸鱼与重试胶囊，文字可读
 
 ### Requirement: 浏览器网页全界面玻璃化
-DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡片等）SHALL 统一玻璃化：背景色降为 45% 透明度并保留原色相，中等以上尺寸（宽>8% 视口且高>3% 视口）附加 backdrop-filter 毛玻璃模糊；全屏画布容器 SHALL 完全透明。注入 SHALL 通过 MutationObserver 对新渲染元素（如流式消息气泡）自动补玻璃化且幂等（已半透明元素不重复处理）。纱罩 SHALL 按网页文字亮度自动选深浅（浅色文字配深色纱、深色文字配浅色纱，45% 浓度），保证文字可读。
+DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡片等）SHALL 统一玻璃化：背景色降为 45% 透明度并保留原色相，中等以上尺寸（宽>8% 视口且高>3% 视口）附加 backdrop-filter 毛玻璃模糊；全屏画布容器 SHALL 完全透明。注入 SHALL 通过 MutationObserver 对新渲染元素（如流式消息气泡）自动补玻璃化且幂等（已半透明元素不重复处理）。纱罩 SHALL 按网页文字亮度自动选深浅（浅色文字配深色纱、深色文字配浅色纱，45% 浓度），保证文字可读。透明与半透明两分支 SHALL **互斥**：宽和高均超过视口 50% 的大容器 SHALL 只被置为完全透明，MUST NOT 再被 45% 半透明底色覆盖（大容器全透是主题壁纸透出的唯一路径；覆盖会使 frame/中心列/包裹层每层各 45% 白、多层叠加成约 91% 白，壁纸整体消失）；45% 底色与 backdrop-filter SHALL 只作用于未命中全透分支的元素。
 
 #### Scenario: 全界面玻璃化背景全程可见
 - **WHEN** 用户在浏览器窗口内查看会话（侧栏、消息气泡、输入卡）
@@ -396,6 +396,10 @@ DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡
 #### Scenario: 流式新气泡自动玻璃化
 - **WHEN** 对话流式渲染出新的消息气泡
 - **THEN** 新气泡在渲染后自动变为同款玻璃质感，与既有面板风格一致
+
+#### Scenario: 大容器不被 45% 底色覆盖以致壁纸消失
+- **WHEN** 手机 App 内置浏览器打开 DSH Web，页面含多层嵌套的 >50% 视口容器（frame/中心列/聊天包裹层），用设备截图查看
+- **THEN** 壁纸与立绘从页面空隙全程可见；DOM 复核这些大容器的背景为 transparent（MUST NOT 是 alpha 0.45 的 rgba）；45% 半透明只出现在卡片、气泡等中小元素上
 
 ### Requirement: 快答成功页主题立绘动画
 提交作答成功后的反馈 SHALL 覆盖全部三条提交路径（快答浮窗、主页消息卡片选项、通知栏直答按钮）：显示当前主题的全身立绘（与主界面 pose 映射一致）。API 28+ SHALL 播放该主题的**动画 WebP 活立绘**（发丝/裙摆/尾尖波动 + 呼吸起伏的无缝循环，素材由 AI 视频模型 Wan2.2 I2V-A14B 以"首尾帧同图"方式生成微动循环、再用原始立绘 alpha 遮罩恢复透明背景后内置于 `res/raw`）——Overshoot 弹跳入场后循环播放，停留约 2.6 秒后自动关闭；API<28 或解码失败 SHALL 退回静图 + 运行时属性动画（以脚底为轴小幅摇摆并轻微浮动、停留约 1.4 秒），行为与 v1.26 一致。播放 SHALL 使用系统 `ImageDecoder`/`AnimatedImageDrawable`，MUST 不引入第三方动画依赖。快答浮窗内嵌展示（底色为主题 `dshCardBg`）；主页选项与通知直答 SHALL 通过全屏透明悬浮窗展示立绘（无背景卡片、无 dim），通知栏后台拉起被系统弹窗管控拦截时 SHALL 以 toast 兜底且不影响提交本身。取问题等待页与通知 largeIcon SHALL 保持鲸鱼团子不变。
@@ -460,7 +464,7 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 - **THEN** 仍打开该卡片推送来源的链接，行为与 v1.28 一致
 
 ### Requirement: 内置浏览器提问卡窄屏防塌陷
-应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载。补丁 SHALL 包含三条规则：①提问卡头部允许换行（`flex-wrap:wrap`），使右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下时落到下一行；②提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）；③窄屏会话侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），且侧栏展开态 SHALL 以浮层形式呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态 SHALL 回到 DSH 自身的 56px 图标轨道且只显示图标、不残留被裁的会话标题文字。窄屏展开侧栏时，点击内容区（浮层之外）SHALL 触发收起。该样式 SHALL 用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底选取，MUST NOT 硬编码完整哈希类名。注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。补丁 SHALL 同时中性化承载侧栏的网格列（`BynINW_sidebarCol`，以及 `BynINW_frame`）上的包含块触发属性：`backdrop-filter`/`-webkit-backdrop-filter`/`filter`/`transform`/`contain`/`will-change` SHALL 被置为 none/auto，该列 SHALL `overflow:visible`，使 `position:fixed` 的侧栏浮层相对视口而非该 56px 列定位、MUST NOT 被其裁剪；玻璃化注入 MUST NOT 再给这两个容器写 `backdrop-filter`（内联 `!important` 的优先级高于补丁样式表）。「点击内容区收起」的判定 SHALL 依据浮层的实际矩形（点落在浮层矩形内 MUST NOT 触发收起），MUST NOT 依赖硬编码的宽度阈值。
+应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载。补丁 SHALL 包含三条规则：①提问卡头部允许换行（`flex-wrap:wrap`），使右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下时落到下一行；②提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）；③窄屏会话侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），且侧栏展开态 SHALL 以浮层形式呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态 SHALL 回到 DSH 自身的 56px 图标轨道且只显示图标、不残留被裁的会话标题文字。窄屏展开侧栏时，点击内容区（浮层之外）SHALL 触发收起。该样式 SHALL 用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底选取，MUST NOT 硬编码完整哈希类名。注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。补丁 SHALL 同时中性化承载侧栏的网格列（`BynINW_sidebarCol`，以及 `BynINW_frame`）上的包含块触发属性：`backdrop-filter`/`-webkit-backdrop-filter`/`filter`/`transform`/`contain`/`will-change` SHALL 被置为 none/auto，该列 SHALL `overflow:visible`，使 `position:fixed` 的侧栏浮层相对视口而非该 56px 列定位、MUST NOT 被其裁剪；玻璃化注入 MUST NOT 再给这两个容器写 `backdrop-filter`（内联 `!important` 的优先级高于补丁样式表）。「点击内容区收起」的判定 SHALL 依据浮层的实际矩形（点落在浮层矩形内 MUST NOT 触发收起），MUST NOT 依赖硬编码的宽度阈值。窄屏展开态的侧栏面板背景 SHALL 不透明到 88%~92%（色相 SHALL 取自运行时计算的原有背景色，以随亮/暗主题协调），并 SHALL 带 `box-shadow` 形成层次，使背后的会话文字 MUST NOT 透上来与侧栏条目混在一起；收起态的 56px 图标轨道 SHALL 保持玻璃化的半透明底色（约 45%），桌面宽度 SHALL 保持原样。由于玻璃化注入以**内联** `!important` 写背景色（优先级高于补丁样式表），玻璃化那一步 MUST NOT 再设置窄屏展开面板的背景色；该背景色的读写 SHALL 由补丁自行负责（状态切换 SHALL 用监听侧栏 class 变化的观察者同步）。
 
 #### Scenario: 手机窄屏下提问卡文字横排可读
 - **WHEN** 用户在手机 App 内置浏览器里打开含待答提问卡的 DSH Web 页面（视口约 412 CSS px）
@@ -489,6 +493,14 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 #### Scenario: 点浮层之外的区域才收起
 - **WHEN** 侧栏浮层展开占用 x∈[0,280]，用户点在浮层矩形内 / 浮层之外
 - **THEN** 点在浮层矩形内不收起；点在浮层之外的内容区才收起并回到图标轨道
+
+#### Scenario: 展开态面板底够实，背后文字不串上来
+- **WHEN** 用户在窄屏 App 内置浏览器里展开侧栏（面板盖在会话内容上），用设备截图查看
+- **THEN** 面板背景不透明度落在 88%~92%，背后的会话文字不再透上来与侧栏条目混在一起，面板带阴影与内容分层；截图时刻 DOM 复核该面板的背景色 alpha ≈0.92
+
+#### Scenario: 收起态图标轨道仍是半透明玻璃
+- **WHEN** 用户在窄屏下收起侧栏回到图标轨道（或视口 ≥1024px）
+- **THEN** 侧栏根节点背景色 alpha 回到约 0.45（毛玻璃观感与主题壁纸透出不变），未因面板调实而变成不透明
 
 ### Requirement: 配对载荷导入
 
