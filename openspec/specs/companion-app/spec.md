@@ -234,7 +234,12 @@ App SHALL 提供轻量且符合人设的动效反馈：快答加载中有呼吸�
 - **THEN** 夜空星点缓慢明暗闪烁；离开界面即停止
 
 ### Requirement: 网页直达按钮
-App SHALL 解析推送中的 `\n#web <url>` 机器行（从正文剥离不展示）并把最近一次 URL 持久化；常驻服务通知 SHALL 在已存有 URL 时提供"打开 DSH"按钮；事件通知 SHALL 在 action 名额有空位时（任务结束、或提问无 2 个及以上直答选项按钮）追加同一按钮；主界面每条消息卡片 SHALL 自带"DSH 网页"胶囊、打开该条消息自身携带的链接（无链接的条目不显示）；常驻通知按钮 SHALL 随新消息携带的新 URL 自动更新。全部网页直达入口 SHALL 落入 App 内置的**单实例网页窗口**（WebView，跟随所选主题）：窗口已存在时 SHALL 复用并在其中加载新链接（token 轮换亦然），MUST 不叠加新窗口；所选主题为深色时窗口 SHALL 让页面按深色渲染（框架 API 分档，不引依赖）；加载失败（断网/主机不可达/5xx）SHALL 显示带重试的人设错误页，且网络恢复时 SHALL 自动重试。窗口标题栏 SHALL 显示「DSH 网页 · <实例名>」——实例名按当前链接的 `host:port` 反查实例清单（名称来自推送 `#name` 或用户改名），查不到退化为 `host:port`；标题 SHALL 随链接加载、窗口复用换新链接与页内跨主机导航同步刷新；最近任务卡片标签 SHALL 同样携带实例名。
+App SHALL 解析推送中的 `\n#web <url>` 机器行（从正文剥离不展示）并把最近一次 URL 持久化；常驻服务通知 SHALL 在已存有 URL 时提供"打开 DSH"按钮，事件通知 SHALL 在 action 名额有空位时（任务结束、或提问无 2 个及以上直答选项按钮）追加同一按钮，主界面每条消息卡片 SHALL 自带"DSH 网页"胶囊、打开该条消息自身携带的链接（无链接的条目不显示），常驻通知按钮 SHALL 随新消息携带的新 URL 自动更新。全部网页直达入口 SHALL 落入 App 内置的**单实例网页窗口**（WebView，跟随所选主题），窗口已存在时 SHALL 复用它并加载新链接，MUST 不叠加新窗口；加载失败 SHALL 显示带重试的人设错误页，网络恢复时 SHALL 自动重试。标题栏 SHALL 显示「DSH 网页 · <实例名>」并随链接加载与窗口复用换新链接同步刷新；最近任务卡片标签 SHALL 同样携带实例名。
+
+#### Scenario: 实例名反查与退化
+
+- **WHEN** 网页窗口标题栏需要显示实例名
+- **THEN** 按当前链接的 `host:port` 反查实例清单（名称来自推送 `#name` 或用户改名），查不到时退化为 `host:port`
 
 #### Scenario: 常驻一键直达
 - **WHEN** 用户在下拉栏点常驻通知的"打开 DSH"按钮
@@ -406,7 +411,12 @@ DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡
 - **THEN** 壁纸与立绘从页面空隙全程可见；DOM 复核这些大容器的背景为 transparent（MUST NOT 是 alpha 0.45 的 rgba）；45% 半透明只出现在卡片、气泡等中小元素上
 
 ### Requirement: 快答成功页主题立绘动画
-提交作答成功后的反馈 SHALL 覆盖全部三条提交路径（快答浮窗、主页消息卡片选项、通知栏直答按钮）：显示当前主题的全身立绘（与主界面 pose 映射一致）。API 28+ SHALL 播放该主题的**动画 WebP 活立绘**（发丝/裙摆/尾尖波动 + 呼吸起伏的无缝循环，素材由 AI 视频模型 Wan2.2 I2V-A14B 以"首尾帧同图"方式生成微动循环、再用原始立绘 alpha 遮罩恢复透明背景后内置于 `res/raw`）——Overshoot 弹跳入场后循环播放，停留约 2.6 秒后自动关闭；API<28 或解码失败 SHALL 退回静图 + 运行时属性动画（以脚底为轴小幅摇摆并轻微浮动、停留约 1.4 秒），行为与 v1.26 一致。播放 SHALL 使用系统 `ImageDecoder`/`AnimatedImageDrawable`，MUST 不引入第三方动画依赖。快答浮窗内嵌展示（底色为主题 `dshCardBg`）；主页选项与通知直答 SHALL 通过全屏透明悬浮窗展示立绘（无背景卡片、无 dim），通知栏后台拉起被系统弹窗管控拦截时 SHALL 以 toast 兜底且不影响提交本身。取问题等待页与通知 largeIcon SHALL 保持鲸鱼团子不变。
+提交作答成功后的反馈 SHALL 覆盖全部三条提交路径（快答浮窗、主页消息卡片选项、通知栏直答按钮）：显示当前主题的全身立绘（与主界面 pose 映射一致）。API 28+ SHALL 播放该主题的**动画 WebP 活立绘**——Overshoot 弹跳入场后循环播放，停留约 2.6 秒后自动关闭；API<28 或解码失败 SHALL 退回静图 + 运行时属性动画（以脚底为轴小幅摇摆并轻微浮动、停留约 1.4 秒），行为与 v1.26 一致。播放 SHALL 使用系统 `ImageDecoder`/`AnimatedImageDrawable`，MUST 不引入第三方动画依赖。快答浮窗内嵌展示（底色为主题 `dshCardBg`）；主页选项与通知直答 SHALL 通过全屏透明悬浮窗展示（无背景卡片、无 dim），通知栏后台拉起被系统弹窗管控拦截时 SHALL 以 toast 兜底且不影响提交本身。取问题等待页与通知 largeIcon SHALL 保持鲸鱼团子不变。
+
+#### Scenario: 活立绘素材的来源与规格
+
+- **WHEN** 任一主题的活立绘素材随包发布
+- **THEN** 素材为无缝循环的微动动画 WebP（发丝/裙摆/尾尖波动 + 呼吸起伏），由 AI 视频模型 Wan2.2 I2V-A14B 以"首尾帧同图"方式生成微动循环、再用原始立绘 alpha 遮罩恢复透明背景后内置于 `res/raw`
 
 #### Scenario: 答完题看到摇摆的鲸鱼娘
 - **WHEN** 用户在快答浮窗提交答案成功
@@ -468,7 +478,37 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 - **THEN** 仍打开该卡片推送来源的链接，行为与 v1.28 一致
 
 ### Requirement: 内置浏览器提问卡窄屏防塌陷
-应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载。补丁 SHALL 包含三条规则：①提问卡头部允许换行（`flex-wrap:wrap`），使右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下时落到下一行；②提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）；③窄屏会话侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），且侧栏展开态 SHALL 以浮层形式呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态 SHALL 回到 DSH 自身的 56px 图标轨道且只显示图标、不残留被裁的会话标题文字。窄屏展开侧栏时，点击内容区（浮层之外）SHALL 触发收起。该样式 SHALL 用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底选取，MUST NOT 硬编码完整哈希类名。注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。补丁 SHALL 同时中性化承载侧栏的网格列（`BynINW_sidebarCol`，以及 `BynINW_frame`）上的包含块触发属性：`backdrop-filter`/`-webkit-backdrop-filter`/`filter`/`transform`/`contain`/`will-change` SHALL 被置为 none/auto，该列 SHALL `overflow:visible`，使 `position:fixed` 的侧栏浮层相对视口而非该 56px 列定位、MUST NOT 被其裁剪；玻璃化注入 MUST NOT 再给这两个容器写 `backdrop-filter`（内联 `!important` 的优先级高于补丁样式表）。「点击内容区收起」的判定 SHALL 依据浮层的实际矩形（点落在浮层矩形内 MUST NOT 触发收起），MUST NOT 依赖硬编码的宽度阈值。窄屏展开态的侧栏面板背景 SHALL 不透明到 88%~92%（色相 SHALL 取自运行时计算的原有背景色，以随亮/暗主题协调），并 SHALL 带 `box-shadow` 形成层次，使背后的会话文字 MUST NOT 透上来与侧栏条目混在一起；收起态的 56px 图标轨道 SHALL 保持玻璃化的半透明底色（约 45%），桌面宽度 SHALL 保持原样。由于玻璃化注入以**内联** `!important` 写背景色（优先级高于补丁样式表），玻璃化那一步 MUST NOT 再设置窄屏展开面板的背景色；该背景色的读写 SHALL 由补丁自行负责（状态切换 SHALL 用监听侧栏 class 变化的观察者同步）。
+应用内浏览器（WebActivity）加载 DSH Web 后 SHALL 注入一段幂等的窄屏补丁样式（按元素 id 查重，重复注入 SHALL 不产生第二个节点；事件监听 SHALL 另有独立标记，重复注入 MUST NOT 重复挂载），全部规则 SHALL 限定在视口 ≤1023px（与 DSH Web 自身的侧栏自动收起断点 `SIDEBAR_AUTO_COLLAPSE = 1024` 一致），使 ≥1024px 的桌面布局与未修补版本一致。窄屏下补丁 SHALL 让提问卡可读、让会话侧栏以浮层呈现且不挤压内容列；注入 SHALL 不影响玻璃化注入、UA 策略、上传下载与错误页等既有行为。
+
+#### Scenario: 提问卡头部换行与文字占满整行
+
+- **WHEN** 窄屏下提问卡的右侧动作组（等待倒计时、等待按钮、最小化/关闭图标）在一行放不下
+- **THEN** 提问卡头部允许换行（`flex-wrap:wrap`）使动作组落到下一行，提问卡文字块占满整行（`flex:1 1 100%` 且 `min-width:0`）
+
+#### Scenario: 窄屏侧栏不占用网格列
+
+- **WHEN** 窄屏下会话侧栏存在
+- **THEN** 侧栏不占用网格列去挤压内容列（中心列恒为「视口宽 − 56px 图标轨道」），展开态以浮层呈现（`position:fixed`、宽 280px、自身可纵向滚动、置于内容之上），关闭态回到 56px 图标轨道且只显示图标、不残留被裁的会话标题文字
+
+#### Scenario: 选择器用属性包含匹配
+
+- **WHEN** 补丁需要选取 DSH Web 的侧栏与网格列元素
+- **THEN** 使用属性包含匹配（`[class*=...]`）加 CSS-module 哈希类名兜底，MUST NOT 硬编码完整哈希类名
+
+#### Scenario: 侧栏浮层不因包含块被裁剪
+
+- **WHEN** 补丁中性化承载侧栏的网格列（`BynINW_sidebarCol` 与 `BynINW_frame`）上的包含块触发属性
+- **THEN** `backdrop-filter`/`-webkit-backdrop-filter`/`filter`/`transform`/`contain`/`will-change` 置为 none/auto、该列 `overflow:visible`，`position:fixed` 的侧栏浮层相对视口而非该 56px 列定位；且玻璃化注入 MUST NOT 再给这两个容器写 `backdrop-filter`（内联 `!important` 优先级高于补丁样式表）
+
+#### Scenario: 浮层收起判定按实际矩形
+
+- **WHEN** 用户点击内容区时判定是否收起浮层
+- **THEN** 判定依据浮层的实际矩形（点落在浮层矩形内 MUST NOT 触发收起），MUST NOT 依赖硬编码的宽度阈值
+
+#### Scenario: 展开面板背景与色相来源
+
+- **WHEN** 窄屏展开态的侧栏面板需要背景
+- **THEN** 不透明度落在 88%~92%、色相取自运行时计算的原有背景色（以随亮/暗主题协调）并带 `box-shadow` 形成层次；收起态的 56px 图标轨道 SHALL 保持玻璃化半透明底色（约 45%），桌面宽度保持原样；由于玻璃化注入以**内联** `!important` 写背景色，玻璃化那一步 MUST NOT 再设置窄屏展开面板的背景色，该背景色的读写 SHALL 由补丁自行负责（状态切换 SHALL 用监听侧栏 class 变化的观察者同步）
 
 #### Scenario: 手机窄屏下提问卡文字横排可读
 - **WHEN** 用户在手机 App 内置浏览器里打开含待答提问卡的 DSH Web 页面（视口约 412 CSS px）
@@ -507,16 +547,12 @@ App SHALL 自动登记推送到达时携带的 DSH 网页实例（按 `host:port
 - **THEN** 侧栏根节点背景色 alpha 回到约 0.45（毛玻璃观感与主题壁纸透出不变），未因面板调实而变成不透明
 
 ### Requirement: 配对载荷导入
+App SHALL 支持以**一份配对载荷**完成推送通道配置，载荷 schema SHALL 与 `deploy/relay-user-add.sh` / `dsh-push-pair` 输出的对象一致（`v` 为 1）。App 侧只使用其中的 `relay`（服务器基址）、`topic`（订阅主题）、`readToken`（订阅凭据）三项。导入入口 SHALL 至少支持"粘贴 JSON 文本"，并在存在系统扫码/文件选择能力时支持"扫码"或"选文件"；导入成功后 SHALL 写回既有配置键（ntfy 基址 / topic / 读令牌），使既有的订阅、常驻通知与通知栏直达作答逻辑无需改动即可工作。载荷非法（非 JSON、`v` 不是 1、缺 `relay`/`topic`/`readToken` 任一项）时 App SHALL 拒绝导入并给出可读原因，MUST NOT 写坏既有配置。
 
-App SHALL 支持以**一份配对载荷**完成推送通道配置，载荷 schema SHALL 与
-`deploy/relay-user-add.sh` / `dsh-push-pair` 输出的对象一致：
-`{v, relay, host, topic, writeToken, readToken, hostToken}`（`v` 为 1）。App 侧只使用其中的
-`relay`（服务器基址）、`topic`（订阅主题）、`readToken`（订阅凭据）三项；`host` 与 `hostToken`
-属主机侧、App MUST NOT 使用，`writeToken` MUST NOT 被 App 使用（只写权限，拿它也发不出通知）。
-导入入口 SHALL 至少支持"粘贴 JSON 文本"，并在存在系统扫码/文件选择能力时支持"扫码"或"选文件"；
-导入成功后 SHALL 写回既有配置键（ntfy 基址 / topic / 读令牌），使既有的订阅、常驻通知与通知栏
-直达作答逻辑无需改动即可工作。载荷非法（非 JSON、`v` 不是 1、缺 `relay`/`topic`/`readToken` 任一项）
-时 App SHALL 拒绝导入并给出可读原因，MUST NOT 写坏既有配置。
+#### Scenario: 载荷字段与 App 的取用范围
+
+- **WHEN** 一份载荷进入导入流程
+- **THEN** 对象为 `{v, relay, host, topic, writeToken, readToken, hostToken}`；`host` 与 `hostToken` 属主机侧、App MUST NOT 使用，`writeToken` MUST NOT 被 App 使用（只写权限，拿它也发不出通知）
 
 #### Scenario: 粘贴载荷完成配置
 

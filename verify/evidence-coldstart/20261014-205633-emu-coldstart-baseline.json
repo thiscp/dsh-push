@@ -1,0 +1,29 @@
+﻿{
+    "at":  "2026-10-14T20:56:33",
+    "coldStartSeconds":  49.8,
+    "coldScriptExit":  0,
+    "selector":  "host",
+    "qemuPid":  28612,
+    "qemuGpu":  "host",
+    "renderer":  "GLES: Google (NVIDIA Corporation), Android Emulator OpenGL ES Translator (NVIDIA GeForce RTX 4060 Laptop GPU/PCIe/SSE2), OpenGL ES 3.1 (4.5.0 NVIDIA 616.92)",
+    "rendererIsNvidia":  true,
+    "softwareRenderer":  false,
+    "wmSize":  "Physical size: 1440x3168",
+    "wmDensity":  "Physical density: 640",
+    "geometryOk":  true,
+    "iniWidthValues":  [
+                           "1440"
+                       ],
+    "iniHeightValues":  [
+                            "3168"
+                        ],
+    "iniDensityValues":  [
+                             "640"
+                         ],
+    "iniGpuEnabled":  [
+                          "yes"
+                      ],
+    "iniExactlyOneEach":  true,
+    "selfhealSha256":  "21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D",
+    "verdict":  "PASS"
+}

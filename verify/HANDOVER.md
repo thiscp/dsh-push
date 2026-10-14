@@ -13,9 +13,9 @@
 | 字段 | 值 |
 |---|---|
 | 本轮主题 | **建团队 + 三角色就绪自检**（用户：把成员建起来、进入随时可开工状态）；承接上一轮的**基础设施巡检 + 模拟器禁 CPU 软渲染加固部署** |
-| **当前阶段** | ✅ 就绪自检完成，**三角色均 READY**（developer task-1+task-3、tester task-2、leader）；仅 **task-4（修 H-1）** 在进行 |
-| **收尾状态** | 收官于 2026-10-14 19:3x。就绪记录：`verify/TEAM-READY-2026-10-14.md`；QA 就绪报告：`verify/STATUS-READY-2026-10-14.md` |
-| **下轮第一件事** | ① 确认 **task-4（H-1）已闭环**（`STATUS-READY` 的 U-7 转为已修）；② 用户若要开工，直接派功能任务——**三条路径（写功能/跑 QA/发布）都已有实测判据**，不需要再摸环境 |
+| **当前阶段** | ✅ **本轮已收官（2026-10-14 22:3x）**：生产 0.2.1 在线、笔电真 GPU、openspec strict **10/10**、本地引擎已修复。**两个队友已按用户要求停止**（`inactive`），后续工作在**另一个对话**开展 |
+| **收尾状态** | 收官于 2026-10-14 22:3x。详见 §5.6（本次收官记录）+ §5.4.4（成员实际进展核查表）+ `verify/INCIDENT-2026-10-14-local-engine-prefill-oom.md`（引擎事故） |
+| **下轮第一件事** | ① 读 §5.6 拿当前全貌；② **未闭环只剩 task-10 的 P03–P06**（写功能/跑 QA/发布三条路径都已有实测判据，不需重新摸环境）；③ **派活给队友前先按 §5.6 的"引擎探活"确认本地引擎能真服务**（本轮踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
 | 团队（本轮建立） | lead + **developer**（`android-app|host-plugin|openspec`）+ **tester**（`verify/**`）；**模型均 = spawn 时 Lead 的模型 `Deepseek-V4.1-Flash`，之后无法更改**（见 §3.10 与 `TEAM-READY` §2） |
 | 笔电现网（上轮变更，仍有效） | `G:\Android\emu-selfheal.ps1` = **加固版 sha256 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`**（源在 `verify/laptop-emu-selfheal.hardened.ps1`）；**旧脚本备份 `emu-selfheal.ps1.bak-f13`（`BE99A7F9…`）可回滚，不需重启 DSH**；选择器 `emu-ladder.gpu=host` |
 | 生产环境 | 桌面 DSH：插件 **0.2.1**（HTTP 401 = 预期，无 token）。token **每次重启必换**，从 `~/.dsh/web.log` 最后一条现取 |
@@ -503,3 +503,254 @@ git fetch origin; git log --oneline origin/master..HEAD   # 对 gitee 云端：�
 3. **GPU 模式下的截图耗时基线未重打**（swiftshader 数字不可对照）。
 4. **QA 报告 §6 未覆盖面**：真机 OriginOS 通知栏行为、30 条消息满载、C03/C04 用例。
 5. **`claimForeground` 两种设置的用户可感差异**：产品取舍待用户拍板。
+
+---
+
+## 4.1 本轮未完成清单（分组；带 owner 与可复核判据）
+
+> 上面 §4 的 5 条是**跨轮长期欠账**；这里是**本轮收尾时仍未闭环**的全部条目。
+> 细节不在此复制，只给"怎么一条命令确认它还没做/已经做了"。
+
+### A. 会留下真实验证缺口（优先）
+
+| 项 | 现状 | owner | 判据 |
+|---|---|---|---|
+| **P02–P06 未跑** | task-10 只完成 **P07**（放行闸）+ **P01**；P02/P03/P04/P05/P06 仍是**设计态** | tester | `Select-String '^### P0[2-6] 实际' verify/QA-ROUND-plugin-0.2.0.md` → **空** 即未跑 |
+| **U-1** | `gate-shot.ps1` / `card-layout-verify.ps1` 只做过**语法解析**，未真跑整轮 | tester | `STATUS-READY-2026-10-14.md` §4 |
+| **U-2** | `qa-round.ps1`/driver 只真跑过 **1 条**最小用例（`QA-C05`） | tester | 同上 |
+| **U-3** | `QA-A10`（极窄视口）/`QA-A16`（成组按钮间距）的几何数字**未标注失效** | tester | 重打 CSS360 基线时**必须一并复核**，别直接套用 |
+| **U-4** | CDP **真输入**（`Input.dispatchMouseEvent`）未验（本轮只到 `/json/list` + `Runtime.evaluate`） | tester | 留待 QA-A14/A19 真点击链路 |
+| **U-5** | 截图耗时未按「剔除预热、n≥3 稳态」重打 | tester | **判档位一律走 `emu-gpu-verdict.ps1`**，不要用耗时数字下结论 |
+| **U-6** | 真机 OriginOS（通知栏/后台被杀/深链落点）未覆盖 | 需真机 | 模拟器天然测不了（`README.md` 末节） |
+| **U-8** | 本轮 **0 条 ntfy**（按纪律不碰生产 topic） | tester | 活体链路由 **P03** 的提问覆盖 |
+
+### B. 基线 / 规格欠账
+
+| 项 | 现状 | 判据 |
+|---|---|---|
+| **真 GPU 冷启基线未重打** | 巡检的 6s 是 **quickboot 快照引导**，不可当基线 | 需造冷启再测 |
+| **CSS360 下 A14/A15/P04 命中区基线未重打** | 旧 411 宽数字已作废 | skill §3 基线声明 |
+| **`openspec --all --strict` 5 项未过** | 实测 **`5 passed, 5 failed`**，**全部 WARNING 级**：`dsh-host-integration`、`dsh-host-plugin`、`dsh-turn-notify`、`push-relay-server` 的 **Purpose 占位或过短**（`dsh-host-plugin` 另有 3 条 requirement **>500 字符**）；`change/plugin-timed-switch` 与 `change/dsh-push-web-link-out-of-box` 均 ✓ | 在 **vm1 仓**跑 `openspec validate --all --strict`（CLI 在 `/usr/local/bin/openspec`）——⚠️ **别用 `npx openspec@1.14.1`：npm 上无该版本，报 `ETARGET`** |
+| **F4/F5/F6 未做** | ① AVD `config.ini` 重复键与 `hw.gpu.enabled=no`；② 三个启动器并存；③ 阶梯缺可判据输出 | `TEAM-READY-2026-10-14.md` §6.4 |
+| **task-3 复用产物在 `F:\work\work_dsh\tmp\`（未进仓）** | 下轮要长期用需落进 `verify/` —— 那是 **tester 的写入范围，须先协调** | `TEAM-READY` §6.8 |
+
+## 5. 收官盘点（任务板 + 环境终态）
+
+### 5.1 任务板终态
+
+| task | 主题 | 状态 |
+|---|---|---|
+| task-1 / task-2 / task-3 / task-4 | 一键全部已读（实现 / 用例 / QA 轮 / 发布 v1.32.9） | ✅ 全 completed |
+| task-5 / task-6 / task-7 / task-8 | 逐条已读撤通知（实现 / 用例 / QA 轮 / 发布 v1.32.10） | ✅ 全 completed |
+| task-9 | host-plugin 设置页开关（openspec + 实现 + selftest） | ✅ completed（`2c971ec` + `c766f19`；selftest 101/101） |
+| task-10 | host-plugin 改动验证轮 | ⚠️ **in_progress**：P07+P01 完成，**P02–P06 未跑**（见 §4.1-A） |
+
+> 就绪自检那一轮的 task-1…task-4（工具链/流水线/QA 起页链/修 H-1）见 `TEAM-READY-2026-10-14.md` §3/§6，
+> 已全部 completed（H-1 已 FIXED，`44129b4`）。
+
+### 5.2 环境终态——复核命令（不重复数值，值见 §1 与 §3.15）
+
+```powershell
+# 生产：插件版本 / patch 哈希 / 端口持有者 / 本 boot 有无切换行
+$p = "$env:USERPROFILE\.dsh\profiles\web"
+([IO.File]::ReadAllText("$p\node_modules\dsh-push-host\package.json") | ConvertFrom-Json).version
+(Get-FileHash "$p\cordis.patch.yml").Hash
+(Get-NetTCPConnection -State Listen -LocalPort 3081 | Select-Object -First 1).OwningProcess
+Select-String -Path "$env:USERPROFILE\.dsh\web.log" -Pattern '手机作答模式|relay ready' | Select-Object -Last 3
+
+# 生产上线状态复核（与预检快照逐项比对，须 exit 0）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\prod-rollout-plugin.ps1 -Verify
+
+# vm1：服务 + 推送链路（先 export PATH，否则 /usr/bin/node 缺 stripTypeScriptTypes）
+ssh user@<tailnet-vm1> 'export PATH=$HOME/.local/bin:$PATH; bash /tmp/vm1-host-onboard.sh verify'
+
+# 三个仓库的云端对齐（判据一律比 origin，**不要比 vm1/master**——那是陈旧脏快照，会误报 ahead 200+）
+git -C F:\work\work_dsh\dsh-push        fetch origin; git -C F:\work\work_dsh\dsh-push        rev-list --count origin/master..HEAD
+git -C C:\Users\<user>\.dsh\skills        rev-list --count origin/main..HEAD
+git -C F:\work\work_dsh\dsh-push-public rev-list --count origin/master..HEAD
+```
+
+### 5.3 能不能收工
+
+| 判断 | 结论 |
+|---|---|
+| **现在能用吗** | ✅ 能：生产 0.2.1 已上线并验收（`-Verify` exit 0 复跑过两次）、vm1 服务与推送可用、三仓云端对齐、团队 READY、**无阻塞项** |
+| **能说"全部做完"吗** | ⏳ **正在补**：用户说"继续"后已把剩余项派出去（见 §5.4）；未完成前不能称"全部做完" |
+| **影响面** | 不影响当前使用；影响的是**下一轮改动有没有可信基线**。真正会漏掉验证的是 **P02**——它是唯一验「设置页状态行文案」的用例，而该文案依赖 cosmokit 私有符号 `Symbol.for('cosmokit.volatile.write')`（符号若改名 → **状态行不刷新**；**零写入安全的另一条路径已单独验过，不会写坏配置**） |
+
+### 5.4 收尾派工（2026-10-14 18:5x，用户"继续"后）
+
+| task | 主题 | owner | 状态 | 关键约束 |
+|---|---|---|---|---|
+| **task-10**（已有） | QA 改动验证轮 P02–P06 | tester | **in_progress（已派工，引擎崩过 2 次）** | P02 生产**只读不点**、记录状态行实际文案；**P05 先于 P03**；P03 用 web-app bundle 的 scratch 第二实例；测完复位+设备状态声明。**新纪律：每跑完一个用例立刻 commit**（引擎两连崩，禁止攒到最后一起写） |
+| **task-11**（新建） | 修 openspec `--all --strict` 5 项 WARNING | ~~developer~~ → **lead 自收** | ✅ **completed**（`2ef326d`）：**vm1 实测 `10 passed, 0 failed`**（此前 5/5）。改 4 处 Purpose（**必改主 spec**，delta 无效）+ 7 处超 500 字正文搬细节进 **13 条新场景**；**需求名与既有场景零改动**（177 条逐字保留 / 0 altered）。记录：[verify/OPENSPEC-STRICT-FIX-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\OPENSPEC-STRICT-FIX-2026-10-14.md)。⚠️ developer 引擎连崩 2 次（均在动笔前），故 lead 接手 |
+| **task-13**（新建） | 修 9 处冷启动配方：`dsh-emu-sw`（CPU 档）→ `emu-coldstart-real-gpu.ps1` | tester | pending，**blocked_by = task-10** | 见 §5.5「F5」行（编号随派工重排） |
+| **task-12**（新建） | 修 9 处冷启动配方：`dsh-emu-sw`（CPU 档）→ `emu-coldstart-real-gpu.ps1` | tester | pending，**blocked_by = task-10** | 与 task-10 **写入范围重叠（都是 `verify/**`）必须串行**；**别删** legacy 任务与 `run-emu*.cmd`（模板/夜间监督仍引用其名字）；`.ps1` 纯 ASCII；**不许真跑冷启**（lead 独占） |
+
+**写入范围**：task-10 / task-12 = `verify/**`（**串行**）；task-11 = `openspec/**`。都不碰 `host-plugin/**` 与生产 profile。
+**我不动 `host-plugin`**（0.2.1 已上线且零写入验证通过，没有要改的）。
+
+#### 5.4.1 引擎崩溃的应对（本轮实测）
+
+developer 与 tester 的引擎**各崩过**（各留一次 "failed before it finished"）。核实结果：**两次崩溃都发生在"还没动笔"阶段**——
+工作树干净、`QA-ROUND-plugin-0.2.0.md` 无 `### P0x 实际`、`openspec/specs/` 无新提交。⇒ **没有半成品残留，无需回滚**。
+应对：① 重新派工时明确"**每完成一个用例立刻 commit**"，把崩溃损失上界压到一个用例；
+② lead 把**不依赖队友、不依赖设备**的欠账自己收（本轮即用此法做掉真 GPU 冷启基线 + F4 冷启验收）。
+**判据（下次崩了照这个查）**：`git status --short` 是否干净 + 目标产物是否出现"实际/证据"小节 + `git log` 有无对应提交。
+
+#### 5.4.2 lead 自己收掉的：真 GPU 冷启基线 + F4 冷启验收（一次冷启同时产出）
+
+新脚本 [emu-coldstart-baseline.ps1](F:\work\work_dsh\dsh-push\verify\emu-coldstart-baseline.ps1)（**纯 ASCII**）：
+默认**只打印计划**，`-Force` 才真冷启（**会杀模拟器**，须设备空闲时跑）→ 调 `emu-coldstart-real-gpu.ps1 -Kill`
+→ 计时 + 量渲染器/几何/config.ini 键重数 → 写 `verify/STATUS-emu-coldstart-baseline.md`（追加节）
+与 `verify/evidence-coldstart/*.json`。**判据**：耗时（exit 0）+ 渲染器含 `NVIDIA` + 几何 `1440x3168`+`640`
++ config.ini 每键**恰好 1 条**（= F4 冷启验收）。**旧 6s 数字作废**（quickboot 快照引导，非冷启）。
+
+#### 5.4.3 ⚠️ **孤儿证据**：引擎崩在"干完活、还没写报告"之间（本轮实际发生，务必照查）
+
+**现象**：用户问"成员的进展"，我按 §5.4.1 的判据查——`git status` 干净、报告无 `### P0x 实际`、
+无对应提交 ⇒ **初步结论"什么都没跑"**。**但这个结论是错的。**
+
+**实情**：tester **已经跑完了 P02**（20:52），**证据全部落盘**，只是引擎在**写报告之前**崩了：
+```
+tmp\shots\p0x\p02-settings.png     (1,416×808, sha256 9aba91b6…)
+tmp\shots\p0x\p02-row-dom.txt      ("found":true, 状态行完整文案)
+tmp\shots\p0x\p02-modal-text.txt
+tmp\p0x\p02-driver.mjs / p02-edge.cmd
+```
+⇒ 若只看 git 与报告，**一次真实的 PASS 会被当成"没跑"而重跑**，既浪费一轮又会得出错误的过程记录。
+
+**教训（并入 §5.4.1 的判据，补第 3 条）**：查"队友到底做了没有"**必须同时查三处**，
+缺任一处都会误判：
+1. `git status --short` + `git log` 有无提交；
+2. 目标产物（报告）有无"实际/证据"小节；
+3. **`tmp\`、`verify\evidence-*\`、`tmp\shots\` 里有无按用例 id 命名的孤儿产物**（含 mtime 落在本轮时间窗内）。
+**判据口诀**：*git 干净 ≠ 没干活；产物在 tmp 就说明干过，只是没来得及入账。*
+
+**处置**：Lead 把 P02 的孤儿证据**取回并代为登记**为 PASS（`d88ac75`），并把两份原始证据拷进
+`verify/evidence-p0x/` 入库，避免 tmp 被清理后再次丢失。登记时**显式标注两处口径修正**：
+① 设计段的按钮文案预期（据 `f8326ce`）**已过时**——0.2.1 的 never-downgrade 守卫使 timed 态
+**不存在降级钮**（实测按钮=`「已开启（本开关不降级）」`+`disabled:true`），设计段担心的"再点就是真写入"
+**在结构上已不可能**；② `p02-hash.txt` 缺失（tester 没来得及写 H0/B0），故 **"H0==H1"降级为传递证据**
+（用 `prod-rollout-state.json` 快照 + `-Verify` exit 0 补强），**不当作"已直接验过"**。
+
+**清理核对（tester 未开工的部分，确认无残留、无需回滚）**：
+`~\.dsh\profiles\qa-p03` **不存在**、`~\.dsh\cordis.patch.yml`（home 层）**不存在**、3099 端口**未监听**、
+`openspec/specs` 工作区干净 ⇒ **P03/P05/P06 确实一步没走**，且**没有半成品残留**。
+
+#### 5.4.4 成员的"实际进展"到底是多少（2026-10-14 22:1x 核查）
+
+| task | 归属 | 宣称状态 | **实际核查结果** |
+|---|---|---|---|
+| task-10 | tester | in_progress | **只完成 P02**（PASS，孤儿证据已抢救登记 `d88ac75`）；**P03/P04/P05/P06 未跑**、无残留 |
+| task-11 | developer→**lead 自收** | ✅ completed | **lead 完成**（`2ef326d`，vm1 实测 `10 passed, 0 failed`） |
+| task-12（=task-13） | tester | pending (blocked_by task-10) | 未开始（被 task-10 阻塞，符合预期） |
+| developer | — | 引擎崩 2 次 | **零产出**（两次都在动笔前崩，无残留） |
+| tester | — | 引擎崩 1 次 | **1 个用例的产出**（P02，已抢救） |
+
+**⇒ 本轮 4 个提交（`7a4aab9`/`2ef326d`/`c89902e`/`d88ac75`）中，只有 1 个源自队友**（且需我抢救登记），
+其余均为 lead 自收。**下轮若继续派活给这两个成员，应预期"引擎随时崩"并据此设计小步提交。**
+
+### 5.5 仍在 backlog（未派工，属"基线欠账"或"需用户拍板"）
+
+| 项 | 为什么留 |
+|---|---|
+| ~~真 GPU 冷启基线未重打~~ | ✅ **已收（2026-10-14 20:56）**：`emu-coldstart-baseline.ps1 -Force` 真跑一次冷启 → **PASS**。冷启 **49.8 s**（阶梯自身 **24 s**）、渲染器 `NVIDIA RTX 4060`、`-gpu host`、`1440x3168@640`、选择器 `host`。**旧 6s 数字作废**（quickboot 快照引导，非冷启）。证据：`verify/STATUS-emu-coldstart-baseline.md` + `verify/evidence-coldstart/20261014-205633-*.json` |
+| ~~F4 冷启验收~~ | ✅ **已收（同一次冷启）**：config.ini 三个 LCD 键**各恰好 1 条**（1440/3168/640）、`hw.gpu.enabled=yes`。⇒ **F4 从"已修"升级为"冷启验证通过"** |
+| ~~U-3 里的几何复核~~ | 部分：本次冷启已确认物理几何未被回退；**`innerWidth=360/dpr=4` 的 CDP 复核仍未做**（需 QA 起页链，并入 U-1/U-4 那批） |
+| CSS360 的 A14/A15/P04 命中区基线 | 重打几何，属独立一轮；SKILL §3 已声明旧数字作废 |
+| U-1（`gate-shot`/`card-layout-verify` 真跑整轮）、U-2（整轮 `qa-round`）、U-4（CDP 真输入）、U-5（截图耗时稳态口径） | QA 侧大工程；U-4 依赖 QA-A14/A19 的真点击链路；等用户决定是否要"体验轮" |
+| U-6 真机 OriginOS | 需用户在真机配合 |
+| **F5 的 9 处配方修正** | ⏳ **已开 task-12**（owner=tester，blocked_by=task-10）：把文档/脚本里的冷启动姿势从 `dsh-emu-sw`（硬编码 CPU 软渲染）改走 `emu-coldstart-real-gpu.ps1`。**lead 自己的三份已改完**（`TEAM-START.md` §0.1、skill `dsh-push-app-dev` §2、本文件） |
+| **F6**（自愈阶梯缺机器可读输出） | 现有 `emu-gpu-verdict.ps1` + `emu-coldstart-real-gpu.ps1 -Status` + `emu-coldstart-baseline.ps1`（写机读 JSON）已覆盖"一条命令判据 + 机读帧"这个需求；**改现网自愈脚本需单独一轮 + 真机回归**，方案见 `INFRA-F4-F5-F6-2026-10-14.md` §3.3 |
+| DSH 上游两条补丁 | **不属本仓**（改 DSH 源码仓） |
+| `claimForeground` 两种设置的产品取舍 | **等用户拍板** |
+
+> **F5 顺带澄清一条**：`dsh-emu-sw` / `dsh-emu` 两个 legacy 任务 `LastTaskResult=1` **不是缺陷**——它们是
+> `Interactive` 身份，**没有 console 会话时不运行**；且 legacy 日志文件可能被幽灵进程锁住（加固版自愈
+> `hardened.ps1:269-277` 正是为此**故意绕开**它们）。**保留但降级为"人类手工兜底"**，别删（`emu-bootstrap.ps1`
+> 模板与夜间监督仍引用其名字）。
+
+---
+
+## 5.6 本次收官记录（2026-10-14 22:3x）——**后续工作在另一个对话开展**
+
+### 5.6.1 为什么停在这里
+
+用户指示：**"找到问题就行了，成员先停止吧，我们的工作已经是在另一个对话开展的了"**。
+⇒ 本轮在此收官：**两个队友已 `interrupt_agent` 停止（现为 `inactive`）**，不再派新活；
+**剩余未闭环项全部登记在下方**，由新的对话接手。
+
+**停止时的清理核对（全部实测，无残留）**：
+
+| 检查 | 结果 |
+|---|---|
+| 队友本轮有无提交 | **0 个**（22:25 后无提交） |
+| `~\.dsh\profiles\qa-p03`（P03 scratch） | **不存在** |
+| `~\.dsh\cordis.patch.yml`（P05 home 层） | **不存在** |
+| 端口 3099 / 3082 / 9224 / 9225 | **全部未监听** |
+| 残留 CDP Edge 实例 | **0** |
+| 误报的两个 PID（30192 / 26220） | **复核后已不存在**（是查询瞬间的瞬态进程，未做任何终止动作） |
+| 工作树 | **干净** |
+| 生产 patch 哈希 / 备份数 | **`D8F12BC0…` / 26**（未被触碰） |
+
+⇒ **停止是干净的**：没有半成品、没有需要回滚的写入、没有占用端口的僵尸实例。
+
+### 5.6.2 本次（22:0x–22:3x）真正交付了什么
+
+| 提交 | 内容 |
+|---|---|
+| `d88ac75` | **抢救 tester 的 P02 孤儿证据并登记为 PASS**（关键项：状态行由 volatile 镜像回写 ⇒ cosmokit 私有符号有效） |
+| `1afdf9a` | HANDOVER §5.4.3 **孤儿证据**教训 + §5.4.4 成员实际进展核查表 |
+| `bdabc16` | **引擎事故根因定位**（`INCIDENT-2026-10-14-local-engine-prefill-oom.md`） |
+| `2ef326d` `c89902e` | openspec strict **10/10 全绿**（4 处 Purpose + 7 处超长正文 → 13 条新场景） |
+| `7a4aab9` `753f789` | 真 GPU 冷启基线 **49.8s/24s** + **F4 冷启验收 PASS** |
+| `de1f8e2` `af109e8` | F5 关键发现（`dsh-emu-sw` 硬编码 CPU 档）+ `emu-coldstart-real-gpu.ps1` |
+| skills `c2f7663` | `gpu-mode-switch` 新增 §0.0 路径/判据更正；`dsh-push-app-dev` 补远端 `.ps1` 纯 ASCII 等硬事实 |
+
+### 5.6.3 未闭环清单（下轮接手，按优先级）
+
+| # | 项 | 归属 | 现状与判据 |
+|---|---|---|---|
+| 1 | **task-10 的 P03 / P04 / P05 / P06** | tester | **唯一的功能性缺口**。P02 已 PASS。用例设计完整（`QA-ROUND-plugin-0.2.0.md`）；P05 须先于 P03；P03 用 web-app bundle 的 scratch `qa-p03` |
+| 2 | **task-12（别名 task-13）：8 处冷启动配方修正** | developer | 已派工但未动笔（被 task-10 阻塞 + 引擎故障）。**lead 自己的三份已改完**（`TEAM-START.md` §0.1、skill `dsh-push-app-dev` §2、HANDOVER §5.5） |
+| 3 | CSS360 的 A14/A15/P04 命中区基线重打 | tester | 旧 411 宽数字已作废 |
+| 4 | U-1 / U-2 / U-4 / U-5（整轮 QA、CDP 真输入、耗时稳态口径） | tester | QA 侧大工程 |
+| 5 | U-6 真机 OriginOS | 需用户 | 模拟器天然测不了 |
+| 6 | F6（自愈阶梯机读输出） | lead | 已有替代品；改现网脚本需单独一轮 + 真机回归 |
+| 7 | DSH 上游两条补丁 | 非本仓 | `tool-ask-user` 默认 timed；`UserQuestionService.ask()` AbortController |
+| 8 | `claimForeground` 产品取舍 | 需用户拍板 | — |
+
+### 5.6.4 ⚠️ **下轮最该先读的一条：本地引擎会"假健康"**
+
+本轮踩过、代价最大的坑（详见 `INCIDENT-2026-10-14-local-engine-prefill-oom.md`）：
+
+- **队友模型 = 本地 `strata-local`；Lead 模型 = 云端** ⇒ **引擎一挂，只死队友**（我全程正常，
+  所以很容易误判成"队友不靠谱"）。事实上 developer 崩 3 次、tester 崩 2 次**全是引擎的锅**。
+- **`/health` 回 `200 {"status":"ok","loaded":true}` 时引擎可能已经挂了 1 小时**：
+  真实症状是每次请求挂满 300s → `pi-ai stream TIMEOUT idle timeout after 300000ms`（重试 5/5 全败）。
+- **唯一有效判据**：真发一次 `POST /v1/chat/completions`（小 prompt 即可）；
+  **离线判据** = 引擎日志**最后一代际**（用 `engine started` 分代际）里有没有
+  `strata serve: prefill: the PLE rows' upload failed: out of memory`。
+- **修复**：`F:\AI\strata\scripts\strata-ctl.cmd restart`（**注意真实路径在 `scripts/` 下**，约 16–90s 起来）。
+- **预防**：派活前确认 RAM 可用 > 10 GB / 显存余量 > 1.5 GB；**队友会话上下文要控**（本轮 `69.9M tok` 是 OOM 放大器）。
+- **连带影响**：引擎挂 ⇒ headless profile 判卷（也是 `strata-local`）挂 ⇒ **卡住的会话叫不醒**。
+  修完引擎顺手跑 `C:\Users\<user>\bin\judge-smoke.mjs`。
+
+### 5.6.5 当前环境终态（新对话可直接依赖）
+
+| 对象 | 状态 |
+|---|---|
+| **生产（桌面 DSH）** | 插件 **0.2.1**；patch `D8F12BC0ED0962126D45DA8EC9CDFFA8128DAA5411E07CA683DFDE79E0563731`（两处 `mode: timed`）；备份 **26**；`-Verify` **exit 0**（本 boot 切换行 0、悬空 bundle 0、正向加载标记 3）。**token 每次重启必换**，取自 `~\.dsh\web.log` 最后一条 `dsh web:` |
+| **笔电模拟器** | **真 GPU** RTX 4060（`-gpu host`）、`1440x3168@640`、`boot_completed=1`；自愈脚本哈希 `21C1856B…`（加固版）；**AVD config.ini 重复键已修**（F4，冷启验收 PASS） |
+| **本地引擎** | 22:21 重启后**正常服务**（实测 GPU 99%、43.3 tok/s、**0 条 PLE OOM**）；RAM 偏紧（约 1.3 GB 可用） |
+| **openspec** | `--all --strict` **10 passed / 0 failed**（vm1 实测） |
+| **仓库** | dsh-push / skills / public 三仓**均已推对齐**；工作树**干净** |
+
+### 5.6.6 给新对话 leader 的开场建议
+
+1. 读**本文件**（§1 快照 → §5.6 收官 → §4/§5.5 未决）→ 再读 `verify/INCIDENT-2026-10-14-local-engine-prefill-oom.md`（引擎坑）。
+2. 若要用队友：**先按 §5.6.4 探活引擎**，再 `spawn`（队友模型在 spawn 时继承 Lead、之后不可改，见 `dsh-team-model-control`）。
+3. 若继续 task-10：**P05 → P03 → P04 → P06**，并要求**每用例即 commit**（引擎抖动环境下把损失上界压到一个用例）。
+4. 判断"队友到底做了没有"：**同查三处**（git 提交 / 报告"实际"小节 / `tmp`+`shots`+`evidence` 的孤儿产物）——
+   **git 干净 ≠ 没干活**（本轮 P02 就是干完活没来得及入账）。

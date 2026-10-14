@@ -20,10 +20,23 @@
 ### 0.1 模拟器：**CSS360 基线（2026-10-13 晚起生效）**
 - AVD `dsh-p16` 已与用户真机同构：**分辨率由 AVD 物理配置 `config.ini` 保证**（`hw.lcd.width=1440` / `hw.lcd.height=3168` / `hw.lcd.density=640`，备份 `config.ini.bak-1440`），CDP 实测 **`innerWidth=360` / `dpr=4`**，与用户真机（最小宽度 360dp）逐像素同构。
   - ⚠ **`wm size/density` 动态 override 会丢**（实测只剩 density 640 → `innerWidth=270`），**不再当持久化手段**；`wm size reset`/`wm density reset` 后物理配置就是正解。改分辨率必须走 config.ini + **冷重启**（动态改还会挂死 `screencap`）。
+  - ✅ **config.ini 重复键已修（F4，2026-10-14 20:35）**：修复前同一组键出现**两次**（出厂 `1080x2400@420` 在 L83/85/88 + 我们的 `1440x3168@640` 在 L141-143），**纯靠"后者胜"的顺序生效**——emulator 自己就会在某些 boot 重写该文件，一旦合并掉重复键就**静默回退到 1080x2400@420、整套 CSS360 基线作废**（症状是"截图看着怪"而非报错）。同时 `hw.gpu.enabled` 由 `no` 改为 `yes`（此前真 GPU 只靠命令行 `-gpu host` 兜着）。
+    修法与证据：`verify/laptop-avd-config-hardening.ps1`（带 `-DryRun`）+ `verify/INFRA-F4-F5-F6-2026-10-14.md` §1；备份 `config.ini.bak-f4-20261014-203537`（一行回滚）。
+    **改动只在下次冷启动生效** ⇒ **下轮首次冷启后必须复核两条**：① `emu-coldstart-real-gpu.ps1` 判 PASS（真 GPU）；② CDP `innerWidth=360 / dpr=4`（几何仍是 CSS360）。
+    `hw.gpu.mode=auto` **有意保留**：硬编码 `host` 会绕过加固版自愈 F3 的软渲染救援分支。
 - **几何基线全部作废重制**：A14 / A15 / P04 等命中区基线是**旧 411 CSS 宽**下量的，360 宽下版面更挤。
   → **基线版本 = CSS360，v1.32.8 起**；**下一轮 QA 首跑必须在新宽度重打 A14/A15/P04 基线**，旧数字不可直接对照。
-- **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通，极具欺骗性）→ 唯一出路是**冷重启**：
-  杀 `qemu-system*`+`emulator` → 清 AVD 锁（`hardware-qemu.ini.lock` 是**目录**，用 `-LiteralPath -Recurse -Force -Confirm:$false`；`multiinstance.lock` 是空文件）→ `schtasks /Run /TN dsh-emu-sw` → 轮询 `getprop sys.boot_completed`；**全程必须在同一次 ssh 会话里**（分成两次 ssh 会被回收）。现成脚本：`F:\work\work_dsh\tmp\emu-cold-1440.ps1`。
+- **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通，极具欺骗性）→ 唯一出路是**冷重启**。
+  ⛔ **禁止用 `dsh-emu-sw` 冷启**（2026-10-14 实测）：它 → `run-emu-sw.cmd` **硬编码 `-gpu swiftshader_indirect` = CPU 软渲染**，
+  与「一律真 GPU」直接冲突，照做起的实例会让几何基线与截图耗时全部作废。**正确且唯一姿势**：
+  ```
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-coldstart-real-gpu.ps1 -Kill
+  ```
+  它做四件事：杀 `qemu`/`emulator` + 清 AVD 锁（`hardware-qemu.ini.lock` 是**目录**用 `-LiteralPath -Recurse -Force`；`multiinstance.lock` 是空文件）
+  → 把 `G:\Android\emu-ladder.gpu` 钉成 `host` → 跑一次**权威**的 `emu-selfheal.cmd` → 轮询 `boot_completed`
+  → **断言渲染器含 NVIDIA**（SwiftShader = FAIL exit 3，读不到 = BLOCKED exit 4 fail-closed）。
+  `-Status` 是纯只读自检。**全程必须在同一次 ssh 会话里**（分成两次 ssh 会被回收）。
+  （旧配方 `schtasks /Run /TN dsh-emu-sw` 与 `tmp\emu-cold-1440.ps1` 已作废；后者的杀进程/清锁部分已被新脚本吸收。）
 - **GPU 策略（2026-10-14 用户拍板 + 追加硬约束）**：模拟器**一律真 GPU（`-gpu host`）**，且**禁止 CPU 软渲染**
   （swiftshader 会让笔电风扇狂转、噪音大）。用户会尽量让笔电**不锁屏、不掉登录**。
   - **唯一权威判据（一条命令）**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-gpu-verdict.ps1`

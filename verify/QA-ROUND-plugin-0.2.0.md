@@ -75,6 +75,59 @@
 - **证据**：`p02-settings.png` + `p02-hash.txt`（H0/H1/B0/B1 原文）
 - **失败语义**：行不出现/状态文案错/按钮文案错=FAIL(P0)；哈希或备份清单变了=FAIL(P0)（QA 侧越界）
 
+### P02 实际（2026-10-14 20:52，tester 执行；Lead 于 21:5x 取回并代为登记）
+
+> **处置说明（重要）**：tester 的引擎在**跑完 P02 之后、写报告之前**崩溃（本轮 developer/tester 引擎共崩 3 次）。
+> 其**证据已落盘但没进报告、也没 commit**。Lead 在核查"成员进展"时发现这批孤儿证据，**代为登记**，
+> 以免一次真实的 PASS 因为引擎崩溃而被当成"没跑"。
+
+**实测证据**（全部为 tester 跑出来的原始文件，Lead 只读取未修改）：
+
+| 项 | 值 |
+|---|---|
+| 截图 | `tmp\shots\p0x\p02-settings.png`（1,416×808，sha256 `9aba91b66fa5427789cc22d1a3a8f2f4525c8965ad7af6dadfa743c2c8b123f0`）——Lead 已 `read_image` 整页肉眼复核 |
+| 行 DOM | `tmp\shots\p0x\p02-row-dom.txt`（538 B） |
+| 模态全文 | `tmp\shots\p0x\p02-modal-text.txt`（1,195 B） |
+| 驱动 | `tmp\p0x\p02-driver.mjs` + `tmp\p0x\p02-edge.cmd`（Edge headless CDP） |
+
+**P02 行 DOM 原文（逐字，未改）**：
+```json
+{"found":true,"text":"手机作答模式已开启：ask_user_question 走 timed——提问会推送到手机，超时后手机答案仍可续答。启用即时热生效、无需重启宿主；新会话立即生效，已开老会话保持旧行为（工具变体钉在会话创建时）。启用前自动备份 cordis.patch.yml。本开关只升不降：要回到 legacy 请手动改 profile 的 cordis.patch.yml。已开启（本开关不降级）","buttons":[{"text":"已开启（本开关不降级）","disabled":true}],"via":"button"}
+```
+
+**逐条判定**：
+
+| # | 断言 | 实测 | 判定 |
+|---|---|---|---|
+| 1 | 设置页出现「手机作答模式」行 | `found: true`，位于「设置 → 通用设置」（模态全文含「当前版本：0.2.0-rc.2」「手机作答模式」） | ✅ |
+| 2 | 状态文案 = timed 文案 | 「已开启：ask_user_question 走 timed——提问会推送到手机，超时后手机答案仍可续答。」+ 代际说明 | ✅ |
+| 3 | **状态行真的刷新了**（= cosmokit 私有符号可用） | 文案由**宿主侧 volatile 镜像 `askUserStatus` 回写**产生，不是静态 label ⇒ 私有符号 `Symbol.for('cosmokit.volatile.write')` **在 0.2.0-rc.2 上有效** | ✅ **关键项通过** |
+| 4 | 按钮文案/禁用态 | 「已开启（本开关不降级）」，`disabled: true` | ✅（**但与设计段预期不同，见下**） |
+| 5 | **全程未写生产**（只读语义） | 见下"哈希口径" | ✅（传递证据） |
+| 6 | 截图肉眼复核 | Lead 已看：模态「通用设置」区可见「手机答题模式」整段文案 + 灰色禁用按钮「已开启（本开关不降级）」，无报错 | ✅ |
+
+**⇒ 结果：PASS**（唯一一项证据口径降级的是 #5，见下）
+
+#### ⚠️ 两条必须登记的修正与缺口
+
+**(1) 设计段的按钮文案预期已过时——不是 FAIL，是文档要改。**
+设计段（据 `f8326ce`）写"timed 态按钮是「停用（回到 legacy）」"。**0.2.1 实际是**
+「已开启（本开关不降级）」**且 `disabled: true`**——因为 0.2.1（`2c971ec`）加了 **never-downgrade 守卫**
+（P0 事故的根因修复：不允许插件反向把生产配置写回 legacy）。
+⇒ **设计段那行按 0.2.1 修正**：timed 态**不存在降级钮**，本开关**只升不降**。
+这也让设计段原本担心的"再点就是真写入"**在结构上已不可能**——比设计假设更安全。
+
+**(2) `p02-hash.txt` 缺失（H0/H1 同会话快照没留下）——如实登记为口径降级。**
+tester 没来得及写 H0/B0。Lead 用**传递证据**补强，并明确其边界：
+- 上线快照 `tmp\prod-rollout-state.json` 记录安装时 `patchSha = D8F12BC0…`、`backupCount = 26`；
+- 现在实测：patch sha256 = `D8F12BC0ED0962126D45DA8EC9CDFFA8128DAA5411E07CA683DFDE79E0563731`、备份 **26**、home 层 `~\.dsh\cordis.patch.yml` **不存在**；
+- `prod-rollout-plugin.ps1 -Verify` 刚复跑 **exit 0 / PASS**（该脚本逐项比对上述快照）。
+⇒ **"生产未被 P02 写入"成立**（哈希与备份数与安装时快照逐项一致，且本 boot 切换日志 0 行）。
+**但**"H0==H1"这一条**没有 20:52 时刻的同会话存证**，属**传递证据而非直接证据**——按纪律显式登记，
+不当成"已直接验过"。
+
+**证据文件**：`tmp\shots\p0x\p02-settings.png`、`p02-row-dom.txt`、`p02-modal-text.txt`、`tmp\p0x\p02-driver.mjs`
+
 ## P05 失败路径：home 层覆盖（scratch，翻转前跑；P1）
 
 - **前置**：scratch 已建已装已起（见 P03 前置，P05 在 P03 翻转动作**之前**执行）；home 层不存在已确认

@@ -1,7 +1,7 @@
 # dsh-host-integration Specification
 
 ## Purpose
-TBD - created by archiving change windows-dsh-web-push. Update Purpose after archive.
+定义 DSH Web 主机接入推送时"钩子链路"的外部可观察契约：桥插件的挂载语义、生效条件（沙箱档位与 temp 根位置），以及条件未满足时应表现出的静默行为。
 
 ## Requirements
 

@@ -132,9 +132,23 @@ FINDING-1 [P1] <一句话标题>
 
 > 本节是**硬事实**，写用例前必读；与旧轮次报告里的数字冲突时**以本节为准**。
 
-1. **几何基线版本 = CSS360（v1.32.8 起）**：AVD `dsh-p16` 已与用户真机同构——**分辨率由 AVD 物理配置 `config.ini` 保证**（`hw.lcd.width=1440` / `hw.lcd.height=3168` / `hw.lcd.density=640`，备份 `config.ini.bak-1440`），CDP 实测 `innerWidth=360 / dpr=4`。**`wm size/density` 动态 override 会丢**（实测只剩 density 640 → `innerWidth=270`），一律 `wm size reset` / `wm density reset`，不再当持久化手段。
-   → **A14 / A15 / P04 等命中区基线是旧 411 CSS 宽下量的，全部作废**：**下一轮 QA 首跑必须在 360 宽下重打基线**，旧数字不可对照。
-2. **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通）→ 只能**冷重启**：杀 `qemu-system*`+`emulator` → 清 AVD 锁（`hardware-qemu.ini.lock` 是目录，用 `-LiteralPath -Recurse -Force -Confirm:$false`）→ `schtasks /Run /TN dsh-emu-sw` → 轮询 `boot_completed`，**全程同一次 ssh**。现成脚本：`F:\work\work_dsh\tmp\emu-cold-1440.ps1`。
+1. **几何基线版本 = CSS360（v1.32.8 起）**：AVD `dsh-p16` 已与用户真机同构——**分辨率由 AVD 物理配置 `config.ini` 保证**（`hw.lcd.width=1440` / `hw.lcd.height=3168` / `hw.lcd.density=640`），CDP 实测 `innerWidth=360 / dpr=4`。**`wm size/density` 动态 override 会丢**（实测只剩 density 640 → `innerWidth=270`），一律 `wm size reset` / `wm density reset`，不再当持久化手段。
+   **⚠️ F4 已修（2026-10-14）**：`config.ini` 原先**同一组键重复两次**（出厂 `1080/2400/420` + 我们的 `1440/3168/640`）且 `hw.gpu.enabled = no`，纯靠"后者胜"的顺序；任何规范化/重写都可能**静默回退到 1080x2400@420、CSS360 当场作废**。已由 `verify\laptop-avd-config-hardening.ps1` 去重为每键 1 条 + `hw.gpu.enabled=yes`，备份 `config.ini.bak-f4-20261014-203537`。**复核判据**：`config.ini` 里 `hw.lcd.width|height|density` **各只 1 行**、值为 `1440/3168/640`、`hw.gpu.enabled = yes`。
+   （旧备份名 `config.ini.bak-1440` 已被 F4 的备份取代；`hw.gpu.mode=auto` **故意保留**，别硬编码 `host`，否则绕过 F3 的软渲染救援分支。）
+   → **A14 / A15 / P04 等命中区基线是旧 411 CSS 宽下量的，全部作废**：**下一轮 QA 首跑必须在 360 宽下重打基线**，旧数字不可对照（两个用例文件里的旧数字**已就地标注 ⚠️ 作废**）。
+2. **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通）→ 只能**冷重启**。
+   ⛔ **旧配方已作废、禁止照做**（2026-10-14 实测）：~~`schtasks /Run /TN dsh-emu-sw` + `tmp\emu-cold-1440.ps1`~~
+   —— **`dsh-emu-sw` → `G:\Android\run-emu-sw.cmd` 硬编码 `-gpu swiftshader_indirect` = CPU 档**，
+   照做会起一个**软渲染**实例（违反用户"禁 CPU"约束，且几何基线与截图耗时全部作废）。
+   ✅ **唯一正确姿势**：
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-coldstart-real-gpu.ps1 -Kill
+   ```
+   （= 杀进程 + 清 AVD 锁 → 把 `G:\Android\emu-ladder.gpu` 钉成 `host` → 跑权威自愈 → 轮询 `boot_completed=1`
+   → **断言渲染器含 `NVIDIA`**：`SwiftShader=FAIL exit 3`、读不到=`BLOCKED exit 4`，fail-closed。）
+   `-Status` 为纯只读自检。**冷启后必须复核两条**：① 真 GPU；② CDP `innerWidth=360/dpr=4`（CSS360 几何仍在）。
+   > **QA 红线不变**：**不要自己切 GPU 模式、不要自己冷启笔电**（那是 lead 的现场）。若发现模拟器需冷启，
+   > **报告 lead**；确需自己执行时只用上面这条脚本，**绝不碰 `dsh-emu-sw`**。
 3. **子代理发不了 `ask_user_question`**（harness 报 "owned by another live agent"）→ N5 类"真实折回"用例**必须借 lead 会话发问**。
 4. **桌面 web token 每次 DSH 重启必换**：脚本一律从 `C:\Users\<user>\.dsh\web.log` 取**最后一条** `dsh web:` 行的 `token=`，并把 `127.0.0.1:3081` 替换为 `<tailnet-windows>:3080`。
 5. **新用例 QA-A18（手机作答即时 vs 180s 折回）**：给 `web.log` 的 `[dsh-push-host]` 行打**毫秒时间戳**的 watcher；判据 = `answered (foreground)`（即时；`claimForeground=on`，实测 **3726ms**，`call_5841f145…`）还是 `returned pending` + `answered (continued)`（迟到作答，等 timed 超时后才折回）。完整链路见 `verify/QA-ROUND-v1.32.8.md`。

@@ -1,7 +1,7 @@
 # dsh-turn-notify Specification
 
 ## Purpose
-定义 DSH Web 侧"轮次结束触发推送"的行为契约：触发时机、载荷、失败隔离、去重。
+定义 DSH Web 侧"轮次结束触发推送"的行为契约：一轮 agent 停止时的触发时机、通知载荷与标题格式、失败隔离（推送失败不得阻塞轮次结束），以及同一轮次的去重规则。
 
 ## Requirements
 

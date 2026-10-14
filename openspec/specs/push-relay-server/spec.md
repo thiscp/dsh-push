@@ -1,7 +1,7 @@
 # push-relay-server Specification
 
 ## Purpose
-定义阿里云上自建 ntfy 推送服务的外部可观察行为：HTTPS 可达性、写入鉴权、重启自愈。
+定义阿里云上自建 ntfy 推送服务（`https://ntfy.cpyh.xyz`）的外部可观察行为：HTTPS 与 WebSocket 可达性、写入鉴权、边缘 nginx SNI 分流、证书自动续期，以及重启后的自愈。
 
 ## Requirements
 

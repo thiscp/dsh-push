@@ -1,0 +1,1 @@
+{"found":true,"text":"手机作答模式已开启：ask_user_question 走 timed——提问会推送到手机，超时后手机答案仍可续答。启用即时热生效、无需重启宿主；新会话立即生效，已开老会话保持旧行为（工具变体钉在会话创建时）。启用前自动备份 cordis.patch.yml。本开关只升不降：要回到 legacy 请手动改 profile 的 cordis.patch.yml。已开启（本开关不降级）","buttons":[{"text":"已开启（本开关不降级）","disabled":true}],"via":"button"}

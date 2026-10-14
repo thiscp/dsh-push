@@ -1,7 +1,7 @@
 # dsh-host-plugin Specification
 
 ## Purpose
-TBD - created by archiving change dsh-host-plugin-push. Update Purpose after archive.
+定义 `dsh-push-host` 宿主插件的行为契约：挂载与生效条件、提问与轮次两类推送、前台作答权归属、手机作答回灌与作答回声、轮询可靠性，以及配置、凭据文件与包分发。
 
 ## Requirements
 
@@ -190,14 +190,17 @@ SHALL 至多推送一次；推送 SHALL 以 fire-and-forget 方式发出，失�
 - **THEN** 插件使用 profile patch 的值，凭据文件仅补足未显式配置的槽位
 
 ### Requirement: 包分发
+`dsh-push-host` SHALL 是一个可直接发布的 npm 包：元数据齐全、随包带 MIT `LICENSE`、打包清单只含运行所需文件，`main` 与 `dsh.bundle.patch` SHALL 分别指向 `lib/index.js` 与随包的 `cordis.patch.yml`。安装 SHALL 支持三种等价方式（npm 名、tarball、本地目录），三者 SHALL 都把包写入 profile 的 `dependencies` 并在 `dsh.profile.bundles` 登记同名 bundle 层。
 
-`dsh-push-host` SHALL 是一个可直接发布的 npm 包：`package.json` SHALL 含 `repository`、`homepage`、
-`bugs`、`author`、`engines`、`publishConfig.access = public` 与 `files` 白名单（`lib`、
-`cordis.patch.yml`、`README.md`、`LICENSE`），包内 SHALL 带 MIT `LICENSE`；`main` SHALL 指向
-`lib/index.js`，`dsh.bundle.patch` SHALL 指向随包的 `cordis.patch.yml`。安装 SHALL 支持三种等价方式：
-从 npm 名（`dsh plugin --profile <profile> add dsh-push-host`）、从 tarball
-（`… add ./dsh-push-host-<version>.tgz`）、从本地目录（`… add link:<dir>`），三者 SHALL 都把包写入
-profile 的 `dependencies` 并在 `dsh.profile.bundles` 登记同名 bundle 层。
+#### Scenario: 包元数据与运行入口
+
+- **WHEN** 检查随包发布的 `package.json`
+- **THEN** 含 `repository`、`homepage`、`bugs`、`author`、`engines`、`publishConfig.access = public` 与 `files` 白名单（`lib`、`cordis.patch.yml`、`README.md`、`LICENSE`）；包内带 MIT `LICENSE`；`main` 指向 `lib/index.js`，`dsh.bundle.patch` 指向随包的 `cordis.patch.yml`
+
+#### Scenario: 三种安装方式等价
+
+- **WHEN** 分别从 npm 名（`dsh plugin --profile <profile> add dsh-push-host`）、tarball（`… add ./dsh-push-host-<version>.tgz`）与本地目录（`… add link:<dir>`）安装
+- **THEN** 三者都把包写入 profile 的 `dependencies`，并在 `dsh.profile.bundles` 登记同名 bundle 层
 
 #### Scenario: 从 tarball 安装即挂载
 
@@ -218,17 +221,12 @@ profile 的 `dependencies` 并在 `dsh.profile.bundles` 登记同名 bundle 层�
   不读取仓库里的任何路径
 
 ### Requirement: 凭据文件
+插件 SHALL 支持从凭据文件读取通道凭据，默认位置 SHALL 为 `~/.config/dsh-push/credentials.json`，并 SHALL 可被配置项 `credentialsFile` 或环境变量 `DSH_PUSH_CREDENTIALS` 覆盖。凭据文件 SHALL 直接接受 `deploy/relay-user-add.sh` 输出的配对载荷字段名与常见别名，并 SHALL 支持多 host 形式（根字段为默认值，`hosts[host]` 覆盖）。取值优先级 SHALL 为**内置默认 < 凭据文件 < profile/overlay 配置 < 环境变量**。凭据文件不存在 SHALL 为干净 no-op（不报错、不打印抱怨、不发起网络请求，插件退化为透明监听器）；文件存在但不可读或 JSON 非法时 SHALL 记录一行含路径的日志并继续挂载。
 
-插件 SHALL 支持从凭据文件读取通道凭据，默认位置 SHALL 为 `~/.config/dsh-push/credentials.json`，
-并 SHALL 可被配置项 `credentialsFile` 或环境变量 `DSH_PUSH_CREDENTIALS` 覆盖。凭据文件 SHALL 直接接受
-`deploy/relay-user-add.sh` 输出的配对载荷字段名：`relay`→relay 基址、`host`→hostId、
-`topic`→ntfy topic、`writeToken`→本机 ntfy 写令牌、`readToken`→手机 ntfy 读令牌、
-`hostToken`→relay 队列令牌；SHALL 接受键名大小写/连字符差异与常见别名
-（`ntfyToken`/`pushToken`/`tkPub`、`phoneToken`/`tkRead`、`relayBase`/`base`、`hostId`），
-并 SHALL 支持多 host 形式（根字段为默认值，`hosts[host]` 覆盖）。取值优先级 SHALL 为
-**内置默认 < 凭据文件 < profile/overlay 配置 < 环境变量**。凭据文件不存在 SHALL 为干净 no-op
-（不报错、不打印抱怨、不发起网络请求，插件退化为透明监听器）；文件存在但不可读或 JSON 非法时
-SHALL 记录一行含路径的日志并继续挂载。
+#### Scenario: 字段名与别名映射
+
+- **WHEN** 凭据文件按 `relay-user-add.sh` 的字段名或常见别名写出
+- **THEN** 映射为 `relay`→relay 基址、`host`→hostId、`topic`→ntfy topic、`writeToken`→本机 ntfy 写令牌、`readToken`→手机 ntfy 读令牌、`hostToken`→relay 队列令牌；键名大小写/连字符差异与别名（`ntfyToken`/`pushToken`/`tkPub`、`phoneToken`/`tkRead`、`relayBase`/`base`、`hostId`）SHALL 同样被接受
 
 #### Scenario: 载荷存成凭据文件即生效
 
@@ -252,15 +250,12 @@ SHALL 记录一行含路径的日志并继续挂载。
 - **THEN** 插件打印一行 `credentials ignored: …`（含路径）后继续挂载，其余功能不受影响
 
 ### Requirement: 配对载荷
+插件 SHALL 提供一条命令产出单个用户的配对载荷，字段与 `deploy/relay-user-add.sh` **逐字同构**：`{v, relay, host, topic, writeToken, readToken, hostToken}`（`v` SHALL 为 1，字段顺序 SHALL 一致）。载荷字段 SHALL 全部来自凭据文件（`relay` 可取插件实际使用的 relay 基址），命令 SHALL NOT 凭空生成任何令牌；当任一字段缺失时命令 SHALL 以非零退出并列出缺失字段，MUST NOT 输出半份载荷。命令 SHALL 同时提供只读自检 `verify`：逐项打印 PASS/FAIL，任一失败即非零退出，且 SHALL NOT 读取其他 host 的队列、SHALL NOT 修改 relay 状态。
 
-插件 SHALL 提供一条命令产出单个用户的配对载荷，字段与 `deploy/relay-user-add.sh` **逐字同构**：
-`{v, relay, host, topic, writeToken, readToken, hostToken}`（`v` SHALL 为 1，字段顺序 SHALL 一致）。
-载荷字段 SHALL 全部来自凭据文件（`relay` 可取插件实际使用的 relay 基址），命令 SHALL NOT 凭空生成
-任何令牌；当任一字段缺失时命令 SHALL 以非零退出并列出缺失字段，MUST NOT 输出半份载荷。
-命令 SHALL 同时提供只读自检能力：`verify` SHALL 逐项检查凭据文件可读、载荷字段齐全、
-`GET /answer/pending?host=<host>` + `X-Host-Token` 返回 200、`GET /<topic>/json?poll=1` + 读令牌
-返回 200、`POST /` + 写令牌返回 200，并 SHALL 逐项打印 PASS/FAIL 与非零退出（任一失败）；
-自检 SHALL NOT 读取其他 host 的队列、SHALL NOT 修改 relay 状态。
+#### Scenario: 自检的五项检查
+
+- **WHEN** 用真令牌执行 `verify`
+- **THEN** 逐项检查凭据文件可读、载荷字段齐全、`GET /answer/pending?host=<host>` 带 `X-Host-Token` 返回 200、`GET /<topic>/json?poll=1` 带读令牌返回 200、`POST /` 带写令牌返回 200
 
 #### Scenario: 生成载荷给手机
 

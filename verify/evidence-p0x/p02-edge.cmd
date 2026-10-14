@@ -1,0 +1,1 @@
+"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" --headless=new --remote-debugging-port=9224 --user-data-dir="F:\work\work_dsh\tmp\p0x\edge-profile" --window-size=1440,900 --no-first-run --no-default-browser-check "http://127.0.0.1:3080/?token=q1g59K5eVsvG0g38eQqbnZEYlNyBmIcoBtiaC8r2Ox0"
