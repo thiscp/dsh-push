@@ -2,7 +2,7 @@
 #
 # Flow (order is load-bearing, see HARD FACTS below):
 #   preflight ssh (fail fast) -> seed token prefs -> build on vm1 -> push APK to emulator host
-#     -> ONE ssh session: ensure emulator (clear AVD locks / run dsh-emu-sw / wait for boot)
+#     -> ONE ssh session: ensure emulator (clear AVD locks / pin selector to host / run emu-selfheal / wait for boot)
 #        + install + publish test push + assert prefs + screenshot
 #     -> pull screenshot -> (optional) deploy to aliyun -> SUMMARY
 # Run from the orchestrator machine (the one holding ssh keys to all hosts).
@@ -21,8 +21,12 @@
 #    (a later check saw the emulator survive a session end, so it looks like a race at session
 #    release rather than a guaranteed reap) - same session is simply the recipe that works.
 #    (The test push is therefore published from inside that same session, with curl on the host.)
-#  * The launcher task is dsh-emu-sw (-gpu swiftshader_indirect). dsh-emu (-gpu host) crashes in
-#    non-interactive sessions (gfxstream "glTexImage2D ... 0x502", LastTaskResult=1).
+#  * The launcher task is emu-selfheal (the HARDENED ladder), NOT dsh-emu-sw. dsh-emu-sw -> run-emu-sw.cmd
+#    hardcodes "-gpu swiftshader_indirect" = CPU rendering, which the user forbids (fan noise) and which
+#    invalidates the CSS360 geometry + screencap timing. The old note here claimed dsh-emu (-gpu host)
+#    "crashes in non-interactive sessions (glTexImage2D 0x502)" - THAT PREMISE WAS FALSIFIED 2026-10-14:
+#    with the console session DISCONNECTED, -gpu host still came up (6s, renderer = RTX 4060). So the
+#    self-heal skips rung-1 no longer, and this pipeline pins the selector to "host" before launching.
 #  * Emulator host address is the Tailscale IP (DESKTOP-CPYH). The LAN address drifts and its
 #    firewall blocks new connections - see config.local.ps1 / config.example.ps1.
 param(
@@ -223,8 +227,11 @@ $ErrorActionPreference="Continue"
 $ConfirmPreference="None"   # a confirmation prompt over ssh blocks forever: stdin is the channel
 $adb   = "G:\Android\Sdk\platform-tools\adb.exe"
 $curl  = "C:\Windows\System32\curl.exe"
-$avdCm = "G:\Android\run-emu-sw.cmd"
-$task  = "dsh-emu-sw"
+$avdCm = "G:\Android\run-emu.cmd"
+# BANNED: dsh-emu-sw -> run-emu-sw.cmd hardcodes -gpu swiftshader_indirect = CPU rendering.
+# User forbids CPU rendering (fan noise) and it invalidates the CSS360 geometry + screencap timing.
+# Authoritative launcher = the hardened self-heal (it reads the selector file and pins rung 1 to host).
+$task  = "emu-selfheal"
 $apk   = "G:\Android\dsh-push.apk"
 $bootSec   = __BOOTSEC__
 $assertSec = __ASSERTSEC__
@@ -268,6 +275,8 @@ if (-not $serial) {
     }
     else { "LOCK_ABSENT=" + $p }
   }
+  # pin the persistent selector to host so the (hardened) ladder's rung 1 is the real GPU
+  Set-Content "G:\Android\emu-ladder.gpu" "host" -Encoding ASCII -Force
   schtasks /Run /TN $task 2>&1 | Out-Null
   "TASK_RUN=" + $task + " " + (Get-Date -Format HH:mm:ss)
   $t0 = Get-Date
@@ -283,8 +292,8 @@ if (-not $serial) {
 "EMU_AFTER=" + $(if ($serial) { $serial } else { "none" })
 if (-not $serial) {
   "EMU_FAIL=no device after " + $bootSec + "s"
-  "emu-sw-err.txt tail:"
-  (Get-Content "G:\Android\emu-sw-err.txt" -Tail 10 -ErrorAction SilentlyContinue)
+  "emu-ladder-rung.err tail (self-heal rung, formerly emu-sw-err.txt):"
+  (Get-Content "G:\Android\emu-ladder-rung.err" -Tail 10 -ErrorAction SilentlyContinue)
   "### DRIVE DONE rc=1"
   exit 1
 }

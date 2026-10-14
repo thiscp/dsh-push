@@ -208,13 +208,15 @@ function DevicePresent { ("" + (((& `$adb devices) 2>&1) -join ' ')) -match 'emu
 function AppPid { ((((& `$adb shell pidof xyz.cpyh.dshpush) 2>&1) -join '').Trim()) }
 & `$adb start-server | Out-Null
 if (-not (DevicePresent)) {
-  'no device: starting dsh-emu-sw'
+  'no device: starting the hardened self-heal (rung 1 = -gpu host)'
   `$avd = "`$env:USERPROFILE\.android\avd\dsh-p16.avd"
   Remove-Item "`$avd\hardware-qemu.ini.lock" -Recurse -Force -ErrorAction SilentlyContinue
   Remove-Item "`$avd\multiinstance.lock" -Recurse -Force -ErrorAction SilentlyContinue
-  # dsh-emu is the real-GPU task (it works when the laptop has a console session; the sw
-  # variant exists for non-interactive sessions). Never run both.
-  schtasks /Run /TN dsh-emu | Out-Null
+  # PIN the selector to host first: the hardened ladder reads this file for rung 1.
+  # BANNED: dsh-emu-sw -> run-emu-sw.cmd hardcodes -gpu swiftshader_indirect = CPU rendering
+  # (user forbids it - fan noise - and it invalidates CSS360 geometry + screencap timing).
+  Set-Content "G:\Android\emu-ladder.gpu" "host" -Encoding ASCII -Force
+  schtasks /Run /TN emu-selfheal | Out-Null
   for (`$i=0; `$i -lt 60; `$i++) { Start-Sleep 4; if (DevicePresent) { break } }
 }
 & `$adb root | Out-Null

@@ -50,31 +50,37 @@ $cfg = "$avdDir\config.ini"
 
 # ---------- 5. wrapper cmds + scheduled tasks (scheduled task = the only sanctioned launcher:
 # sshd reaps the session's children) ----------
-# HARD FACT (verify/README.md): "-gpu host" crashes in a NON-interactive session (gfxstream
-# "glTexImage2D ... error 0x502", LastTaskResult=1) - which is exactly how a scheduled task runs.
-# So the DEFAULT task is `dsh-emu-sw` (-gpu swiftshader_indirect): it is the one
-# dsh-app-verify.ps1 / bw-iter.ps1 run, and a fresh box without it looks like "emulator never
-# started" to the nightly. The old `dsh-emu` (-gpu host) wrapper is kept only for a human sitting
-# at the desktop console session; nothing automated should use it.
+# 2026-10-14 CORRECTION - the old rule here was WRONG and has been removed:
+#   It said "-gpu host crashes in a NON-interactive session (gfxstream glTexImage2D 0x502), so the
+#   DEFAULT task is dsh-emu-sw (swiftshader)". That premise was FALSIFIED by measurement: with the
+#   console session DISCONNECTED, `-gpu host` came up in ~6s and the guest renderer was the host
+#   NVIDIA adapter. Meanwhile CPU rendering (swiftshader) is explicitly FORBIDDEN by the user
+#   (it spins the laptop fans), and it invalidates the CSS360 geometry + screencap timing.
+# So: dsh-emu (-gpu host) is the launcher, and run-emu-sw.cmd is kept ONLY as a manual
+# last-resort, never as the default. Prefer the hardened self-heal task (emu-selfheal), which
+# pins rung 1 to `-gpu host` from the selector file and fails closed if the renderer is not NVIDIA.
 $emuExe = "$Root\Sdk\emulator\emulator.exe"
-@"
-@echo off
-"$emuExe" -avd $AvdName -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -cores $Cores -memory $RamMB > $Root\emu-sw-out.txt 2> $Root\emu-sw-err.txt
-"@ | Set-Content "$Root\run-emu-sw.cmd" -Encoding ASCII
 @"
 @echo off
 "$emuExe" -avd $AvdName -no-window -no-audio -no-boot-anim -gpu host -cores $Cores -memory $RamMB > $Root\emu-out.txt 2> $Root\emu-err.txt
 "@ | Set-Content "$Root\run-emu.cmd" -Encoding ASCII
-schtasks /Create /TN dsh-emu-sw /TR "$Root\run-emu-sw.cmd" /SC ONCE /ST 00:00 /F | Out-Null
+@"
+@echo off
+rem LAST-RESORT ONLY (CPU rendering = swiftshader). NOT the default: the user forbids CPU rendering.
+"$emuExe" -avd $AvdName -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -cores $Cores -memory $RamMB > $Root\emu-sw-out.txt 2> $Root\emu-sw-err.txt
+"@ | Set-Content "$Root\run-emu-sw.cmd" -Encoding ASCII
 schtasks /Create /TN dsh-emu /TR "$Root\run-emu.cmd" /SC ONCE /ST 00:00 /F | Out-Null
-foreach ($tn in @("dsh-emu-sw","dsh-emu")) {
+schtasks /Create /TN dsh-emu-sw /TR "$Root\run-emu-sw.cmd" /SC ONCE /ST 00:00 /F | Out-Null
+foreach ($tn in @("dsh-emu","dsh-emu-sw")) {
   $t = Get-ScheduledTask -TaskName $tn
   $t.Settings.DisallowStartIfOnBatteries = $false
   $t.Settings.StopIfGoingOnBatteries = $false
   Set-ScheduledTask -TaskName $tn -Settings $t.Settings | Out-Null
 }
-Write-Host "starting the emulator via dsh-emu-sw (swiftshader); dsh-emu (-gpu host) is desktop-session only"
-schtasks /Run /TN dsh-emu-sw | Out-Null
+# pin the ladder selector to the real GPU before starting anything
+Set-Content "$Root\emu-ladder.gpu" "host" -Encoding ASCII -Force
+Write-Host "starting the emulator via dsh-emu (-gpu host; CPU/swiftshader is FORBIDDEN - see verify/README.md)"
+schtasks /Run /TN dsh-emu | Out-Null
 
 # ---------- 6. wait for boot ----------
 $adb = "$Root\Sdk\platform-tools\adb.exe"

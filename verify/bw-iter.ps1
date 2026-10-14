@@ -6,11 +6,16 @@
 #    fail in ~10s instead of hanging silently (2026-10-13: a stale LAN IP sat for 34 minutes).
 #  * every child process runs under a watchdog (per-step timeout + whole-script budget); on
 #    timeout it prints which step / which command / what error and exits non-zero.
-#  * the emulator is started (clear stale AVD locks + scheduled task dsh-emu-sw) AND driven in ONE
+#  * the emulator is started (clear stale AVD locks + pin selector to host + run the hardened
+#    self-heal task emu-selfheal) AND driven in ONE
 #    ssh session - splitting it failed twice on 2026-10-13 (install ok, then "am start" answers
 #    "adb.exe: error: no devices/emulators found"); the exact cause is not pinned down, so treat
 #    same-session as the reliable recipe, not as a law of nature.
-#  * launcher task is dsh-emu-sw (-gpu swiftshader_indirect); dsh-emu (-gpu host) crashes in
+#  * launcher task is emu-selfheal (hardened ladder); dsh-emu-sw -> run-emu-sw.cmd hardcodes
+#    "-gpu swiftshader_indirect" = CPU rendering, which the user forbids (fan noise) and which
+#    invalidates CSS360 geometry + screencap timing. The old claim that dsh-emu (-gpu host)
+#    "crashes in non-interactive sessions" was FALSIFIED 2026-10-14 (console disconnected,
+#    -gpu host still up in 6s, renderer = RTX 4060).
 #    non-interactive sessions (gfxstream glTexImage2D 0x502).
 param(
   [int]$TotalTimeoutSec = 1800,
@@ -133,8 +138,11 @@ $emuTpl = @'
 $ErrorActionPreference="Continue"
 $ConfirmPreference="None"
 $adb = "G:\Android\Sdk\platform-tools\adb.exe"
-$avdCm = "G:\Android\run-emu-sw.cmd"
-$task = "dsh-emu-sw"
+$avdCm = "G:\Android\run-emu.cmd"
+# BANNED: dsh-emu-sw -> run-emu-sw.cmd hardcodes -gpu swiftshader_indirect = CPU rendering
+# (user forbids it: fan noise; also invalidates CSS360 geometry + screencap timing).
+# Authoritative launcher = the hardened self-heal; the selector file is pinned to host below.
+$task = "emu-selfheal"
 $bootSec = __BOOTSEC__
 function CurSerial {
   $s = ""
@@ -159,6 +167,7 @@ if (-not $serial) {
     }
     else { "LOCK_ABSENT=" + $p }
   }
+  Set-Content "G:\Android\emu-ladder.gpu" "host" -Encoding ASCII -Force
   schtasks /Run /TN $task 2>&1 | Out-Null
   "TASK_RUN=" + $task
   $t0 = Get-Date
