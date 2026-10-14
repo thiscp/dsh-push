@@ -1254,6 +1254,71 @@ SUMMARY: 9/9 passed
 3. **若用户报告壁纸偶发消失** ⇒ 优先查 **`U-6`**（设备曾无故消失）+ **注入 vs 重渲染竞态**的其它层
    （`QA-A32` 已是常驻用例；本轮只修了 `Dc7zOa_root`，**其它原生不透明的容器是否同类风险未逐一验证**）。
 
+### 3.20.21 🔴 开源同步时发现**真实 IP 泄漏**（既有事故，本轮已修 + 加固）— 2026-10-15 03:2x
+
+#### 事故
+
+本轮 `export-public.ps1` 同步后，我用**全文件扫描**（不限扩展名）复查公开镜像，发现：
+
+```
+dsh-push-public: verify/vm1-dshnet-check.sh:37: PUBLIC_HOST="<tailnet-vm1>"
+```
+
+**⇒ 真实的 vm1 内网 IP 泄漏到了公开仓库**（GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push`）。
+**起始点**：`db65c51`（"sync from private: emulator GPU verdict gate + …"）⇒ **已泄漏多个版本**，
+非本轮引入（`0f1ce6b` 上也存在）。
+
+#### 根因（**静默失效**，两层都漏）
+
+`export-public.ps1` 的清洗与闸门**都用扩展名白名单**：
+```powershell
+$exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.kt","*.xml"
+```
+**`.sh` 不在白名单里** ⇒ **清洗跳过它**、**闸门也跳过它** ⇒
+**闸门照样打印 `exported to GitHub + Gitee public`、退出码 0**（**看起来一切正常**）。
+
+> **⇒ 这是本仓"命令成功 ≠ 真的做了活"的又一实例**：
+> **安全闸门的"通过"必须建立在"覆盖面正确"之上** —— 覆盖面错了，闸门越"成功"越危险。
+
+#### 修法（`fde4464`，判据从白名单改为**二进制黑名单**）
+
+1. **扫描对象 = 所有非二进制文本文件**（`$binExt` 黑名单：`png/jpg/jpeg/gif/webp/ico/bmp/apk/jar/
+   keystore/jks/so/dex/zip/gz/tgz/tar/7z/pdf/woff*/ttf/otf/mp3/mp4/wav/exe/dll/bin/pyc/class`）⇒
+   **不再可能"漏掉没人想起的扩展名"**；
+2. **闸门扫"与清洗完全同一批文件"**（原闸门比清洗更窄 —— **这正是 `.sh` 漏网的原因**）；
+3. **闸门补上 `<lan-laptop>` / `<vm-lan>` / `<vm-lan>`**（原先只挡 `<lan-laptop>`，
+   而 `$map` 里三条 LAN 值**本来就在清洗表里却没有对应闸门项** ⇒ 同样是"闸门窄于清洗"）；
+4. **打印覆盖面**：`scrub/gate scope: 339 text file(s) (binary denylist: 31 ext)` ⇒ **可人工确认**。
+
+#### 验证（三步，全部 lead 独立执行）
+
+| 步骤 | 结果 |
+|---|---|
+| `-DryRun` 自证 | ✅ 通过：`<tailnet-vm1> x24` / `<tailnet-laptop> x39` / `<tailnet-windows> x30` / `<tailnet-work> x7` / `<tailnet-relay> x2` / 三条 LAN 值 全被替换；闸门通过；**未触碰公开目录、未推送** |
+| 重跑同步 | ✅ `scrub/gate scope: 339 text file(s)`；提交 `219caf8`；`exported to GitHub + Gitee public` |
+| **公开镜像全文件扫描** | ✅ **命中 `0`**（不限扩展名、全 `git ls-files`）；`vm1-dshnet-check.sh:37` 现为 `PUBLIC_HOST="<tailnet-vm1>"` |
+| 远端落地 | ✅ `local == origin/master == gitee/master == 219caf8`，`dirty=0` |
+
+#### 固化的纪律（**已写进 README + skill**）
+
+1. **脱敏覆盖面 MUST NOT 用扩展名白名单** —— 一定会漏掉"没人想起要加"的扩展名；
+   用**二进制黑名单**（默认扫一切文本）；
+2. **安全闸门的扫描集 MUST 等于（或宽于）清洗集** —— **闸门比清洗窄 = 静默失效**；
+3. **每次同步后 MUST 独立复查一次公开镜像**（**别只信脚本自己打印的 `exported`**）——
+   本轮就是这样抓到已存在多个版本的泄漏；
+4. **同步前先 `-DryRun` 自证**（它打印替换计数且不推送）。
+
+### 3.20.22 收官状态（2026-10-15 03:2x）
+
+| 项 | 值 |
+|---|---|
+| 私有仓 | `fde4464`（工作树干净，已推送） |
+| **公开镜像** | **`219caf8`**（GitHub + Gitee 均已落地，`dirty=0`，**全文件扫描 0 命中个人值**） |
+| 线上 APK | `?v=80`、`http=200`、`size=10,993,088`、**sha256 = 冻结值** |
+| 发布 | ✅ `SUMMARY: 9/9 passed` |
+| 用户待办 | 等真机回执（更新通知 `id: qgCcmpuMrvKX`） |
+| skill | `dsh-push-app-dev` 已含本轮 3 条硬事实（`eddc1cc` 模拟器恢复 SOP 等） |
+
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 
 1. **DSH 上游两条补丁**（源码仓，非本仓）：`tool-ask-user` 默认值 `legacy`→`timed`；`UserQuestionService.ask()` 加完成作用域 AbortController。做掉后连 legacy 会话都不再僵卡，新用户零配置。
