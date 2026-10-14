@@ -15,7 +15,7 @@
 | 本轮主题 | **App 浮层可读性修复（v1.32.11）**：用户反馈「选择传文件的控件背景透明度是否太低了点」= slash 指令菜单浮层太透、文字发花 |
 | **当前阶段** | ✅ **已发布上线（2026-10-15 01:08）**：task-6 ✅ → task-7 ✅（**FAIL P1**）→ task-8 ✅（**P1 复修**）→ task-9 ✅（**Part A 0.92 PASS-with-findings；Part B 0.96 PASS**）→ **发布 `SUMMARY: 9/9 passed`** → **开源镜像已同步**。**本轮闭环** |
 | **发布证据** | `verify\dsh-app-verify.ps1 -Deploy` → **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-010827.log`）；线上 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=77` → **http=200 size=10,992,560**（与冻结 APK 字节一致）；更新通知 `id: o4bYmdFn9gaU` |
-| **开源镜像** | `dsh-push-public` HEAD **`ba8b455`**，**GitHub `thiscp/dsh-push` 与 Gitee `cnopone/pub-dsh-push` 双远端均 `ba8b455`**（`-DryRun` 先自证：脱敏 9 类 + secret gate 通过）|
+| **开源镜像** | `dsh-push-public` HEAD **`b6d7165`**（**收口后重导**：首次导出为 `ba8b455`，之后又提交了 4 笔收口文档 ⇒ 按"文档全提交完最后再导镜像"纪律**重导一次**），**GitHub `thiscp/dsh-push` 与 Gitee `cnopone/pub-dsh-push` 双远端均 `b6d7165`**（`-DryRun` 先自证：脱敏 9 类 + secret gate 通过；已核对镜像内含 `TESTER.md`/`README.md` 的「版本指纹与竞态纪律」与 `GLASS-OVERLAY.md` §7 收口）|
 | **冻结版本（放行采样用的就是它）** | **`cb1a4ce84032d670f1621c1c33b34cb1e45c5007025c9958bbecda2461ec08db` = 0.96 build**（`android-app/**` 自 `49a0ebd` 起**未再改动**，`git diff` 空为证）。**别与 0.92 版混淆**：0.92(`f5e4a6b`) = `1D77D75A…` |
 | **根因（**已钉死到一行**）** | `WebActivity.kt` 玻璃化注入的**分支顺序反了**：`:392` `if(w>vw*0.5&&h>vh*0.5)→'transparent'` **无条件排在 `isOv` 之前**；真菜单 `257x392` vs 视口 `360x671` ⇒ `392>335.5` ⇒ **落进大容器分支被设成 `transparent`**，浮层分支永远轮不到 ⇒ **alpha=0**。**且是间歇的**（n=2 跑出 0 / 0.92）——`apply()` 与菜单渐进渲染**竞态**。详见 `ANALYSIS-v1.32.11-overlay-opacity.md` §6.5/§6.6 |
 | **修法（已定型）** | 浮层判定**提到大容器分支之前、两者互斥**；**`role` 命中的浮层豁免全部几何判定**（真菜单正是 `role=listbox`，面积阈值反把它误判成"大容器"）。**大容器分支必须保留**（v1.32.6 红线） |
