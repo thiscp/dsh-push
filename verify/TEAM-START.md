@@ -24,8 +24,19 @@
   → **基线版本 = CSS360，v1.32.8 起**；**下一轮 QA 首跑必须在新宽度重打 A14/A15/P04 基线**，旧数字不可直接对照。
 - **动态改分辨率会挂死 `screencap`**（SurfaceFlinger 卡死，`adb shell echo ok` 仍通，极具欺骗性）→ 唯一出路是**冷重启**：
   杀 `qemu-system*`+`emulator` → 清 AVD 锁（`hardware-qemu.ini.lock` 是**目录**，用 `-LiteralPath -Recurse -Force -Confirm:$false`；`multiinstance.lock` 是空文件）→ `schtasks /Run /TN dsh-emu-sw` → 轮询 `getprop sys.boot_completed`；**全程必须在同一次 ssh 会话里**（分成两次 ssh 会被回收）。现成脚本：`F:\work\work_dsh\tmp\emu-cold-1440.ps1`。
-- 当前笔电**无交互登录会话** → 自愈阶梯（`emu-selfheal`）自动选了 **swiftshader**，所以 `screencap` 偏慢是正常；**有人登录笔电后阶梯会自动升到真 GPU**（`-gpu host` 冷启实测 18s）。
-- 判定"客机真的健康"用 `boot_completed=1` **且** `adb shell echo ok` 有回应 —— **`adb devices` 看得到 ≠ 客机健康**。
+- **GPU 策略（2026-10-14 用户拍板 + 追加硬约束）**：模拟器**一律真 GPU（`-gpu host`）**，且**禁止 CPU 软渲染**
+  （swiftshader 会让笔电风扇狂转、噪音大）。用户会尽量让笔电**不锁屏、不掉登录**。
+  - **唯一权威判据（一条命令）**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-gpu-verdict.ps1`
+    → **exit `0` = 真 GPU** ／ **`3` = CPU 软渲染（违反约束，报 lead）** ／ **`4` = BLOCKED（判不了，不代表健康）**。
+    底层判据 = 客机 `dumpsys SurfaceFlinger` 的 `^GLES:` 行含 `NVIDIA GeForce RTX 4060`；含 `SwiftShader` = 软渲染。
+  - ⛔ **已作废、禁止再用**：旧的「看 `emu-ladder.log` 的 `interactive console session: True/False`」判档位——
+    该正则不看状态列，**同机同一分钟两个任务会给出相反结论**；而且「无交互会话 ⇒ `-gpu host` 会挂」这个前提
+    **已被实测证伪**（2026-10-14：console 已断开状态下 `-gpu host` 6s 起来、渲染器 = RTX 4060）。
+    也**别用 `ro.hardware.egl`**（恒为 `emulation`）。
+  - **自愈已加固（19:02 起）**：若跑在 CPU 软渲染上，自愈会判 `VIOLATION` 并**主动 kill + 重启回真 GPU**。
+    所以你**可能观察到模拟器被自愈重启一次**——看 `emu-ladder.log` 有无 `VIOLATION` 行再判定，别当故障。
+  - **截图耗时基线（真 GPU）**：`screencap`+`pull` 稳态 **1.0–1.25s**（n=3）；单次受预热影响，只能当旁证，**旧 swiftshader 数字作废**。
+  - 判定"客机真的健康"用 `boot_completed=1` **且** `adb shell echo ok` 有回应 —— **`adb devices` 看得到 ≠ 客机健康**。
 
 ### 0.2 ask_user_question 的两个坑（**已验证**）
 1. **子代理发不了提问**：harness 报 `owned by another live agent`（"owned by another live agent"）→ **N5 类"真实折回"用例必须借 lead 会话发问**，不要让 teammate 自己发。
@@ -68,8 +79,74 @@
                      （**34 项全量留给"体验轮"**，改动轮不跑全量）
 ③ 发布（leader）:    verify\dsh-app-verify.ps1 -Deploy -DeployNote "…"   → SUMMARY: 9/9
                      → 线上 ?v=<versionCode> 确认 → export-public.ps1 -Msg "…"
+④ 交接（三角色各写自己那格）: 见 §5，缺一不算收工
 ```
 **并行化（task-16/17 的教训）**：developer 一动手，tester 就**同时**把新功能的声明式用例写好（不必等实现完成）——串行等待是上一轮浪费时间的根源。
+
+**⚠️ 但"共享资源"必须串行（2026-10-14 新增）**：**模拟器 `emulator-5554` 只有一个**。
+凡两端都要动它的任务（developer 装机 ↔ tester 截图/起页/`adb root`）**必须用 `blocked_by` 串行**并发会互相污染：
+装机换版本打断取证、`force-stop` 关掉被测页、`adb root` 清掉 CDP 的 forward。
+判据：任务描述里凡出现 `adb install` / `am start` / `force-stop` / `adb root` 的，先问"另一端是否也在用这台模拟器"。
+
+## 3.1 ⚠️ 陷阱：跑 `dsh-app-verify.ps1` **不加 `-Deploy` 也会推用户真机**
+
+**没有"只构建不发布"模式。** 不传 `-Deploy` 只跳过第 6 段（上传 aliyun + 更新通知）；
+**第 3 段 `Stage "publish"` 是无条件发推**（`:319`→`:321` `POST ($ntfy + "/" + $topic)`，**不在任何 `$Deploy` 守卫内**）。
+**且命令行 `-Topic`/`-Ntfy` 改不动它**——`:54` `config.local.ps1` 在 param 块之后 dot-source，自述
+*"override script param defaults (but also override same-named command-line args)"*；现值 `$Topic="dsh"`（生产，直连用户真机）。
+
+⇒ **只要跑它，用户真机就收到一条 `auto-verify <epoch>`**。
+
+**处置**：**不发布的验证**（构建/装机自检、冒烟）**不要调它**，走**手工最小三件套**：
+vm1 `gradle assembleDebug` → `scp` APK → 笔电 `adb install -r` + `dumpsys package … versionName` + `am force-stop`（**零 ntfy**）。
+要验脚本本身，**先改 `verify/config.local.ps1` 的 `$Topic` 为 `qa-…`**（属 tester/lead 范围），验完**还原**。
+细节与行号见 `HANDOVER.md` §3.12。
+
+## 3.2 ⚠️ QA 起页隐式要求 adbd root（H-1）
+
+`am start -n xyz.cpyh.dshpush/.WebActivity` 在**非 root**（uid 2000）时报
+`SecurityException: Permission Denial: … not exported from uid 10216`；`adb root` 后立刻成功。
+实测计数：`card-layout-verify.ps1:220` **有** `& $adb root`，但 **`qa-round-driver.mjs`（`:169-171`）与 `gate-shot.ps1` 均 0 处**。
+
+- **顺序铁律**：`adb root` 必须排在**任何 `adb forward` 之前**（root 重启 adb server、会清掉既有 forward ⇒ CDP 静默断）。
+- **起页前必须 `whoami` 断言为 root**，不满足报 **BLOCKED**（不许静默继续导致"跑了没量到"）。
+- **为什么现在更要紧**：模拟器重启后 adbd 掉回非 root，而**加固后的自愈会在检出 CPU 软渲染时主动重启模拟器** ⇒ 触发概率比过去更高。
+- 状态：**已开 task-4 修**（`blocked_by: task-3`）。
+
+## 3.3 vm1 构建机易错点（2026-10-14 实测）
+
+1. **`gradle` 不在 PATH**（`which gradle` 空）⇒ 必须
+   `export PATH=$HOME/gradle-8.7/bin:$JAVA_HOME/bin:$PATH`，`JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64`
+   （`dsh-app-verify.ps1:197` 硬编码此路径）。Gradle **8.7**。
+2. **`android-app/local.properties` 已含 `sdk.dir=/home/user/android-sdk`** ⇒ SDK **不必**再显式给
+   （§0 旧描述的"需显式给"**已作废**）。
+3. **手工构建前必须先同步 src**（照 `:191-194` 顺序：`rm -rf app/src` → `scp -r app\src` → `scp app\build.gradle.kts`
+   → `scp build.gradle.kts settings.gradle.kts gradle.properties`），否则**构建的是 vm1 上的陈旧源码**。
+   建议加闸门：同步后比对 `PushService.kt` 的 sha256（台式机 vs vm1），不一致即 abort。
+4. **vm1 仓是陈旧脏快照**（曾 `HEAD 92147dd`、与台式机差 54 ahead / 198 behind、`host-plugin/` 不存在）⇒ 上机前确认已同步。
+
+## 3.4 openspec CLI 与仓内等价检查器
+
+- **裸 `openspec validate --strict` 是无效用法**（`Nothing to validate` + exit 1）⇒ 必须带目标：
+  `openspec validate --changes --strict` 或 `openspec validate <change> --type change --strict`。**别误判成"环境坏"**。
+- **台式机没有 `openspec` CLI**（`Get-Command` 空）⇒ 用仓内等价检查器
+  `& <DSH node> tools\openspec-modify-check.mjs <change>`（专查"MODIFIED 漏抄现网 scenario"，exit 0 = 无问题）；
+  要权威裁决再上 vm1。
+
+## 5. 交接纪律（④，2026-10-14 用户要求制度化）
+
+**目的**：下一个新对话的队员**不读历史也能上手**。索引文件 = `verify/HANDOVER.md`（leader 维护）。
+
+| 角色 | 交接产物 | 必须包含 |
+|---|---|---|
+| **developer** | `openspec/changes/<本轮变更>/` + `host-plugin/README.md`（或 android-app 相关节） | 改了哪些文件、新增配置键/API、**踩过的新坑与判据**、下轮可直接复用的命令 |
+| **tester** | `verify/QA-ROUND-<版本>.md` 定稿 + `verify/STATUS-*.md` + 用例文件 + `verify/TESTER.md`（QA 章程自维护） | 用例 id → 断言 → 实际 → 证据路径；**BLOCKED/未覆盖项显式列出**；新用例工具链；设备状态复位声明 |
+| **leader** | skill `dsh-push-app-dev`（§2 硬事实）+ `verify/TEAM-START.md` + `verify/HANDOVER.md` | 新增环境硬事实（含机器状态如 GPU/锁屏）、任务链变化、**"待下轮确认"清单** |
+
+**三条纪律**：
+1. **硬事实必须带判据**——能一条命令验的就把命令写上，禁止"据说/应该"；
+2. **作废的旧结论显式作废**（旧分辨率基线、旧耗时数字），否则下轮拿错数字对照；
+3. **未完成/未覆盖项进"待下轮确认"栏**，不允许靠人回忆。
 
 ## 4. 本轮已验证 vs 待下轮确认（别混）
 
@@ -78,5 +155,10 @@
 **待下轮确认（不要拿旧数字对照）**：
 1. **A14 / A15 / P04 命中区基线在 360 宽下的新数值** —— 下一轮 QA 首跑必须重打。
 2. 360 宽下**长页面滚动/遮挡**类行为（旧轮次是在 411 宽下结论的）。
-3. swiftshader 下的截图耗时基线（有人登录笔电升到真 GPU 后需重打）。
+3. ~~swiftshader 下的截图耗时基线~~ → **已作废**：禁止 CPU 软渲染，只需真 GPU 基线（**已重打：1.0–1.25s，n=3**，见 §0.1）。
 4. `claimForeground` 两种设置下的**用户可感差异**（产品取舍，等用户拍）。
+5. ✅ **已闭环（2026-10-14 20:00 真机验证）**：「软渲染实例被自愈 kill+重启拉回真 GPU」——
+   ~~只有干跑注入证明~~ 已由 lead 在用户批准后真机实测：SwiftShader 实例 **37s 内**被拉回 NVIDIA RTX 4060、
+   `LastTaskResult=0x0`、选择器还原 `host`。详见 `INFRA-HEALTH-2026-10-14.md` §9.7。
+6. **openspec 既有 ERROR**：`dsh-push-web-link-out-of-box` 的 MODIFIED 漏抄 scenario `载荷缺字段`
+   （`validate --changes --strict` exit 1，会挡 `archive`）。详见 §3.11（本轮 developer 已授权修复）。

@@ -7,10 +7,20 @@
  * It imports the real `lib/index.js`; a local `node_modules/@deepseek-ai/schemastery` junction
  * is enough, the host provides that peer with its own closure at runtime.
  */
-import { writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { apply, resolveConfig } from './lib/index.js'
+import {
+  AskUserModeSwitch,
+  apply,
+  askUserBackupPath,
+  askUserSyncPlan,
+  isTimedAskUserQuestion,
+  nextAskUserConfig,
+  resolveConfig,
+  setVolatileValue,
+  volatileValue,
+} from './lib/index.js'
 import { buildPairingPayload } from './lib/pairing-lib.mjs'
 import { parseArgs } from './lib/pairing.mjs'
 
@@ -412,6 +422,276 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   check('payload omits webBase/webName when unknown (v1 schema unchanged)', !('webBase' in bare.payload) && !('webName' in bare.payload) && bare.missing.length === 0, JSON.stringify(bare.payload))
   const opts = parseArgs(['payload', '--web-base', 'http://x:3080', '--web-name=box'])
   check('--web-base/--web-name parse into overrides', opts.overrides.webBase === 'http://x:3080' && opts.overrides.webName === 'box', JSON.stringify(opts.overrides))
+}
+
+// ── 13. 手机作答模式开关 (v0.2.0): pure logic ───────────────────────────────────────
+{
+  const legacyTool = { name: 'ask_user_question', parameters: { properties: { questions: {} } } }
+  const timedTool = { name: 'ask_user_question', parameters: { properties: { questions: {}, timeout: { type: 'number' } } } }
+  check('isTimedAskUserQuestion: legacy schema is not timed', isTimedAskUserQuestion(legacyTool) === false)
+  check('isTimedAskUserQuestion: a timeout property means timed', isTimedAskUserQuestion(timedTool) === true)
+  check('isTimedAskUserQuestion: other tools never match', isTimedAskUserQuestion({ name: 'read', parameters: { properties: { timeout: {} } } }) === false)
+  check('isTimedAskUserQuestion: a missing tool is not timed', isTimedAskUserQuestion(undefined) === false)
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-push-switch-'))
+  const patch = join(dir, 'cordis.patch.yml')
+  writeFileSync(patch, '- id: tool-ask-user\n', 'utf8')
+  const fixed = askUserBackupPath(patch, () => 1700000000000)
+  check('backup path follows the .bak-<ms> convention', fixed === patch + '.bak-1700000000000', fixed)
+  writeFileSync(fixed, 'x', 'utf8')
+  const second = askUserBackupPath(patch, () => 1700000000000)
+  check('a colliding backup gets an ordinal suffix', second === patch + '.bak-1700000000000-1', second)
+
+  check('next config: timed sets mode and timeout', JSON.stringify(nextAskUserConfig({ other: 1 }, 'timed')) === JSON.stringify({ other: 1, mode: 'timed', timeout: 120 }))
+  check('next config: legacy only flips the mode', JSON.stringify(nextAskUserConfig({ mode: 'timed', timeout: 120 }, 'legacy')) === JSON.stringify({ mode: 'legacy', timeout: 120 }))
+
+  check('sync plan: timed desire + unregistered tool waits', askUserSyncPlan('timed', undefined).action === 'wait')
+  check('sync plan: timed desire + timed reality is a no-op', askUserSyncPlan('timed', timedTool).action === 'noop')
+  check('sync plan: timed desire + legacy reality edits', askUserSyncPlan('timed', legacyTool).action === 'edit')
+  check('sync plan: an unset desire is inert even against timed reality', askUserSyncPlan(undefined, timedTool).action === 'inert')
+  check('sync plan: a legacy desire is inert (never downgrades)', askUserSyncPlan('legacy', timedTool).action === 'inert')
+
+  check('volatile value: a plain value passes through', volatileValue('timed', 'legacy') === 'timed')
+  check('volatile value: a live ref is read through get()', volatileValue({ get: () => 'timed' }, 'legacy') === 'timed')
+  check('volatile value: absent falls back', volatileValue(undefined, 'legacy') === 'legacy')
+
+  {
+    let written = null
+    const ref = { get: () => 'a', [Symbol.for('cosmokit.volatile.write')]: (value) => { written = value } }
+    const holder = { field: ref }
+    setVolatileValue(holder, 'field', 'b')
+    check('volatile write: live refs go through the cosmokit symbol setter', written === 'b' && holder.field === ref)
+    const plain = { field: 'x' }
+    setVolatileValue(plain, 'field', 'y')
+    check('volatile write: plain values are assigned back', plain.field === 'y')
+    const stubborn = { field: { get: () => 'x' } }
+    setVolatileValue(stubborn, 'field', 'y')
+    check('volatile write: a ref without the symbol keeps its value', stubborn.field.get() === 'x')
+  }
+}
+
+// ── runtime preflight: section 14 drives the product's copyFileSync backup ───────────
+// Two same-version nodes on this machine differ in ONE syscall: the harness runtime node
+// throws `EPERM: operation not permitted, copyfile` while the DSH-bundled node is fine
+// (writeFileSync works on both; os.tmpdir() is C:\Temp on both). Probing here turns a
+// misleading wall of 9 backup-EPERM FAILs into one clear BLOCKED line + exit 2, so QA
+// never mistakes the wrong-node run for a functional regression.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-push-preflight-'))
+  const src = join(dir, 'probe.txt')
+  writeFileSync(src, 'probe', 'utf8')
+  let copyFailure = null
+  try {
+    copyFileSync(src, join(dir, 'probe-copy.txt'))
+  } catch (error) {
+    copyFailure = error
+  }
+  if (copyFailure !== null) {
+    const passed = checks.filter((entry) => entry.ok).length
+    console.log('\n' + String(passed) + '/' + String(checks.length) + ' checks passed before the guard')
+    console.log('BLOCKED  section 14 needs a working fs copy (the product backup uses copyFileSync).')
+    console.log('copyFileSync failed: ' + (copyFailure.code ?? '') + ' ' + copyFailure.message)
+    console.log('请用 DSH 自带 runtime 的 node 跑本自测：')
+    console.log('  "D:\\programs\\dsh\\resources\\runtime\\primary-runtime\\dependencies\\node\\bin\\node.exe" plugin-selftest.mjs')
+    process.exit(2)
+  }
+}
+
+// ── 14. 手机作答模式开关 (v0.2.0): end-to-end against a fake host ───────────────────
+{
+  const legacyTool = { name: 'ask_user_question', parameters: { properties: { questions: {} } } }
+  const timedTool = { name: 'ask_user_question', parameters: { properties: { questions: {}, timeout: { type: 'number' } } } }
+
+  /** Fake host half: loader entries, configEditor (edit = apply + hot-swap the tool), tools. */
+  function makeSwitchCtx(options = {}) {
+    const state = {
+      listeners: new Map(),
+      tool: 'tool' in options ? options.tool : legacyTool,
+      edits: [],
+      /** True while an HMR transaction is open: the real host rejects nested configEditor.edit. */
+      inTransaction: false,
+      entries: [
+        { options: { id: 'tool-ask-user', name: 'dsh-tool-ask-user', config: {} }, fiber: { state: 2 } },
+        { options: { id: 'push-host', name: 'dsh-push-host', config: {} }, fiber: { state: 2 } },
+      ],
+    }
+    const ctx = {
+      on(name, callback) {
+        state.listeners.set(name, callback)
+      },
+      effect(callback) {
+        callback()
+      },
+      interval() {
+        return () => {}
+      },
+      logger: () => ({ info: () => {} }),
+      tools: { get: (name) => (name === 'ask_user_question' ? state.tool : undefined) },
+      profileContext: { patchPath: options.patchPath },
+      configEditor: {
+        entries: () => state.entries,
+        async edit(entry, change) {
+          if (state.inTransaction) throw new Error('HMR transactions cannot be nested')
+          state.edits.push({ id: entry.options.id, next: change(entry.options.config ?? {}) })
+          if (options.fail && entry.options.id === 'tool-ask-user') throw new Error('Configuration for "tool-ask-user" is overridden by a home patch or command-line overlay')
+          if (entry.options.id === 'tool-ask-user') {
+            entry.options.config = change(entry.options.config ?? {})
+            state.tool = entry.options.config.mode === 'timed' ? timedTool : legacyTool
+          } else {
+            entry.options.config = change(entry.options.config ?? {})
+          }
+        },
+      },
+    }
+    return { ctx, state }
+  }
+
+  const dir = mkdtempSync(join(tmpdir(), 'dsh-push-switch-e2e-'))
+  const patchPath = join(dir, 'cordis.patch.yml')
+  writeFileSync(patchPath, '- id: preset\n', 'utf8')
+
+  // 14a. the switch is inert without configEditor/tools (the plain makeCtx above has neither).
+  {
+    const plain = makeCtx()
+    apply(plain.ctx, { ...TOKENS, webLog: join(tmpdir(), 'dsh-push-selftest-no-web.log') })
+    check('apply() survives a host without configEditor/tools', true)
+  }
+
+  // 14b. boot with the desire already timed: backup + edit, exactly once; mirrors stay in memory.
+  {
+    const made = makeSwitchCtx({ patchPath })
+    const cfg = { askUserMode: 'timed' }
+    const sw = new AskUserModeSwitch(made.ctx, cfg, () => {})
+    sw.start()
+    await tick()
+    const toolEdits = made.state.edits.filter((edit) => edit.id === 'tool-ask-user')
+    check('boot with timed desire edits tool-ask-user once', toolEdits.length === 1, JSON.stringify(made.state.edits))
+    check('the edit carries mode timed + timeout 120', toolEdits[0]?.next?.mode === 'timed' && toolEdits[0]?.next?.timeout === 120, JSON.stringify(toolEdits[0]?.next ?? null))
+    // Verify the backup with readdirSync + readFileSync only (no copyfile in the test
+    // itself): exactly one .bak- file, byte-identical to the pre-edit patch.
+    const backupNames = readdirSync(dir).filter((name) => name.startsWith('cordis.patch.yml.bak-'))
+    check('the patch file was backed up before the edit', backupNames.length === 1, JSON.stringify(backupNames))
+    check('the backup is a byte-for-byte copy of the pre-edit patch', backupNames.length === 1 && readFileSync(join(dir, backupNames[0]), 'utf8') === '- id: preset\n', backupNames[0] ?? 'none')
+    check('the actual-state mirror lands in memory as timed', cfg.askUserActual === 'timed', String(cfg.askUserActual))
+    check('a successful switch writes nothing to our own entry (defect 3: no status on disk)', made.state.edits.filter((edit) => edit.id === 'push-host').length === 0, JSON.stringify(made.state.edits))
+    await sw.sync()
+    check('a second sync is idempotent (no extra edit)', made.state.edits.filter((edit) => edit.id === 'tool-ask-user').length === 1)
+  }
+
+  // 14c. the default (no desire at all, legacy tool) writes nothing at all.
+  {
+    const made = makeSwitchCtx({ patchPath })
+    const sw = new AskUserModeSwitch(made.ctx, {}, () => {})
+    sw.start()
+    await tick()
+    check('an unset desire is a zero-write boot (status/actual stay in memory)', made.state.edits.length === 0, JSON.stringify(made.state.edits))
+  }
+
+  // 14d. the volatile trigger: the settings row flips the desire at runtime.
+  {
+    const made = makeSwitchCtx({ patchPath })
+    const config = { askUserMode: { get: () => 'legacy' } }
+    const sw = new AskUserModeSwitch(made.ctx, config, () => {})
+    sw.start()
+    await tick()
+    check('no edit while desire and reality agree', made.state.edits.length === 0)
+    config.askUserMode.get = () => 'timed'
+    made.state.listeners.get('loader/volatile-update')([['askUserMode']])
+    await tick()
+    check('volatile-update on askUserMode triggers the switch', made.state.edits.some((edit) => edit.id === 'tool-ask-user' && edit.next.mode === 'timed'), JSON.stringify(made.state.edits))
+    made.state.listeners.get('loader/volatile-update')([['askUserStatus']])
+    await tick()
+    check('a volatile-update on other paths is ignored', made.state.edits.filter((edit) => edit.id === 'tool-ask-user').length === 1)
+  }
+
+  // 14e. activation order: the tool registers later, tools/change re-checks.
+  {
+    const made = makeSwitchCtx({ patchPath, tool: undefined })
+    const sw = new AskUserModeSwitch(made.ctx, { askUserMode: 'timed' }, () => {})
+    sw.start()
+    await tick()
+    check('an unregistered tool defers the switch', made.state.edits.length === 0)
+    made.state.tool = legacyTool
+    made.state.listeners.get('tools/change')()
+    await tick()
+    check('tools/change re-checks and lands the switch', made.state.edits.some((edit) => edit.id === 'tool-ask-user' && edit.next.mode === 'timed'))
+  }
+
+  // 14f. home override: the edit throws, the message lands in the IN-MEMORY askUserStatus.
+  {
+    const made = makeSwitchCtx({ patchPath, fail: true })
+    const cfg = { askUserMode: 'timed' }
+    const sw = new AskUserModeSwitch(made.ctx, cfg, () => {})
+    sw.start()
+    await tick()
+    check('a home override lands in the in-memory askUserStatus', String(cfg.askUserStatus ?? '').includes('overridden by a home patch'), String(cfg.askUserStatus))
+    check('the failure status never rides configEditor (no push-host edits)', made.state.edits.filter((edit) => edit.id === 'push-host').length === 0, JSON.stringify(made.state.edits))
+  }
+
+  // 14g. a missing tool-ask-user entry says so (in memory) instead of throwing or writing.
+  {
+    const made = makeSwitchCtx({ patchPath })
+    made.state.entries = made.state.entries.filter((entry) => entry.options.id !== 'tool-ask-user')
+    const cfg = { askUserMode: 'timed' }
+    const sw = new AskUserModeSwitch(made.ctx, cfg, () => {})
+    sw.start()
+    await tick()
+    check('a missing tool-ask-user entry reports in memory instead of throwing', String(cfg.askUserStatus ?? '').includes('tool-ask-user'), String(cfg.askUserStatus))
+    check('the missing-entry status writes nothing to disk', made.state.edits.length === 0, JSON.stringify(made.state.edits))
+  }
+
+  // 14h. HMR transaction guard: a volatile-update fired inside an open HMR transaction must
+  // not issue configEditor.edit synchronously (nested transactions throw in the real host).
+  {
+    const hdir = mkdtempSync(join(tmpdir(), 'dsh-push-switch-hmr-'))
+    const hpatch = join(hdir, 'cordis.patch.yml')
+    writeFileSync(hpatch, '- id: preset\n', 'utf8')
+    const made = makeSwitchCtx({ patchPath: hpatch })
+    const config = { askUserMode: { get: () => 'legacy' } }
+    const sw = new AskUserModeSwitch(made.ctx, config, () => {})
+    sw.start()
+    await tick()
+    const bootEdits = made.state.edits.length
+    config.askUserMode.get = () => 'timed'
+    made.state.inTransaction = true
+    let thrown = null
+    try {
+      made.state.listeners.get('loader/volatile-update')([['askUserMode']])
+    } catch (error) {
+      thrown = error
+    }
+    made.state.inTransaction = false
+    check('a volatile-update inside an HMR transaction does not throw', thrown === null, String(thrown?.message ?? thrown))
+    check('the transaction-guarded write is not issued synchronously', made.state.edits.length === bootEdits, JSON.stringify(made.state.edits.slice(bootEdits)))
+    await tick()
+    const toolEdits = made.state.edits.filter((edit) => edit.id === 'tool-ask-user')
+    check('the deferred write lands exactly once outside the transaction', toolEdits.length === 1 && toolEdits[0].next.mode === 'timed', JSON.stringify(made.state.edits.slice(bootEdits)))
+  }
+
+  // 14i. P0 regressions: the switch NEVER downgrades — every non-timed desire is fully inert
+  // (no tool-ask-user edit, no backup, and since defect 3 not even a status write).
+  {
+    const cases = [
+      { name: 'desired legacy + actual timed', config: { askUserMode: 'legacy' }, tool: timedTool },
+      { name: 'desired unset + actual timed', config: {}, tool: timedTool },
+      { name: 'desired unset + actual legacy', config: {}, tool: legacyTool },
+      { name: 'desired explicitly legacy (live ref) + actual timed', config: { askUserMode: { get: () => 'legacy' } }, tool: timedTool },
+    ]
+    for (const testCase of cases) {
+      const cdir = mkdtempSync(join(tmpdir(), 'dsh-push-switch-nodown-'))
+      const cpatch = join(cdir, 'cordis.patch.yml')
+      writeFileSync(cpatch, '- id: preset\n', 'utf8')
+      const made = makeSwitchCtx({ patchPath: cpatch, tool: testCase.tool })
+      const sw = new AskUserModeSwitch(made.ctx, testCase.config, () => {})
+      sw.start()
+      await tick()
+      await sw.sync()
+      made.state.listeners.get('tools/change')()
+      await tick()
+      check('never downgrade: ' + testCase.name + ' writes no tool-ask-user config', made.state.edits.filter((edit) => edit.id === 'tool-ask-user').length === 0, JSON.stringify(made.state.edits))
+      check('never downgrade: ' + testCase.name + ' leaves no backup and no other edit behind', readdirSync(cdir).filter((name) => name.startsWith('cordis.patch.yml.bak-')).length === 0 && made.state.edits.length === 0, JSON.stringify({ edits: made.state.edits, files: readdirSync(cdir) }))
+    }
+  }
 }
 
 const failed = checks.filter((entry) => !entry.ok)

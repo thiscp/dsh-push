@@ -79,10 +79,21 @@ $remote = @"
 `$adb='$EmuRoot\Sdk\platform-tools\adb.exe'
 & `$adb shell dumpsys package xyz.cpyh.dshpush | Select-String -Pattern 'versionName=' | Select-Object -First 1
 `$top = ((& `$adb shell dumpsys window) -join ' ') -match 'WebActivity'
+# H-1 (task-4, 2026-10-14): am start .WebActivity needs adbd ROOT - the Activity is not exported,
+# so a non-root shell gets "SecurityException: Permission Denial: ... not exported from uid 10216".
+# adbd drops back to non-root after an emulator restart, and the hardened self-heal can restart the
+# emulator on a CPU-render violation. Same pattern as card-layout-verify.ps1:220.
+# ORDER: this must precede any adb forward (root restarts the adb server and drops forwards).
+& `$adb root | Out-Null
+Start-Sleep 3
+`$who = ((((& `$adb shell whoami) 2>&1) -join '').Trim())
+'ADB_ROOT whoami=' + `$who
+if (`$who -ne 'root') { 'BLOCKED: adbd is not root (whoami=' + `$who + ') - am start .WebActivity will be denied (not exported)'; exit 1 }
 & `$adb shell am force-stop xyz.cpyh.dshpush | Out-Null
 Start-Sleep 2
 & `$adb shell am start -n xyz.cpyh.dshpush/.WebActivity --es url '$DshWebUrl' | Out-Null
 Start-Sleep 12
+& `$adb shell dumpsys activity activities | Select-String -Pattern 'topResumedActivity' | Select-Object -First 1
 Remove-Item '$EmuRoot\gate-dom.json' -Force -ErrorAction SilentlyContinue
 & `$adb shell screencap -p /sdcard/gate-collapsed.png
 & '$Node' '$EmuRoot\gate-dom.mjs' '$EmuRoot\gate-dom.json'

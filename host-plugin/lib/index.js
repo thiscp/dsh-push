@@ -41,7 +41,7 @@
  *
  * @module dsh-push-host
  */
-import { readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -55,8 +55,10 @@ export const name = 'dsh-push-host'
 /**
  * `userQuestions` owns the `user-questions/request` waterfall; `timer` mixes
  * `ctx.interval` / `ctx.timeout` onto the context (auto-disposed with this plugin).
+ * `configEditor` / `profileContext` / `tools` back the 手机作答模式 switch (v0.2.0);
+ * a host without them simply keeps the switch inert (see `AskUserModeSwitch.start`).
  */
-export const inject = ['userQuestions', 'timer']
+export const inject = ['userQuestions', 'timer', 'configEditor', 'profileContext', 'tools']
 
 /** Shipped relay base (a self-hosted ntfy + answer relay); every field below has a default. */
 export const RELAY_DEFAULT = 'https://ntfy.cpyh.xyz'
@@ -131,6 +133,24 @@ export const Config = z.object({
   claimForeground: z.boolean().default(false),
   /** Print diagnostics through ctx.logger + console. */
   log: z.boolean().default(true),
+  /**
+   * 手机作答模式（v0.2.1）：期望的 ask_user_question 变体。**只有 'timed' 会触发写入**——
+   * 本开关永不降级（0.2.0 的 P0：默认 'legacy' + 开机 sync 把生产 tool-ask-user 反向改回
+   * legacy）。未表态（字段缺失=schemastery 不加 default/required 即 optional，值 undefined）
+   * = 完全惰性，宿主一个字都不写。注意 schemastery 没有 `.optional()` 方法（也没有
+   * `z.literal`，字面量用简写数组或 `z.const`），别写 `.optional()`——会把整个 Config 炸掉。
+   * volatile 是为了 Web 设置行能经 settings RPC 写它（mode/timeout 在 tool-ask-user 那边
+   * 不是 volatile，客户端写不了）；真正的改写由宿主延后到 HMR 事务之外执行（事务内嵌套
+   * configEditor.edit 会抛 "HMR transactions cannot be nested"）。
+   */
+  askUserMode: z.union(['legacy', 'timed']).volatile(),
+  /** 上次切换的结果（'' = 成功/无待办）；volatile，好让 Web 设置行显示失败原因。 */
+  askUserStatus: z.string().default('').volatile(),
+  /**
+   * 实际态镜像（'' = 宿主还没回写）：设置行展示读这个，**不拿期望态当展示值**——P0 之后
+   * 期望态和实际态可以相反（期望未表态、实际 timed）。
+   */
+  askUserActual: z.union(['', 'legacy', 'timed']).default('').volatile(),
 })
 
 /** `[{label, description?}]` (service vocabulary) → `[label]` (what the relay/phone render). */
@@ -785,6 +805,231 @@ function reportCredentials(file, log) {
   if (file.error !== undefined) log('credentials ignored: ' + file.error)
 }
 
+// ── 手机作答模式开关 (v0.2.1) ─────────────────────────────────────────────────────────
+// The Web settings row (lib/client.js) writes the volatile `askUserMode` above over the
+// settings RPC; the host reacts and rewrites tool-ask-user's OWN config through
+// `ctx.configEditor.edit` — mode/timeout are NOT volatile there (dsh-tool-ask-user Config),
+// so the settings RPC cannot touch them directly. A non-volatile write hot-restarts just
+// that plugin's fiber (cordis-plugin-loader), so the timed tool re-registers WITHOUT a
+// host restart. Before every write the profile patch file is copied to `<patchPath>.bak-<ms>`
+// (the dsh-app-boot sanitizeProfile naming convention). The timed variant only affects
+// sessions created after the switch — tool variants are pinned at session creation; the
+// row says so. A same-id home patch / CLI overlay makes the write throw
+// "…is overridden by a home patch or command-line overlay" (dsh-config-editor edit():122);
+// the message is mirrored into the volatile `askUserStatus` for the row to display.
+//
+// v0.2.1 hotfix rules (production P0 — 0.2.0 downgraded a live timed production to legacy):
+// 1. NEVER downgrade: only an explicit `timed` desire may ever write; unset or `legacy`
+//    is fully inert (no file write, no backup).
+// 2. At most ONE successful tool-ask-user write per process (`done`): an external repair
+//    (file restore + reconcile) must not make a live process downgrade again.
+// 3. The write is deferred outside the current HMR transaction (`setTimeout 0`): a
+//    volatile-update fires inside the settings RPC's transaction, and a nested
+//    configEditor.edit throws "HMR transactions cannot be nested".
+// 4. The row displays the ACTUAL tool state, mirrored into volatile `askUserActual`.
+// 5. Status/actual mirrors are IN-MEMORY ONLY (defect 3: 0.2.0 persisted the status string
+//    into the user's cordis.patch.yml via configEditor.edit). Runtime volatile fields are
+//    frozen cosmokit refs whose only setter is the global symbol `cosmokit.volatile.write`
+//    (createVolatile; updateVolatile is just `target[write](source.get())`). The settings
+//    describe() reads those live refs, so the Web row sees them without any file write.
+//    The ONLY file write allowed is the one tool-ask-user upgrade.
+
+/** Read a possibly-volatile config value (a Volatile ref at runtime, a plain value in tests). */
+export function volatileValue(value, fallback) {
+  if (value === undefined || value === null) return fallback
+  if (typeof value === 'object' && typeof value.get === 'function') {
+    const live = value.get()
+    return live === undefined || live === null ? fallback : live
+  }
+  return value
+}
+
+/**
+ * Write an IN-MEMORY volatile config value — never through configEditor (defect 3: status
+ * strings must not land in the user's cordis.patch.yml). At runtime a `.volatile()` field
+ * is a frozen cosmokit ref whose only setter is the global symbol
+ * `cosmokit.volatile.write` (cosmokit createVolatile/updateVolatile); the settings service
+ * reads the live ref, so the Web row sees the update on its next describe. Plain values
+ * (tests, hosts without volatile wiring) are assigned back so callers still observe it; a
+ * ref without the symbol keeps its value and the log line still carries the message.
+ */
+export function setVolatileValue(container, key, value) {
+  const current = container[key]
+  if (current && typeof current === 'object' && typeof current.get === 'function') {
+    const write = Symbol.for('cosmokit.volatile.write')
+    if (typeof current[write] === 'function') current[write](value)
+    return
+  }
+  container[key] = value
+}
+
+/** Whether one tool definition is the timed `ask_user_question` (dsh-user-questions projection.js:89). */
+export function isTimedAskUserQuestion(tool) {
+  if (!tool || tool.name !== 'ask_user_question') return false
+  const parameters = tool.parameters
+  const properties = parameters && typeof parameters === 'object' ? parameters.properties : undefined
+  return !!properties && typeof properties === 'object' && !Array.isArray(properties) && 'timeout' in properties
+}
+
+/** `<patchPath>.bak-<ms>` with a collision ordinal — the dsh-app-boot sanitizeProfile convention. */
+export function askUserBackupPath(patchPath, now = Date.now, exists = existsSync) {
+  const base = `${patchPath}.bak-${now()}`
+  let candidate = base
+  let ordinal = 0
+  while (exists(candidate)) candidate = `${base}-${++ordinal}`
+  return candidate
+}
+
+/** The next raw config for the tool-ask-user entry given the desired mode. */
+export function nextAskUserConfig(current, desired) {
+  const next = { ...(current ?? {}) }
+  next.mode = desired
+  if (desired === 'timed') next.timeout = 120
+  return next
+}
+
+/**
+ * What one sync pass should do, given the desired mode and the live tool definition.
+ * v0.2.1: the switch only ever UPGRADES to timed. An unset or `legacy` desire is `inert`
+ * — the 0.2.0 P0 treated "user never opted in" as "user wants legacy" and downgraded a
+ * live timed production.
+ */
+export function askUserSyncPlan(desired, tool) {
+  if (desired !== 'timed') return { action: 'inert', desired }
+  if (tool === undefined) return { action: 'wait' }
+  const actual = isTimedAskUserQuestion(tool) ? 'timed' : 'legacy'
+  if (actual === 'timed') return { action: 'noop', actual }
+  return { action: 'edit', actual, desired }
+}
+
+/** Bridges the volatile desire to the tool-ask-user entry's real config. */
+export class AskUserModeSwitch {
+  /**
+   * @param ctx - the plugin context (needs `tools` + `configEditor`; `profileContext` optional).
+   * @param config - the validated plugin config (volatile fields are live refs).
+   * @param log - logging sink.
+   */
+  constructor(ctx, config, log) {
+    this.ctx = ctx
+    this.config = config
+    this.log = log
+    this.busy = false
+    /** One successful tool-ask-user write per process — an external repair is never re-downgraded. */
+    this.done = false
+    /** Coalesces deferred (outside-HMR-transaction) sync runs into one. */
+    this.scheduled = false
+    /** Last outcome mirrored into `askUserStatus` (undefined = never written). */
+    this.lastStatus = undefined
+    /** Last actual state mirrored into `askUserActual` (undefined = never written). */
+    this.lastActual = undefined
+  }
+
+  /** The mode the settings row asked for; `undefined` = the user never opted in (inert). */
+  desired() {
+    return volatileValue(this.config.askUserMode, undefined)
+  }
+
+  /**
+   * Run one sync on the next macrotask: volatile-update and tools/change can fire inside
+   * an HMR transaction, where a nested configEditor.edit throws
+   * "HMR transactions cannot be nested".
+   */
+  scheduleSync() {
+    if (this.scheduled) return
+    this.scheduled = true
+    setTimeout(() => {
+      this.scheduled = false
+      void this.sync()
+    }, 0)
+  }
+
+  /** Compare desire vs live tool; rewrite tool-ask-user's config only to upgrade to timed. Idempotent. */
+  async sync() {
+    if (this.busy) return
+    const ctx = this.ctx
+    if (!ctx.configEditor || !ctx.tools) return
+    this.busy = true
+    try {
+      const tool = ctx.tools.get('ask_user_question')
+      const actual = isTimedAskUserQuestion(tool) ? 'timed' : 'legacy'
+      // The display always follows reality, never the desire (P0: they can disagree).
+      this.writeActual(actual)
+      // One successful write per process: after a repair (file restore + reconcile),
+      // a live process must not treat the fixed state as drift and downgrade again.
+      if (this.done) return
+      const plan = askUserSyncPlan(this.desired(), tool)
+      if (plan.action === 'inert') return
+      if (plan.action === 'wait') return
+      if (plan.action === 'noop') {
+        this.writeStatus('')
+        return
+      }
+      // Last gate: only an upgrade to timed may ever reach the file (P0 regression guard).
+      if (plan.desired !== 'timed') {
+        this.log('手机作答模式：拒绝写入——只允许升到 timed，永不降级')
+        return
+      }
+      const entry = ctx.configEditor.entries().find((row) => row.options.id === 'tool-ask-user')
+      if (entry === undefined) {
+        this.writeStatus('未找到 tool-ask-user 配置项：它可能被停用或改名，手机作答模式未生效')
+        return
+      }
+      const patchPath = ctx.profileContext ? ctx.profileContext.patchPath : undefined
+      if (patchPath && existsSync(patchPath)) {
+        const backup = askUserBackupPath(patchPath)
+        copyFileSync(patchPath, backup)
+        this.log('手机作答模式：' + plan.actual + ' → ' + plan.desired + '，已备份 ' + backup)
+      } else {
+        this.log('手机作答模式：' + plan.actual + ' → ' + plan.desired)
+      }
+      await ctx.configEditor.edit(entry, (current) => nextAskUserConfig(current, plan.desired))
+      const landed = isTimedAskUserQuestion(ctx.tools.get('ask_user_question'))
+      if (landed) {
+        this.done = true
+        this.log('手机作答模式已切换为 timed（新会话立即生效，已开老会话保持旧行为）')
+        this.writeStatus('')
+        this.writeActual('timed')
+      } else {
+        this.writeStatus('写入后工具状态未收敛，请检查宿主日志')
+      }
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error)
+      this.log('手机作答模式切换失败：' + message)
+      this.writeStatus(message)
+    } finally {
+      this.busy = false
+    }
+  }
+
+  /** Mirror the outcome into the volatile `askUserStatus` IN MEMORY (never persisted). */
+  writeStatus(message) {
+    if (message === '' && (this.lastStatus === undefined || this.lastStatus === '')) return
+    this.lastStatus = message
+    setVolatileValue(this.config, 'askUserStatus', message)
+  }
+
+  /** Mirror the ACTUAL tool state into the volatile `askUserActual` IN MEMORY (never persisted). */
+  writeActual(actual) {
+    if (this.lastActual === actual) return
+    this.lastActual = actual
+    setVolatileValue(this.config, 'askUserActual', actual)
+  }
+
+  /** Wire the triggers: volatile desire changes, tool registration changes, and boot. */
+  start() {
+    const ctx = this.ctx
+    if (!ctx.configEditor || !ctx.tools) return
+    ctx.on('loader/volatile-update', (paths) => {
+      const touched = Array.isArray(paths) && paths.some((path) => Array.isArray(path) && path[0] === 'askUserMode')
+      if (touched) this.scheduleSync()
+    })
+    // Activation order: tool-ask-user may register after this plugin, and any later
+    // registration change re-checks the plan (dsh-tools emits `tools/change`).
+    ctx.on('tools/change', () => this.scheduleSync())
+    this.scheduleSync()
+  }
+}
+
 export function apply(ctx, config = {}) {
   const { resolved, file } = resolvePluginConfig(config)
   const host = new PushHost(ctx, resolved)
@@ -799,6 +1044,9 @@ export function apply(ctx, config = {}) {
   ctx.on('tools/post-execute', (exec, result, next) => host.onPostExecute(exec, result, next))
   ctx.effect(() => () => host.stop(), 'dsh-push-host: relay bookkeeping')
   host.start()
+  // 手机作答模式开关（v0.2.1）：显式 timed → 延后出 HMR 事务 → 备份 → configEditor 热改
+  // tool-ask-user；未表态/legacy 完全惰性，永不降级，每进程最多成功写一次。
+  new AskUserModeSwitch(ctx, config, (message) => host.log(message)).start()
 }
 
 export { PushHost, resolveConfig, CONFIG_KEYS }

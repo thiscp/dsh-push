@@ -23,10 +23,27 @@
 
 - **机器**：QA 跑在台式机（DESKTOP-CPHOME / 用户名以 `whoami` 为准）；模拟器在**笔电**：
   `ssh -o BatchMode=yes -o ConnectTimeout=15 user@<tailnet-laptop>`（**只走这个 Tailscale IP**，LAN IP 会漂且被防火墙拦）。
-- **adb**：笔电上 `G:\Android\Sdk\platform-tools\adb.exe`，设备 `emulator-5554`（AVD `dsh-p16`，1080x2400，API 36）。
-- **模拟器自愈**：笔电有计划任务 `emu-selfheal`（每 5 分钟；真 GPU 18s / 软件 24s 拉起阶梯）。一般**不用管模拟器启动**。
+- **adb**：笔电上 `G:\Android\Sdk\platform-tools\adb.exe`，设备 `emulator-5554`（AVD `dsh-p16`）。
+  **分辨率/密度 = `1440x3168 @ 640`（CSS360 基线，与用户真机同构）**；`wm size` 会显示 `Physical size: 1440x3168`。
+  ⚠️ **旧的「1080x2400」已作废**（那是更早的配置）。
+- **模拟器自愈（2026-10-14 19:02 起已加固）**：笔电有计划任务 `emu-selfheal`（每 5 分钟）。一般**不用管模拟器启动**。
   日志 `G:\Android\emu-ladder.log`；若里面写 **"THIS MACHINE NEEDS A REBOOT"** → 报告 Lead，**QA 不重启机器**。
-  真 GPU 与 swiftshader 会互相干扰：**不要自己切 GPU 模式、不要自己冷启动**（那是 Lead 的现场）；客机"框架半死"时先报告。
+  **不要自己切 GPU 模式、不要自己冷启动**（那是 Lead 的现场）；客机"框架半死"时先报告。
+  > 加固后自愈会把「跑在 CPU 软渲染上」判为 `VIOLATION` 并主动 kill + 重启回真 GPU。
+  > 所以你**可能观察到模拟器被自愈主动重启一次**——那是设计行为，不是故障；先看日志有无 `VIOLATION` 行再判定。
+- **GPU 策略（用户 2026-10-14 追加，硬约束）**：模拟器**禁止 CPU 软渲染**（swiftshader 会让笔电风扇狂转、噪音大）。
+  **唯一权威判据 = 客机内的渲染器行**（⚠️ 旧的「看 `emu-ladder.log` 的 `interactive console session`」**已作废、不要再使用**：
+  该正则不看状态列，且同机同一分钟两个任务会给出相反结论）：
+  ```powershell
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-gpu-verdict.ps1
+  ```
+  **exit 0 = 真 GPU（可开工）｜3 = CPU 软渲染（违反约束，报 Lead）｜4 = 判不了（BLOCKED，不代表健康）**。
+  该脚本只读、不启停笔电任何东西，带 `-SelfTest`（6 条合成用例，无需 ssh）。**别手敲 dumpsys 命令**。
+  若要直接看渲染器行：`dumpsys SurfaceFlinger` 里 `^GLES:` 含 `NVIDIA GeForce RTX 4060` = 真 GPU，
+  含 `SwiftShader` = 软渲染。**别用 `ro.hardware.egl` 判**（恒为 `emulation`）。
+- **截图耗时基线（真 GPU，2026-10-14 实测）**：`screencap`+`pull` 稳态 **1.0–1.25s**（n=3）。
+  **旧的 swiftshader 数字一律作废**。⚠️ 单次量受预热影响（首测可能 2s+），要多次采样；
+  它**只能当旁证**，判档位一律走上面那条闸门。
 - **起被测页面**：
   `adb shell am force-stop xyz.cpyh.dshpush` → `adb shell am start -n xyz.cpyh.dshpush/.WebActivity --es url "<URL>"`（Activity 未导出）。
   URL：**本机** `C:\Users\<user>\.dsh\web.log` 里**最后一条** `dsh web: http://...?token=` 取 token → `http://<tailnet-windows>:3080/?token=<tok>`。
@@ -122,4 +139,4 @@ FINDING-1 [P1] <一句话标题>
 4. **桌面 web token 每次 DSH 重启必换**：脚本一律从 `C:\Users\<user>\.dsh\web.log` 取**最后一条** `dsh web:` 行的 `token=`，并把 `127.0.0.1:3081` 替换为 `<tailnet-windows>:3080`。
 5. **新用例 QA-A18（手机作答即时 vs 180s 折回）**：给 `web.log` 的 `[dsh-push-host]` 行打**毫秒时间戳**的 watcher；判据 = `answered (foreground)`（即时；`claimForeground=on`，实测 **3726ms**，`call_5841f145…`）还是 `returned pending` + `answered (continued)`（迟到作答，等 timed 超时后才折回）。完整链路见 `verify/QA-ROUND-v1.32.8.md`。
 6. **`ask_user_question` 的 timed 由 request waterfall 纠正**（pre-execute 猜不准，日志写 `timed corrected to true`）→ 不要在 pre-execute 阶段断言 timed。
-7. 笔电当前**无交互会话** → 自愈阶梯跑 swiftshader（截图慢属正常）；有人登录后自动升真 GPU（`-gpu host` 冷启 18s）。健康判据：`boot_completed=1` **且** `adb shell echo ok` 有回应（`adb devices` 看得到 ≠ 健康）。
+7. 笔电 GPU 会话状态判据见 §2「GPU 策略」条。健康判据：`boot_completed=1` **且** `adb shell echo ok` 有回应（`adb devices` 看得到 ≠ 健康）。

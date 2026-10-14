@@ -29,6 +29,11 @@ token 行时 SHALL NOT 追加 `#web`；配置了实例名时追加 `\n#name <名
 - **WHEN** 另一个也以 prepend 注册的作答器排到插件之前并直接返回答案（未调用 `next()`），waterfall 监听器不执行
 - **THEN** `tools/pre-execute` 兜底触发同一 `callId` 的推送与注册，用户仍收到通知
 
+#### Scenario: 载荷缺字段
+
+- **WHEN** 问题缺少文本或选项
+- **THEN** 正文回落 `DSH 正在等你选择` 且仍带作答链接与 `#qid`，推送照常发出
+
 #### Scenario: 未配 webBase 也带网页入口（v0.1.1）
 
 - **WHEN** 主机未配置 `webBase`，web.log 里存在 DSH 打印的 `dsh web: http://<addr>:<port>/?token=…` 行

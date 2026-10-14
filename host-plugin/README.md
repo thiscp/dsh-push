@@ -105,6 +105,36 @@ ask_user_question (工具, 进程内)
    回归断言：`⑤ 默认路径锚在 home 目录，不跟 cwd 走`；另外 `plugin-selftest.mjs` 第 5 节
    现在**显式钉一个不存在的 credentialsFile**——修好路径之后，它才会去读开发机真实的凭据文件。
 
+## 网页提问卡的生命周期：legacy 提问为什么会僵卡锁 composer（2026-10-14，源码级根因，用户真机实遇）
+
+现场：`claimForeground=on` 下手机抢答成功（`answered (foreground)`、工具当场返回、会话继续），
+但 DSH Web 的提问卡停在可交互未答态**霸占 composer**，用户发不出新消息只能点「跳过」；**刷新也不会好**
+（gateway 把仍挂着的转发请求重投给重连浏览器，未答卡原样重现）。服务端没有任何错：答案已按
+`tool/result` 落 transcript，对已结算 callId 再点跳过是无害空操作
+（`UserQuestionService.answer` 对不在 `continued` 的直接 `return false`）。
+
+根因（三层同时失效，缺一都不会僵）：
+
+1. **没人取消转发给浏览器的那条 dispatch**：插件（prepend listener）race 赢过 `next()` 提前结算
+   瀑布后，`dsh-api-remotes` 的 `forwardWaterfall` 没有"上游已结算"的取消路径，dispatch 悬挂；
+2. **cancel 帧不发**：gateway 的 cancel 只由 `request.signal` abort 触发，而 legacy 的 signal 是
+   回合 phase 信号，正常完成**永不 abort**（新 phase 只替换 AbortController 不 abort 旧的）；
+3. **投影不含 legacy**：`userQuestions` 投影按设计只折叠 `timed` 调用（判据=会话 header 记录的
+   工具 schema 是否声明 `timeout`），legacy 提问连 callId 都不带（匿名卡），reconcile 的删除
+   通道直接跳过它。
+
+**会话代际钉死**（最容易误判的一点）：ask_user_question 的 timed/legacy 变体在**会话创建时**
+钉进会话 header，**改 profile + 重启都不换**老会话的变体。所以 `mode: timed` 配好之后：
+新建会话双向同步正常（手机答→wait 关→signal abort→cancel 帧→卡片即关；网页答→回声→手机卡转已答，
+2026-10-14 用户真机验收过）；老会话仍是 legacy，僵卡照旧点「跳过」无害解锁。
+判据：web.log 该 callId 行 `timed=` 值（注意坑 5 的校正假象，权威判据仍是 `wait.timed`）。
+
+**根治 legacy 的最小补丁**（DSH 源码仓，`packages/user-questions`，编译层
+`dsh-user-questions/lib/index.js` 的 `ask()`）：新建 `const dispatchDone = new AbortController()`，
+向 waterfall 传 `signal: AbortSignal.any([request.signal, dispatchDone.signal])`，`finally` 里
+`dispatchDone.abort()`——瀑布被**任何**应答者（含进程内抢答）结算即触发 gateway cancel 帧关卡，
+timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 dispatch，别在插件里补）。
+
 ## 端到端验收记录（2026-10-12，真 agent + 真 relay + 真 ntfy）
 
 测试 profile `pushtest`（`--from-default-profile headless` 新建），覆盖层插入
@@ -135,7 +165,7 @@ ask_user_question (工具, 进程内)
 & $dsh plugin --profile <profile> add dsh-push-host
 
 # 从 tarball 装（离线/内网，等价路径，已实测）
-& $dsh plugin --profile <profile> add ./dsh-push-host-0.1.0.tgz
+& $dsh plugin --profile <profile> add ./dsh-push-host-0.2.1.tgz
 
 # 从本地目录装（开发期，改完立即生效）
 & $dsh plugin --profile <profile> add "link:<仓库>/host-plugin"
@@ -149,7 +179,7 @@ ask_user_question (工具, 进程内)
 
 ```powershell
 & $node tools/pack-npm-tarball.mjs host-plugin --dry-run   # 只看清单，不落盘
-& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.1.0.tgz
+& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.2.1.tgz
 ```
 
 实测产物 9 个文件：`LICENSE`、`README.md`、`cordis.patch.yml`、`package.json`、
@@ -172,7 +202,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 & $dsh --profile pushdist --from-default-profile headless --dump-config
 
 # 2. 把包（或 tarball）装进去
-& $dsh plugin --profile pushdist add ./dsh-push-host-0.1.0.tgz
+& $dsh plugin --profile pushdist add ./dsh-push-host-0.2.1.tgz
 
 # 3. 验收挂载：看 dump-config 尾部
 & $dsh --profile pushdist --dump-config | Select-Object -Last 3
@@ -186,6 +216,55 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 `pnpm` 报 missing peer（`@deepseek-ai/cordis` 等）是**设计如此**：peer 由宿主 closure 提供。
 三个 profile 里 `--dump-config` **不加载**插件（只打印树），所以 dump-config 里看不到插件的
 `credentials file:` / `relay ready` 日志——那是启动时才打的。
+
+**一键版**（给用户用，2026-10-14 实测）：上面三步 + timed 切换 + dump-config 验收打包成一条命令，
+幂等（marker 判重）、改前带备份、新建 profile 的 `[]` 空模板会整体替换而不是追加
+（`[]` 后追加块序列是非法 YAML，实测炸过）：
+
+```powershell
+& powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-user.ps1 `
+    -Profile <profile> -DshCli "<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" `
+    -Source .\dsh-push-host-0.2.1.tgz
+# 成功后照打印的 next steps 走：重启 DSH（工具注册是冷的）→ 用新会话（变体钉在会话创建时）
+```
+
+## 设置页开关：手机作答模式（v0.2.1，用户不用碰命令行）
+
+装 0.2.1 后，设置页出现 **dsh-push 手机作答模式** 一行：显示**实际**是 `timed`（手机可作答）
+还是 `legacy`（手机只能收通知），右侧一个「启用」按钮。点一下即完成上面「一键版」里
+`tool-ask-user` 那步的全部工作——**且不需要重启宿主**。
+
+> **0.2.0 是坏版本，别用**（2026-10-14 生产 P0）：它的 `askUserMode` 默认 `legacy`，把
+> 「用户没表态」当成「用户要 legacy」，开机 sync 直接把生产 `tool-ask-user` 从 timed 反向
+> 降级成 legacy 并写进 patch 文件；回滚文件后活进程又被 reconcile 触发再降级两次。0.2.1
+> 的守卫（下面表格）逐条对着这三个缺陷修。
+
+内部链路（都已源码核实 + selftest 覆盖）：
+
+| 环节 | 实现 |
+|---|---|
+| 客户端 UI | `lib/client.js` 手写 `window.__ModuleLoader__.load({id:"dsh-push-host"})` 模块，注册 `settings.general.item` 槽行，`whileServed('push-host')` 门控；`package.json` 加 `dsh.client:{platform:"web"}` + `exports "./client"` |
+| 状态判定与展示 | 宿主侧 `ctx.tools.get("ask_user_question")` 看 schema 是否含 `timeout` 参数（= timed 变体，判据同 DSH 的 `isTimedAskUserQuestionSchema`）；实际态经 `Symbol.for('cosmokit.volatile.write')` 写进 volatile `askUserActual`（**纯内存不落盘**），设置行读它——**不拿期望态当展示值**；`tools/change` 补激活顺序坑 |
+| 客户端→宿主 | 设置行写 push-host 自己的 `.volatile()` 字段 `askUserMode`（**无默认值**：schemastery 不加 `.default/.required` 即 optional——注意它没有 `.optional()` 方法也没有 `z.literal`）；宿主订阅 `ctx.on('loader/volatile-update', paths)`（该事件只投 owning fiber）触发 |
+| 永不降级 | **只有显式 `timed` 会写**；未表态或 `legacy` 完全惰性（零写入零备份）；`configEditor.edit` 前还有最后一道闸断言 `desired === 'timed'` |
+| 每进程一次 | 成功写一次后置 `done`，后续 sync 直接 return——外部修复（还原文件→reconcile）不会被活进程当成漂移再改回去 |
+| HMR 事务 | volatile-update 在 settings RPC 的 HMR 事务内触发，事务里嵌套 `configEditor.edit` 会抛 `HMR transactions cannot be nested`；所有 sync 经 `setTimeout(0)` 延后到事务外合并执行 |
+| 写入 | `ctx.configEditor.edit(tool-ask-user entry, …)`——DSH 官方通道：文件锁 + 原子写 + 失败回滚 + 热 reconcile；写非 volatile 字段会热重启该插件 fiber，timed 工具当场重注册 |
+| 备份 | `configEditor` 无内建 .bak，edit 前自己 `copyFileSync(patchPath, patchPath + '.bak-<ms>')`（撞名加序号） |
+| 失败可见 | 任何失败（含 home 层/CLI overlay 覆盖同 id 的 "overridden by a home patch"）经同一 volatile 符号写进 `askUserStatus`（**内存，不落盘**——0.2.0 曾把状态字符串写进用户 patch），设置行直接显示原因 |
+
+生效范围（UI 上明写，也都是平台事实）：**新会话立即生效**；已在跑的老会话保持旧行为——
+`ask_user_question` 的 timed/legacy 变体在**会话创建时**钉进会话 header，改配置/重启都不换
+（见下文「网页提问卡的生命周期」）。若老会话踩到 legacy 僵卡，点卡片「跳过」无害解锁。
+本开关**只升不降**：要回 legacy 手动改 profile 的 `cordis.patch.yml`（`mode: legacy`）。
+
+无 UI 的场景（headless/VM/自动化）继续用 `deploy/windows/install-user.ps1`，两者干的是同一件事。
+
+**selftest 运行时注意**（2026-10-14 实测坑）：必须用 **DSH 自带 runtime 的 node**
+（`<DSH 安装目录>\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`）。
+harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tmpdir()` 同为 `C:\Temp`，
+但 `copyFileSync` 被拒（`EPERM: operation not permitted, copyfile`）；14 段前有 preflight
+探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **101/101**。
 
 ## 给一个真实用户开通（凭据文件 + 配对）
 

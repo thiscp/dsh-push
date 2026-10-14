@@ -22,6 +22,13 @@
 
 凭据文件（不入库）：`/etc/answer-relay/regtoken`、`/etc/answer-relay/bridgetoken`（600）、`/root/ntfy/dshbot.password`。
 
+## Windows 用户机（`windows/`）
+
+| 文件 | 说明 |
+|---|---|
+| `install-user.ps1` | **一键安装脚本**（给用户用）：备份 patch 文件 → `dsh plugin add` → 写 `tool-ask-user mode: timed`（新建 profile 的 `[]` 模板整体替换，老文件追加，marker 幂等）→ `--dump-config` 验挂载行与 timed 行。跑法：`powershell -NoProfile -ExecutionPolicy Bypass -File install-user.ps1 -Profile <p> -DshCli <dsh.cmd> [-Source <tarball>]`；成功后需重启 DSH 并用新会话 |
+| `cutover-finish.ps1` / `rollback-plugin.ps1` / `hooks.json` / `dsh-ntfy-push.py` | 旧 hook 桥时代的生产切换/回滚件（插件上线后 hooks.json 的提问推送组应停用，见 host-plugin README） |
+
 ## 凭据丢了怎么找回（无孤本原则）
 
 - **DSH Web token**：不用记，每次 DSH 重启必换；永远取 `web.log` 最后一行 `dsh web: http://...?token=...`

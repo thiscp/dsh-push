@@ -41,6 +41,8 @@ function shot(name) {
 let ws = null, id = 0, pending = new Map(), lastState = null;
 
 async function connect() {
+  // H-1: root must be re-established BEFORE the forward below (adb root drops existing forwards).
+  await requireRoot("connect");
   const pid = adb(["shell", "pidof", "xyz.cpyh.dshpush"]).trim().split(/\s+/)[0];
   if (!/^\d+$/.test(pid)) throw new Error("app not running (pidof=" + pid + ")");
   try { adb(["forward", "--remove-all"]); } catch {}
@@ -165,7 +167,40 @@ process.on("unhandledRejection", (e) => { console.log("UNHANDLED " + String(e &&
 // auth/error page. Assertions below turn that into BLOCKED, and every case must first prove the
 // page really is the DSH shell.
 function assertOk(cond, msg) { if (!cond) throw new Error("ASSERT: " + msg); }
+
+// H-1 fix (2026-10-14, task-4). `am start -n xyz.cpyh.dshpush/.WebActivity` requires adbd to be
+// ROOT: the Activity is not exported, so a non-root shell (uid 2000) gets
+//   SecurityException: Permission Denial: starting Intent { ... WebActivity ... } from null
+//   (pid=.., uid=2000) not exported from uid 10216
+// adbd drops back to non-root after an emulator restart (README "adb and APP data"), and the
+// hardened self-heal can restart the emulator on a CPU-render violation -> this is no longer a
+// rare corner. Re-establish root before EVERY WebActivity launch.
+// ORDER IS LOAD-BEARING: `adb root` restarts the adb server and drops every existing forward, so
+// this MUST run before any `adb forward` (see connect(), which builds the CDP forward).
+// Same pattern as verify/card-layout-verify.ps1:220.
+function whoami() {
+  // bounded: a wedged guest must not hang the whole round (TESTER.md: every remote action gets a deadline)
+  try { return String(adb(["shell", "whoami"], { timeout: 15000 }) || "").trim(); }
+  catch (e) { return "ERR:" + String(e && e.message).slice(0, 80); }
+}
+async function requireRoot(tag) {
+  let who = whoami();
+  if (who === "root") { console.log("ADB_ROOT " + tag + " already=root (forward untouched)"); return; }
+  console.log("ADB_ROOT " + tag + " whoami=" + who + " -> adb root");
+  try { adb(["root"], { timeout: 30000 }); }
+  catch (e) { console.log("ADB_ROOT " + tag + " root-cmd-error " + String(e && e.message).slice(0, 120)); }
+  await sleep(3000);
+  for (let i = 0; i < 20; i++) {
+    who = whoami();
+    if (who === "root") { console.log("ADB_ROOT " + tag + " whoami=root after " + (i + 1) + " poll(s)"); return; }
+    await sleep(1500);
+  }
+  // fail closed: never keep going and let a case report "ran" while measuring nothing
+  throw new Error("BLOCKED: adbd is not root (whoami=" + who + ") - am start .WebActivity is denied (not exported). Remedy: adb root");
+}
+
 async function startApp(url) {
+  await requireRoot("startApp");   // must precede connect()'s adb forward
   try { adb(["shell", "am", "force-stop", "xyz.cpyh.dshpush"]); } catch {}
   await sleep(2000);
   adb(["shell", "am", "start", "-n", "xyz.cpyh.dshpush/.WebActivity", "--es", "url", url]);
@@ -255,6 +290,7 @@ const CASES_IMPL = {
   },
   // QA-A02: tap the sidebar while the page is still loading
   "QA-A02": async (rec) => {
+    await requireRoot("QA-A02");   // this case relaunches WebActivity directly
     adb(["shell", "am", "force-stop", "xyz.cpyh.dshpush"]);
     await sleep(1500);
     adb(["shell", "am", "start", "-n", "xyz.cpyh.dshpush/.WebActivity", "--es", "url", URL]);
