@@ -138,6 +138,24 @@ powershell -File verify\dsh-app-verify.ps1
   开应用内浏览器、进会话、量提问卡并把 `card-layout.png` + `card-layout-report.json` 拉回本机并打印 PASS/FAIL。
   没有待答卡时（问题已被作答/过期）它会退化成"用真 CSS 类名复刻一张卡"再量，报告里 `cardSource` 注明来源。
 
+**⚠️ 三条 CDP 新坑（2026-10-15 v1.32.11 QA 实测，血亏一轮换来的）**
+
+- **合成鼠标点击会抢走输入焦点**：`Input.dispatchMouseEvent` 点输入框后，`document.activeElement` **不会**落到该输入框，
+  而是被 `SECTION._tabHost_*._pane_*` 抢走 ⇒ 之后 `adb shell input text "/"`、`input keyevent 76`、
+  连 CDP KeyEvent 三元组（`rawKeyDown`+`char`+`keyUp`）**全都插 0 字符**（静默失败，极易误判成"菜单弹不出来"）。
+  **可用姿势 = `el.focus()`（不点击）+ `Input.insertText("/")`**（实测：文本变 `/`、`[role=listbox]` 出现）。
+  **同源**：点按钮"点了没反应"也先查 owner —— `Open sidebar` 的合成点击同样被 `_tab_*` 吃掉，
+  改用 `el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}))` 才展开。
+  诊断：打印 `document.activeElement` 与 `document.elementFromPoint(x,y)` 的 owner（`TESTER.md` §3 第 6 条同思路）。
+- **量"哪一层在画背景"不能只读 `backgroundColor`**：注入只写 `background-color`，**不会移除 `background-image`**。
+  实测 `Dc7zOa_composerSeat` 的 `background-color` 为 0，底色却来自 `linear-gradient(...)`；surface 类的底色也可能在 `::before/::after`。
+  ⇒ 排查"浮层为什么还透"必须同时量 **`backgroundImage` + `getComputedStyle(el,'::before'/'::after')`**，
+  否则会**整整漏掉一层**（`verify/qa-overlay-layers.mjs` 已实现，照抄）。
+- **浮层 alpha 会"时好时坏"⇒ 必须多次采样**：注入的 `apply()` 会跑 4 次以上（首跑 / `setTimeout 1500` / `4000` / MutationObserver 防抖），
+  而浮层**渐进渲染**，**最后一次 `apply()` 读到的高度决定终态**。实测同一个菜单 **Run A alpha=0、Run B alpha=0.92**（同一版本同一操作）。
+  ⇒ 凡"透明度/观感"类断言**跑 ≥3 次**并记录终态数值；只跑一次会**两个方向都误判**（把不稳定当"已修好"或当"稳定坏"）。
+  依据 `TESTER.md` §3 第 5 条「不确定就复现两次」。
+
 **QA 轮次（唱反调用例库 + 一次跑完整轮的 runner）**
 
 - 章程与用例库：`verify\TESTER.md`（角色/环境硬事实/验收铁律/报告格式/P0~P3）、`verify\testcases\{00-core-flows,01-adversarial,02-ux-polish}.md`；每轮结论报告落在 `verify\QA-ROUND-<版本>.md`。

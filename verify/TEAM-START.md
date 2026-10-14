@@ -163,7 +163,11 @@ vm1 `gradle assembleDebug` → `scp` APK → 笔电 `adb install -r` + `dumpsys 
 
 ## 4. 本轮已验证 vs 待下轮确认（别混）
 
-**已验证（可直接依赖）**：CSS360 同构与 `innerWidth=360/dpr=4` ✓；`screencap` 挂死与冷重启配方 ✓；子代理发不了提问 ✓；timed 由 waterfall 纠正 ✓；手机作答两种时序语义 + 3726ms 即时实测 ✓；笔电自愈阶梯（sshd 自愈 / 真 GPU 18s / sw 回退 24s / 幂等）✓；VM 已切 `dsh-push-host 0.1.1`（`relay ready host=work topic=dsh`、推送带 `#web …:3080/?token=<新鲜>` + `#name 工作VM`）✓。
+**已验证（可直接依赖）**：CSS360 同构与 `innerWidth=360/dpr=4` ✓；`screencap` 挂死与冷重启配方 ✓；子代理发不了提问 ✓；timed 由 waterfall 纠正 ✓；手机作答两种时序语义 + 3726ms 即时实测 ✓；笔电自愈阶梯 ✓；VM 已切 `dsh-push-host 0.1.1` ✓；
+**模拟器禁 CPU 软渲染的完整闭环** ✓（`emu-gpu-verdict.ps1` 一条命令判据 + F1–F3 加固自愈 + **真机验证软渲染被 37s 拉回**，见 §0.1 / `INFRA-HEALTH-2026-10-14.md` §9.7）；
+**swiftshader 启动器已全面退役** ✓（4 个脚本改走 `emu-selfheal`，见 `HANDOVER.md` §3.16 —— ⛔ 禁用 `dsh-emu-sw`）；
+**QA 起页需 adbd root（H-1）已修** ✓（`requireRoot()` + root 先于 forward，见 §2 与 `HANDOVER.md` §3.17.5）；
+**CDP 输入坑已澄清** ✓（`el.focus()` 不点击 + `Input.insertText`；合成点击会抢焦点）。
 
 **待下轮确认（不要拿旧数字对照）**：
 1. **A14 / A15 / P04 命中区基线在 360 宽下的新数值** —— 下一轮 QA 首跑必须重打。
@@ -173,5 +177,8 @@ vm1 `gradle assembleDebug` → `scp` APK → 笔电 `adb install -r` + `dumpsys 
 5. ✅ **已闭环（2026-10-14 20:00 真机验证）**：「软渲染实例被自愈 kill+重启拉回真 GPU」——
    ~~只有干跑注入证明~~ 已由 lead 在用户批准后真机实测：SwiftShader 实例 **37s 内**被拉回 NVIDIA RTX 4060、
    `LastTaskResult=0x0`、选择器还原 `host`。详见 `INFRA-HEALTH-2026-10-14.md` §9.7。
-6. **openspec 既有 ERROR**：`dsh-push-web-link-out-of-box` 的 MODIFIED 漏抄 scenario `载荷缺字段`
-   （`validate --changes --strict` exit 1，会挡 `archive`）。详见 §3.11（本轮 developer 已授权修复）。
+6. ~~openspec 既有 ERROR（`载荷缺字段` 漏抄）~~ → **✅ 已修**（`c215691`，检查器 exit 0）。残余：`--all --strict` 仍有 5 项 WARNING 级。
+7. **v1.32.11 浮层可读性**：改已提交（`f5e4a6b`）且 **lead 肉眼判读通过**（`ANALYSIS` §6.9），
+   但 **alpha 是间歇的**（n=2 跑出 0 与 0.92）⇒ **待 task-9 用 ≥5 次采样钉死**；发布**暂停**中。详见 `HANDOVER.md` §3.18。
+8. **`_surface_ri079_1 Z9Jnlq_menu`（`265x400`，无 `role`）仍走几何分支**的约 2px 外边是否有可见影响 —— 待 task-9 实测。
+9. **`openspec --all --strict` 仍 5 项 WARNING**（Purpose 占位/过短、requirement >500 字符）—— 未处理。

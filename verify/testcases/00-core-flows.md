@@ -1,4 +1,4 @@
-﻿# 主流程用例（core flows）
+# 主流程用例（core flows）
 
 本文件覆盖 DSH 手机伴侣 App（`xyz.cpyh.dshpush`）**用户每天真正会走的主路径**：推送到达 → 点开 → 提问卡作答 → 回会话确认，以及通知栏直答、快答浮窗、侧栏、会话切换、主题、断线重连。
 
@@ -149,3 +149,27 @@
 - **结果**: PASS（v1.32.9 旧语义 + v1.32.10 新语义两轮均 PASS）
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-single-before.png` / `qa-single-after.png`（肉眼判：自己卡片淡化且「已读」钮消失、其它未读卡保持蓝点+「已读」钮、pill 与未读行仍在、无 toast）；`notif-qa-single1791925128-pre.txt` / `-qa-single-after.txt`；`acttop-qa-single1791925128-before.txt`
 
+### QA-C11 slash 指令菜单交互回归（v1.32.11 浮层不透明度改动）
+- **场景**: 本轮为了让 slash 菜单浮层不透明（见 QA-P11），改了玻璃化注入的选择逻辑。**改透明度最容易顺手改坏交互**：菜单弹不出来、点了没反应、点错项、长菜单滚不到底、被新样式挡住。
+- **前置**: v1.32.11 装机；`adb root` + `whoami`==root（H-1）；真 GPU（`emu-gpu-verdict.ps1` exit 0）；页面已到 DSH shell。
+- **步骤**（CDP 真输入，不用 JS 改 value）:
+  1. 聚焦输入框 → `Input.insertText` 或 `Input.dispatchKeyEvent` 输入 `/` → 断言**浮层出现**（按 QA-P11 步骤 3 的定位法拿到浮层元素且 `offsetHeight>0`）。
+  2. **点第一个菜单项**（`Input.dispatchMouseEvent` 真点该选项的 `getBoundingClientRect()` 中心）→ 断言：**该指令被正确触发**（判据按被点项而定：`compact`/`plan`/`model` 等应在输入框/页面留下可观察的对应变化，或菜单关闭且该项进入选中态），**而不是无反应、也不是触发了邻居项**。
+  3. **滚动到底**：若菜单项超出可视高度，在浮层内滚到底（CDP `Input.dispatchMouseEvent` 滚轮 或 `el.scrollTop=el.scrollHeight` 后复核）→ 断言**最后一项可见且可点**、滚到底后浮层**没有被裁掉**。
+  4. 每个断言附一张 `screencap`（>100KB）+ `read_image` 整页判。
+- **预期**: `/` 能弹菜单；点选项**正确触发对应指令**（不误触邻居、不无反应）；长菜单**可滚到底**且末项可用。任一环节坏 = **P0/P1**（改了透明度把交互改坏）。
+- **实际**: （待填——待 task-6 完成后执行）
+- **结果**: （待填）
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-C11-menu-open.png` / `qa-C11-menu-clicked.png` / `qa-C11-menu-scrolled.png`（**待拍**）｜CDP JSON（浮层矩形、点击目标 aria/文本、scrollTop/scrollHeight）
+
+### QA-C12 点浮层外收起侧栏浮层（对照 v1.32.4/1.32.5 修的那批）
+- **场景**: 窄屏侧栏展开是浮层，**点浮层外要收起**（v1.32.4/1.32.5 修过的那批）。本轮新增「浮层/菜单提亮」例外规则，可能误伤这个"点外部"判定或让浮层层级/命中区变化，导致收不起来或误收。
+- **前置**: 同 QA-C11；窄屏 CSS360（`innerWidth=360`）。
+- **步骤**:
+  1. CDP 真点「Open sidebar」→ 断言展开（`[class*='_2H3hWW_root']` `position=fixed`、width≈280、`collapsed` 不成立）。
+  2. 在**浮层之外**的页面区域（例如正文右侧空白）用 `Input.dispatchMouseEvent` **真点**一次 → 断言**收起回 56px 轨道**、`collapsed` 成立。
+  3. 截图（展开态 / 点外后）+ `read_image` 整页判：收起态**没有**被裁的碎片、没有半截面板残留。
+  4. **顺序纪律**：本条会关闭浮层，**排在其他浮层类用例之后**（`TESTER.md` §3 第 6 条：点击会关浮层的探针组排最后）。
+- **预期**: 点浮层外能正常收起侧栏浮层；不因新规则误伤（该收的收起、不该收的不误收）。
+- **实际**: （待填） / **结果**: （待填）
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-C12-sidebar-expanded.png` / `qa-C12-collapsed-after-outside-tap.png`（**待拍**）｜CDP JSON（`collapsed` + 矩形）

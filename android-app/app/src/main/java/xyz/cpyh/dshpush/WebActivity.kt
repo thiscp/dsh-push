@@ -344,18 +344,69 @@ class WebActivity : Activity() {
                         "document.body.style.setProperty('background-color'," +
                         "'transparent','important');" +
                         "var vw=window.innerWidth,vh=window.innerHeight;" +
+                        // 浮层底色回退色（v1.32.11）：真实指令菜单表层 Z9Jnlq_menu 的
+                        // computed background 是 **transparent**（它的底色来自样式表/伪元素），
+                        // 所以它连下面的正则分支都进不去（!m 或 alpha<1 直接 continue），
+                        // 这正是"菜单太透、文字发花"的机制。命中的浮层若自身没有可用色相，
+                        // 就按页面文字亮度选深/浅纱（与 #dsh-theme-veil 同一判据）。
+                        "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
+                        "getComputedStyle(document.body).color)||[];" +
+                        "var blum=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
+                        // 0.96 而非 0.92：0.92 下实测仍能隐约看到底层聊天正文叠印（8% 透光），
+                        // 而用户投诉的正是"太透"。0.96 只留 4% 透光，肉眼不再有可辨识的叠印。
+                        "var ovFallback=blum>0.5?'rgba(18,24,40,0.96)':" +
+                        "'rgba(255,255,255,0.96)';" +
                         "var all=document.querySelectorAll('div,main,section," +
                         "header,aside,nav,button,textarea,input,ul,li');" +
                         "for(var i=0;i<all.length;i++){var e=all[i];" +
                         "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?" +
                         "/.exec(getComputedStyle(e).backgroundColor);" +
-                        "if(!m)continue;if(m[4]!==undefined&&+" +
-                        "parseFloat(m[4])<1)continue;" +
                         "var w=e.offsetWidth,h=e.offsetHeight;" +
                         "var cn=(e.className||'').toString();" +
+                        // v1.32.11 浮层例外：菜单/popover/对话框此前和普通卡片一样被压到 0.45，
+                        // 立绘与底层聊天文字透上来把菜单项文字搅花（用户真机反馈"选择传文件的控件
+                        // 背景透明度是否太低了点"）。判定按**结构/角色**特征，不硬编码 CSS-module
+                        // 哈希——上游一改哈希就失效（v1.32.5 的教训）：role ∈ {menu,listbox,dialog,
+                        // alertdialog,tooltip} 直接命中；否则要求 position:fixed|absolute +
+                        // z-index≥10 + 面积不超 90% 视口 + 至少 3 个可交互子项。
+                        // 命中的浮层给 0.92（与展开态侧栏同档）且**不加** backdrop-filter：0.92 已够，
+                        // 而 backdrop-filter 会让元素成为 fixed 后代的包含块（v1.32.4 的坑）。
+                        // 红线守卫：大容器 transparent 分支仍然存在（v1.32.6 壁纸整层消失的教训），
+                        // 但**排在浮层之后且两者互斥**；App 自身锚点（BynINW_*）与侧栏根
+                        // （_2H3hWW_root，归 bwPanelBg 管）不进浮层判定。
+                        "var isOv=false,ovRole=false;" +
+                        "if(cn.indexOf('BynINW_')<0&&cn.indexOf('_2H3hWW_root')<0){" +
+                        "var role=(e.getAttribute&&e.getAttribute('role')||'').toLowerCase();" +
+                        "if(role==='menu'||role==='listbox'||role==='dialog'||" +
+                        "role==='alertdialog'||role==='tooltip'){isOv=true;ovRole=true;}" +
+                        "else{var ocs=getComputedStyle(e);" +
+                        "if((ocs.position==='fixed'||ocs.position==='absolute')&&" +
+                        "ocs.zIndex!=='auto'&&parseInt(ocs.zIndex,10)>=10&&" +
+                        "w<=vw*0.9&&h<=vh*0.9&&" +
+                        "e.querySelectorAll(\"button,a,li,[role='menuitem']," +
+                        "[role='option'],[tabindex]\").length>=3){isOv=true;}}}" +
+                        "if(!m)continue;" +
+                        // 非浮层保持原保守语义：已半透明（alpha<1）的元素不重复处理（幂等）。
+                        // 浮层则**不受此限**：它本来可能是完全透明的，必须补底色才可读。
+                        "if(!isOv&&m[4]!==undefined&&" +
+                        "parseFloat(m[4])<1)continue;" +
                         "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
-                        "if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
+                        // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
+                        // `if(w>vw*0.5&&h>vh*0.5) -> transparent`，浮层分支排在它后面 ⇒
+                        // 菜单一旦变高（实测 257x392，vw=360/vh=671 ⇒ 392>335.5）就落进大容器分支
+                        // 被写成 transparent，`else if(isOv)` 永远轮不到 ⇒ 用户看到的就是
+                        // "菜单还是全透、正文立绘照旧叠印"。我上轮只测到矮菜单（257x172，未过阈值）
+                        // 才误以为已修好 —— 阈值上下两种几何都必须测。
+                        // 修法：浮层判定提到大容器之前，两者**互斥**；且 role 命中的浮层
+                        // （真菜单正是 role=listbox）**豁免全部几何判定**（含大容器分支），
+                        // 因为面积阈值会把真实菜单判成"大容器"而废掉它。
+                        "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5))){" +
+                        "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
+                        "e.style.setProperty('background-color'," +
+                        "(oa<1?ovFallback:'rgba('+m[1]+','+m[2]+','+m[3]+',0.96)')," +
+                        "'important');}" +
+                        "else if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
                         "'background-color','transparent','important');}" +
                         "else if(!skipBg){e.style.setProperty('background-color','rgba('+" +
                         "m[1]+','+m[2]+','+m[3]+',0.45)','important');" +

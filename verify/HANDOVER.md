@@ -12,16 +12,27 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮主题 | **建团队 + 三角色就绪自检**（用户：把成员建起来、进入随时可开工状态）；承接上一轮的**基础设施巡检 + 模拟器禁 CPU 软渲染加固部署** |
-| **当前阶段** | ✅ **本轮已收官（2026-10-14 22:3x）**：生产 0.2.1 在线、笔电真 GPU、openspec strict **10/10**、本地引擎已修复。**两个队友已按用户要求停止**（`inactive`），后续工作在**另一个对话**开展 |
-| **收尾状态** | 收官于 2026-10-14 22:3x。详见 §5.6（本次收官记录）+ §5.4.4（成员实际进展核查表）+ `verify/INCIDENT-2026-10-14-local-engine-prefill-oom.md`（引擎事故） |
-| **下轮第一件事** | ① 读 §5.6 拿当前全貌；② **未闭环只剩 task-10 的 P03–P06**（写功能/跑 QA/发布三条路径都已有实测判据，不需重新摸环境）；③ **派活给队友前先按 §5.6 的"引擎探活"确认本地引擎能真服务**（本轮踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
+| 本轮主题 | **App 浮层可读性修复（v1.32.11）**：用户反馈「选择传文件的控件背景透明度是否太低了点」= slash 指令菜单浮层太透、文字发花 |
+| **当前阶段** | ✅ **QA 双段全过，具备放行条件（2026-10-15 01:0x）**：task-6 ✅ → task-7 ✅（**FAIL P1**）→ task-8 ✅（**P1 复修**）→ task-9 ✅（**Part A 0.92 PASS-with-findings；Part B 0.96 PASS**）。**下一步：lead `-Deploy` 发布 + `export-public.ps1` 同步开源** |
+| **冻结版本（放行采样用的就是它）** | **`cb1a4ce84032d670f1621c1c33b34cb1e45c5007025c9958bbecda2461ec08db` = 0.96 build**（`android-app/**` 自 `49a0ebd` 起**未再改动**，`git diff` 空为证）。**别与 0.92 版混淆**：0.92(`f5e4a6b`) = `1D77D75A…` |
+| **根因（**已钉死到一行**）** | `WebActivity.kt` 玻璃化注入的**分支顺序反了**：`:392` `if(w>vw*0.5&&h>vh*0.5)→'transparent'` **无条件排在 `isOv` 之前**；真菜单 `257x392` vs 视口 `360x671` ⇒ `392>335.5` ⇒ **落进大容器分支被设成 `transparent`**，浮层分支永远轮不到 ⇒ **alpha=0**。**且是间歇的**（n=2 跑出 0 / 0.92）——`apply()` 与菜单渐进渲染**竞态**。详见 `ANALYSIS-v1.32.11-overlay-opacity.md` §6.5/§6.6 |
+| **修法（已定型）** | 浮层判定**提到大容器分支之前、两者互斥**；**`role` 命中的浮层豁免全部几何判定**（真菜单正是 `role=listbox`，面积阈值反把它误判成"大容器"）。**大容器分支必须保留**（v1.32.6 红线） |
+| **alpha 目标值** | **0.96**（lead 裁定：0.92=8% 透光实测仍可见底层正文叠印，用户投诉正是"太透"）。**验收断言按 0.96 写** |
+| **两条历史护栏（本轮必须回归）** | ① **v1.32.6**：大容器必须仍走 `transparent` 的**互斥**分支，否则壁纸整层消失（**只看面板截图看不出来**）；② **v1.32.5**：展开态侧栏 0.92 由 `bwPanelBg()` 实现，**不许破坏** |
+| **⚠️ 对抗探针点名的高危目标** | `#dsh-theme-veil`（`position:fixed;inset:0;z-index:-1`）——若"凡是 fixed 就提亮"的例外规则命中它，会把整张壁纸盖住，**症状与 v1.32.6 一模一样**。QA 用例 `QA-A29` 专门扫这个方向（含"反向漏亮=假达标"）。**实测 veil 仍 0.45 ✅（tester 两跑一致）** |
+| **改前基准证据** | `F:\work\work_dsh\tmp\shots\qa\v1.32.11-before-user-report.jpg`（用户真机截图，322,712 B）+ `v1.32.11-before-evidence.md`（判读 + 代码侧判据 + 目标值表）|
+| **目标版本** | **v1.32.11 / versionCode 77**（三处同步：`build.gradle.kts` ×2 + `PushService.APP_VER`）——**复修与调 alpha 均未 bump** |
+| **QA 结论（两轮）** | **task-7**：**FAIL(P1)**（真菜单 alpha=0，根因见上）→ **task-8 复修** → **r2 Part A（0.92 build）✅ PASS-with-findings**：7/7 恒 0.92、**间歇性消失**、肉眼判"发花已消除"、A29 全绿、U-1/U-2 补齐；**P2-1** = 8% 透光淡影（**0.96 要解决的正事**）；**P12 整页目视 BLOCKED**（并发装机杀 App ⇒ 拍到 launcher）。**Part B（0.96）进行中** |
+| **下轮第一件事** | ① 看 **task-9 Part B** 是否闭环（`verify/QA-ROUND-v1.32.11-r2.md`）；② 若 PASS → lead 跑 `-Deploy` 发布（期望 `SUMMARY: 9/9`）+ `export-public.ps1` 同步开源 + `git push origin master`（**顺序**：文档全提交完最后再导镜像） |
+| **⚠️ 本轮新增的采样纪律** | **冻结 build 的哈希必须"夹逼"采样**（前后各读一次且与采样同刻）；**"源码已改/命令成功/产物存在"都不等于"设备上跑的是新版本"**；三者须对齐（commit 源码 ↔ 构建产物 sha256 ↔ 设备 `pm path`）。**间歇性缺陷必须 ≥5 次采样**。详见 §3.18.8 |
+| **上一轮（已完成）** | 建团队 + 就绪自检：生产 0.2.1 在线、笔电真 GPU、openspec strict 10/10。详见 §5.6 + §5.4.4 + `INCIDENT-2026-10-14-local-engine-prefill-oom.md` |
+| **⚠️ 派活前必做** | 按 §5.6 的"引擎探活"确认本地引擎能真服务（本轮踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
 | 团队（本轮建立） | lead + **developer**（`android-app|host-plugin|openspec`）+ **tester**（`verify/**`）；**模型均 = spawn 时 Lead 的模型 `Deepseek-V4.1-Flash`，之后无法更改**（见 §3.10 与 `TEAM-READY` §2） |
 | 笔电现网（上轮变更，仍有效） | `G:\Android\emu-selfheal.ps1` = **加固版 sha256 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`**（源在 `verify/laptop-emu-selfheal.hardened.ps1`）；**旧脚本备份 `emu-selfheal.ps1.bak-f13`（`BE99A7F9…`）可回滚，不需重启 DSH**；选择器 `emu-ladder.gpu=host` |
 | 生产环境 | 桌面 DSH：插件 **0.2.1**（HTTP 401 = 预期，无 token）。token **每次重启必换**，从 `~/.dsh/web.log` 最后一条现取 |
 | vm1 环境 | `dsh-net.sh` **运行中**（3080→3081，三地址自检全可用）；`~/.local/bin/node` v22.22.3；**构建工具链齐全**：JDK `17.0.20.1`、Gradle `8.7`（**不在 PATH**）、SDK `/home/user/android-sdk`（见 §3.12/§3.13） |
 | 笔电环境 | SSH 通；宿主 GPU **RTX 4060 Laptop / 驱动 616.92**；模拟器 **真 GPU** `1440x3168@640`（`emu-gpu-verdict.ps1` exit 0） |
-| 版本基线 | App **v1.32.10 / versionCode 76**（三处一致：`build.gradle.kts` ×2 + `PushService.APP_VER`）；host-plugin **0.2.1** |
+| 版本基线 | App **v1.32.11 / versionCode 77**（三处一致：`build.gradle.kts` ×2 + `PushService.APP_VER`）；host-plugin **0.2.1**（上一版为 v1.32.10/76） |
 | **QA 未完成** | 照旧：task-10 的 **P02–P06 未跑**（P07+P01 已完成，`verify/QA-ROUND-plugin-0.2.0.md`）；另有 tester 本轮列出的 **U-1…U-8**（见 `STATUS-READY` / `TEAM-READY` §6） |
 | 本轮遗留（新） | **H-1**（QA 起页需 `adbd root`，task-4 修中）；**F4/F5/F6 未做**；~~「软渲染实例被 kill+重启拉回」仅干跑证明~~ → **✅ 2026-10-14 20:00 真机验证 FIXED**（§3.14）；真 GPU **冷启**基线未重打；`openspec --all --strict` 仍 5 项 WARNING |
 | 0.2.0 处置 | **作废、禁止进生产**（详见 §3.5） |
@@ -33,9 +44,15 @@
 
 | 产物 | 位置 | 内容（下轮必须知道的） |
 |---|---|---|
-| **团队就绪记录（本轮核心产物）** | [TEAM-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\TEAM-READY-2026-10-14.md) | 三角色构成 + **「队友模型不能改」的完整结论**（§2）+ 任务链与串行纪律（§3）+ developer task-1/task-3 结论（§4/§4.7）+ tester task-2 结论（§4.5）+ **H-1**（§4.6）+ 推真机陷阱（§5.5）+ **各角色就绪判据**（§5）+ 总体就绪结论（§5.6）+ 待办诚实清单（§6）。**新对话开场读完这份 = 知道团队能不能开工** |
-| **QA 就绪报告** | [STATUS-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\STATUS-READY-2026-10-14.md) + [evidence-ready-2026-10-14/](F:\work\work_dsh\dsh-push\verify\evidence-ready-2026-10-14) | tester 的 A–F 逐条断言/实际/证据 + **U-1…U-8 未覆盖项显式列出** + §7 收笔后记（判定 `RED`→`READY` 的诚实过程）+ 两张证据图（B 截图 2,036,754 B / C 起页 1,041,919 B） |
-| **GPU 判据工具** | [emu-gpu-verdict.ps1](F:\work\work_dsh\dsh-push\verify\emu-gpu-verdict.ps1) | **一条命令判模拟器跑真 GPU 还是 CPU 软渲染**：exit `0`=PASS / `3`=SOFTWARE(违反"禁 CPU"约束) / `4`=BLOCKED。判据 = 客机 `dumpsys SurfaceFlinger` 的 `^GLES:` 行（两条件封死：渲染器含 `NVIDIA` → PASS；含 `SwiftShader`/`Google (Google)` **或** qemu `-gpu` 是 swiftshader → SOFTWARE）。只读、不启停笔电任何东西。`-SelfTest` = 6 条合成用例（无需 ssh，实测 6/6）。**顺带闸门**：实例已是真 GPU 但 `emu-ladder.gpu` 仍是 swiftshader 时会告警「下次启动会回退到 CPU」 |
+| **根因档案（本轮核心，v1.32.11）** | [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md) | **§2.0 机制更正**（我初判"被压到 0.45"被实测推翻：真实菜单是 `rgba(0,0,0,0)`、**压根没被注入**）｜决策树两条闸门各自后果｜**§3 `#dsh-theme-veil` 雷区推演**（靠 `z-index≥10` + 面积≤90% 两道门槛才没炸）｜§4 历史护栏（v1.32.6 / v1.32.5）｜§5 目标表（改前值按实测定值）｜**§7 发布前检查单**｜§6 改前证据与局限 |
+| **玻璃化浮层手册（App 侧）** | [android-app/GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md) | developer 写：**真实菜单 DOM 表**（`Z9Jnlq_viewport[role=listbox]` / `_surface_ri079_1.Z9Jnlq_menu`）、踩空机制、`isOv` 判定依据、**CDP 输入坑**（`insertText` 插 0 字符 → 用 `adb shell input text`）、验证法。**下轮改这段注入前先读 §1.5/§5** |
+| **openspec 变更** | [openspec/changes/app-overlay-opacity/](F:\work\work_dsh\dsh-push\openspec\changes\app-overlay-opacity\proposal.md) | proposal + `companion-app` delta：MODIFIED「浏览器网页全界面玻璃化」**3 场景逐字保留** + 新增 4；ADDED 1 需求 3 场景。检查器 `tools\openspec-modify-check.mjs app-overlay-opacity` → `0 problem(s)` exit 0 |
+| **QA 用例与探针（本轮）** | [verify/testcases/](F:\work\work_dsh\dsh-push\verify\testcases) + [qa-overlay-probe.mjs](F:\work\work_dsh\dsh-push\verify\qa-overlay-probe.mjs) | 6 条新用例（**45→51**）：`QA-P11` 主验收 alpha≥0.92｜`QA-P12` 壁纸通道+veil 仍 0.45｜`QA-P13` 侧栏 0.92｜`QA-C11` 菜单交互｜`QA-C12` 点外收起｜**`QA-A29` 对抗扫荡**（过度提亮/反向漏亮双方向）。探针内建 H-1 纪律（root 先于 forward、非 root 报 BLOCKED） |
+| **QA 改动验证轮报告** | `verify/QA-ROUND-v1.32.11.md` | tester 出：用例 id → 断言 → 实际 → 证据路径；**BLOCKED/未覆盖显式列出**（**本轮结束时按实际状态填写**）|
+| 实现 | [WebActivity.kt](F:\work\work_dsh\dsh-push\android-app\app\src\main\java\xyz\cpyh\dshpush\WebActivity.kt) | 玻璃化注入新增 `isOv` 浮层判定（role / 几何+z-index+子项数）+ **幂等闸门改为只约束非浮层** + 浮层回退纱色（与 veil 同判据）。**大容器 `transparent` 分支与 `skipBg`/`bwPanelBg` 未动** |
+| **团队就绪记录** | [TEAM-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\TEAM-READY-2026-10-14.md) | 三角色构成 + **「队友模型不能改」的完整结论**（§2）+ 任务链与串行纪律（§3）+ developer task-1/task-3 结论（§4/§4.7）+ tester task-2 结论（§4.5）+ **H-1**（§4.6）+ 推真机陷阱（§5.5）+ **各角色就绪判据**（§5）+ 总体就绪结论（§5.6）+ 待办诚实清单（§6） |
+| **QA 就绪报告** | [STATUS-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\STATUS-READY-2026-10-14.md) + [evidence-ready-2026-10-14/](F:\work\work_dsh\dsh-push\verify\evidence-ready-2026-10-14) | tester 的 A–F 逐条断言/实际/证据 + **U-1…U-8 未覆盖项显式列出** + §7 收笔后记（判定 `RED`→`READY` 的诚实过程）|
+| **GPU 判据工具** | [emu-gpu-verdict.ps1](F:\work\work_dsh\dsh-push\verify\emu-gpu-verdict.ps1) | **一条命令判模拟器跑真 GPU 还是 CPU 软渲染**：exit `0`=PASS / `3`=SOFTWARE(违反"禁 CPU"约束) / `4`=BLOCKED。判据 = 客机 `dumpsys SurfaceFlinger` 的 `^GLES:` 行。`-SelfTest` = 6 条合成用例（实测 6/6）。**顺带闸门**：实例真 GPU 但选择器仍 swiftshader 时告警"下次启动会回退" |
 | **F1–F3 加固版（✅ 已部署 19:02）** | [laptop-emu-selfheal.hardened.ps1](F:\work\work_dsh\dsh-push\verify\laptop-emu-selfheal.hardened.ps1) | 笔电 `emu-selfheal.ps1` 的**现网版本**（sha256 `21C1856B…`，与 HEAD 逐字节一致）：F1 rung 1 无条件先试（会话检查降为纯日志）｜F2 渲染器纳入健康判据、非真 GPU 即 `VIOLATION` 并纠正、读不到则 **fail closed**｜F3 软渲染只作临时救援、成功后**把选择器重写回 host**。测试钩子 `-DryRun`/`-TestRendererOverride`/`-ForceLadder` 带自锁（不带 `-DryRun` 使用会 exit 2）；**`-SelfTest` 只读**（含**实时**渲染器探测，是防死锁类 bug 的永久回归） |
 | **干跑证明脚本** | [drive-hardened-dryrun.ps1](F:\work\work_dsh\dsh-push\verify\drive-hardened-dryrun.ps1) | 在笔电跑 6 场景（真 GPU 健康／软渲染违规／无法识别 fail-closed／rung1 失败→软渲染救援+选择器还原／rung1 成功／测试钩子安全闸）。**实测 `FINAL: PASS - 6/6, machine mutated: NO`**：前后快照逐项相等（qemu pid、选择器哈希**与 mtime**、真阶梯日志行数、渲染器）。**v1 曾有假测**（`-BreakHostRung` 单独用会停在"已健康"闸口、根本没到阶梯）→ v2 加 `-ForceLadder` 才真打到降级分支 |
 | **部署驱动脚本** | [deploy-emu-selfheal-f13.ps1](F:\work\work_dsh\dsh-push\verify\deploy-emu-selfheal-f13.ps1) | 在**笔电**执行的步骤 4–5：状态核查 → 降级分支复验 → 安全闸测试 → **幂等**覆盖现网脚本 → **生产模式**跑真任务 + 断言表。**必须 `scp` 后 `powershell -File` 跑，别走 ssh 命令行**（超 ~8191 字符会被截断且静默不执行，本轮踩过） |
@@ -56,6 +73,7 @@
 
 | 轮次 | 改了什么 | 去哪看 | 遗留 |
 |---|---|---|---|
+| **v1.32.11 浮层可读性（2026-10-14 23:3x–）** | 用户反馈「选择传文件的控件背景透明度太低了点」⇒ slash 指令菜单浮层发花。**机制比初判更严重**：真实菜单两层表层是 `rgba(0,0,0,0)`，**压根没被注入过**（撞 `alpha<1` 闸门被跳过），不是"被压到 0.45"。修法：新增 `isOv` 浮层判定（role / 几何+z-index+子项数）+ **幂等闸门只约束非浮层** ⇒ 0.92；大容器 `transparent` 与 v1.32.5 侧栏 0.92 均未破 | [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md)（根因+机制更正+veil 推演+发布检查单）、[GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md)（真实 DOM/判定依据/CDP 坑）、`openspec/changes/app-overlay-opacity/`、`verify/QA-ROUND-v1.32.11.md` | 见 §3.17；QA 未跑完；真机 OriginOS 未覆盖 |
 | **建团队 + 就绪自检（2026-10-14 19:1x–19:3x）** | 建立三成员团队（lead/developer/tester，模型均继承 Lead=`Deepseek-V4.1-Flash`）；task-1 工具链自检 **READY**；task-2 取证链路 A–E 全绿；task-3 App 端到端 READY；**task-4 修 H-1 FIXED**；**修掉 1 条阻塞 `openspec archive` 的既有 ERROR**（`c215691`）；**拦截「`dsh-app-verify.ps1` 不加 `-Deploy` 也会推用户真机」的陷阱**；纠正 4 条过时硬事实；**20:00 真机验证软渲染自愈拉回 FIXED** | [TEAM-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\TEAM-READY-2026-10-14.md)、[STATUS-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\STATUS-READY-2026-10-14.md)、本文件 §3.11（纠错）+ §3.12（推真机陷阱）+ §3.13（证据纪律）+ §3.14（自愈真机验证） | F4/F5/F6 未做；真 GPU 冷启基线未重打；`openspec --all --strict` 仍 5 项 WARNING |
 | **基础设施巡检 + F1–F3 加固部署（2026-10-14 18:4x–19:0x）** | 三台机器巡检；**证伪「无交互会话⇒真 GPU 起不来」旧前提**（实测 console 已断开仍 `-gpu host` OK、渲染器=RTX 4060）；**当场把模拟器从 swiftshader 切回真 GPU**；定位 CPU 档稳态固化根因链；产出 `emu-gpu-verdict.ps1` 一条命令闸门；**加固版 F1–F3 已部署**（含部署途中挖出并修掉的 `Run-Timeout` 死锁 + `-SelfTest` 永久回归） | [INFRA-HEALTH-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\INFRA-HEALTH-2026-10-14.md)、[RUNBOOK-emu-selfheal-hardening.md](F:\work\work_dsh\dsh-push\verify\RUNBOOK-emu-selfheal-hardening.md)、skill `dsh-push-app-dev` §2（GPU 判据重写 + 死锁/ssh 长度两条新坑） | **F4/F5/F6 未做**；「软渲染被拉回」仅干跑证明；真 GPU 冷启基线未重打；截图耗时样本不对称 |
 | host-plugin 0.2.0（进行中） | 设置页「手机作答模式」开关；网页提问卡生命周期根因归档；一键安装脚本；deploy 文档 | 本文件 §2 | task-10 执行段未跑；老会话 legacy 僵卡靠「跳过」；DSH 上游补丁（默认 timed + `ask()` AbortController）未提 |
@@ -531,6 +549,233 @@ git fetch origin; git log --oneline origin/master..HEAD   # 对 gitee 云端：�
 渲染器 **NVIDIA RTX 4060**、`-gpu host`、selector `host`、自愈哈希 `21C1856B…`（未变）。
 
 **推送**：私有仓 `acdcf04..979a114` → gitee；公开镜像重导 → `2ec9015`（GitHub + Gitee 双远端）。
+
+## 3.17 v1.32.11 浮层可读性：机制裁定 + 两条硬纪律（2026-10-14 23:3x–）
+
+### 3.17.1 机制被实测推翻（**这条最值得记住**）
+
+用户反馈「**选择传文件的控件背景透明度是否太低了点**」= 输入框上方 slash 指令菜单浮层发花。
+
+| | lead 初判 | **实测真相（developer CDP 抓真实 DOM）** |
+|---|---|---|
+| 机制 | 浮层被压到 `rgba(…,0.45)` | 真实菜单两层表层都是 **`rgba(0,0,0,0)`（全透明）** ⇒ 撞注入里 `alpha<1 -> continue` 闸门**被跳过**，**压根没被注入过**；底色来自**样式表/伪元素** |
+| 后果 | "0.45 太透" | **完全没底色**（比 0.45 更糟）|
+
+**真实菜单 DOM**（笔电 `emulator-5554`）：
+```
+div.Z9Jnlq_viewport [role=listbox][aria-label="Trigger suggestions"]  257x172
+    bg=rgba(0,0,0,0)  position:static  z:auto
+  外层 div._surface_ri079_1.Z9Jnlq_menu   bg=rgba(0,0,0,0)  position:absolute  z-index:100
+  菜单项 button.Z9Jnlq_item [role=option]  251x34
+```
+⇒ **真实哈希是 `Z9Jnlq_*`，正是"没猜到"的那个** ⇒ 再次证明**不能硬编码 CSS-module 哈希**，
+本轮靠 `role=listbox` 直接命中 + 外层几何（`absolute` + `z≥10` + 有可交互子项）兜住。
+
+### 3.17.2 纪律一：合成探针能验逻辑，**不能替代真实元素取证**
+
+developer **第一版修复是错的**：只加了 `else if(isOv) → 0.92`，对"已有非透明背景"的浮层有效，
+**对真实菜单完全无效**（它进不了那个分支）。
+是 **CDP 抓真实 DOM** 才把它抓出来——若只跑合成探针就交付，这一版会「**验过但没修好**」。
+⇒ **凡"改注入/改样式"类修复，验收必须落到真实元素的 computed 值**；合成夹具只用于验逻辑分支。
+
+### 3.17.3 纪律二：`#dsh-theme-veil` 是本类改动的头号雷（**靠两道门槛才没炸**）
+
+`#dsh-theme-veil` 是 `position:fixed; inset:0; z-index:-1` 的全屏纱罩（`rgba(…,0.45)`）。
+**改前**它靠 `alpha<1` 被跳过；**改后**幂等闸门改成"只约束非浮层"，它**必须不能**被判成浮层。lead 独立沿新代码逐条走：
+
+| 判定条件 | veil 的结果 |
+|---|---|
+| `role` ∈ {menu,listbox,dialog,…} | **无 role** ✗ |
+| `position: fixed\|absolute` | ✅ 通过 |
+| **`z-index ≥ 10`** | **`z-index:-1` ⇒ -1 < 10 ✗ 挡住** |
+| **面积 ≤ 90% 视口** | **`inset:0` ⇒ 100% ✗ 挡住** |
+| ≥3 个可交互子项 | ✗ |
+
+⇒ 两道门槛任一放宽（或改成"凡 `fixed` 就提亮"），veil 会被提到近不透明 ⇒ **整张壁纸被盖住，症状与 v1.32.6 一模一样**。
+**⇒ 这两道门槛是承重的，不是装饰。**
+
+### 3.17.4 本轮验收护栏（历史回归）
+
+| 版本 | 当年的坑 | 必须保住 |
+|---|---|---|
+| **v1.32.6** | 丢了 `else` ⇒ 大容器先 `transparent` 又被 0.45 覆盖 ⇒ 每层 45% 白叠成 ~91% ⇒ **壁纸整层消失**（真机+模拟器复现；**只看面板截图看不出来**）| 大容器走**互斥** `transparent`；**整页**截图验壁纸 |
+| **v1.32.5** | 去毛玻璃后侧栏背后文字透上来混在条目里 | `bwPanelBg()` 展开态 **0.92** 不许破坏 |
+
+### 3.17.5 产物与判据
+
+| 产物 | 内容 |
+|---|---|
+| [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md) | 根因档案：§2.0 机制更正、决策树两条闸门、veil 雷区推演、历史护栏、**§7 发布前检查单** |
+| [GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md) | developer 写：真实菜单 DOM 表、踩空机制、判定依据、**CDP 输入坑**、验证法 |
+| `openspec/changes/app-overlay-opacity/` | proposal + `companion-app` delta（MODIFIED 3 场景逐字保留 + 新增 4 / ADDED 1 需求 3 场景）|
+| `verify/testcases/` + `verify/qa-overlay-probe.mjs` | 6 条新用例（**45→51**）+ 执行探针（H-1 纪律内建：root 先于 forward、非 root 报 BLOCKED）|
+
+**版本**：**1.32.11 / versionCode 77**（三处一致）。
+**openspec**：`tools\openspec-modify-check.mjs app-overlay-opacity` → `0 problem(s)`，**exit 0**（lead 独立复跑）。
+**改后 CDP 值**（developer 实测，待 QA 独立复现）：`menu 0.45→0.92`｜`dialog 0.45→0.92`｜
+大容器 `transparent→transparent`｜侧栏收起 `0.45→0.45`｜侧栏展开 `0.92→0.92`｜同页输入卡仍 `0.45`（无误伤）。
+
+**⚠️ CDP 输入坑（2026-10-15 **已更正**，原记载是反的）**：
+tester 实测四种策略后确认 —— **`el.focus()`（不点击）+ `Input.insertText` 才成功**；
+而"**先 CDP 合成点击**"会把焦点抢到 tab 容器（`activeElement` 落到 `SECTION._tabHost_*`），
+之后 `Input.insertText` / `adb shell input text` / `keyevent` **全部插 0 字符**。
+⇒ **是"合成点击"这个前置动作坏了，不是 `insertText` 坏**（developer 上轮归因颠倒）。
+（原记载写的"insertText 插 0 字符、要用 adb IME"**已作废**。）
+
+## 3.18 v1.32.11 复修：根因是**分支顺序**，不是数值 —— 两条新纪律（2026-10-15 00:1x）
+
+### 3.18.1 事故链（四层，每层都被实测抓出来）——**注意第 ④ 层：alpha 是间歇的**
+
+| 层 | 现象 | 真相 |
+|---|---|---|
+| ① | 用户报"浮层太透、文字发花" | 真菜单两层表层 **`rgba(0,0,0,0)`**，靠 `alpha<1` 闸门**被跳过、压根没被注入** |
+| ② | developer 加 `else if(isOv)→0.92` | **对真菜单无效**（它进不了那个分支）；**CDP 抓真实 DOM** 才暴露「验过但没修好」 |
+| ③ | 改成"幂等闸门只约束非浮层"后**仍照旧发花** | **分支顺序反了**：`:392` `if(w>vw*0.5&&h>vh*0.5)→transparent` **无条件排在 `isOv` 之前** |
+| ④ | **同一版本、同设备、同一操作，n=2 跑出不同结果** | **alpha 是间歇的**：Run A = **0**、Run B = **0.92** ⇒ 根因是 **`apply()` 与菜单渐进渲染的竞态** |
+
+**④ 的机制**（tester 实测钉死）：`apply()` 跑 **4+ 次**（首跑 / `setTimeout 1500` / `setTimeout 4000` / `MutationObserver` 400ms 去抖），
+而菜单是**渐进渲染**的（先矮后高）⇒ **最后一次 `apply()` 读到的高度决定终态**：
+`h ≤ 335.5` ⇒ 0.92 ✅；`h > 335.5` ⇒ 落进大容器分支 ⇒ `transparent` ❌。
+实测菜单高 **392**，**只超阈值 56.5px**（视口 `360x671` ⇒ 阈值 `180 / 335.5`）⇒ **"掷硬币"**。
+
+**⇒ 两个错误结论都被推翻（含 lead 自己的）**：
+- lead 的「0.92 只挡 92%、8% 透射不够」❌ —— 我判读的那张图其实是 **Run A（alpha=0，完全没底色）**；
+- tester 上版的「根因＝大容器分支恒赢、alpha 恒为 0」❌ —— **tester 主动推翻了自己**。
+
+### 3.18.2 纪律：**合成用例必须覆盖阈值两侧**（本轮最贵的一课）
+
+developer 的合成浮层 **`257x172`**（`172 < 335.5`，未过阈值）⇒ 正确走 0.92 ⇒ **假 PASS**；
+**真实菜单 `257x392`**（>50%）⇒ 落进大容器分支。
+> ⇒ 凡"按尺寸/面积做分支"的逻辑，**阈值上下各测一次**（`257x172` 与 `257x392` 是两种命运）。
+
+### 3.18.3 纪律：**间歇性缺陷必须多次采样**（新增，U-6）
+
+Run B 单独看就是"绿"的。**单次采样不能证明修好**。
+> ⇒ 凡涉及"渲染时机/竞态"的改动（`apply()`、`MutationObserver`、渐进渲染），**验收必须 ≥5 次采样**，
+> 确认**恒为**期望值。`task-9` 已把"≥5 次采样"写为硬要求。
+
+### 3.18.4 复修内容与验收
+
+**修法**（`task-8`，已提交 **`f5e4a6b`**）：
+```js
+if(isOv && (ovRole || !(w>vw*0.5 && h>vh*0.5))) { …alpha… }   // 浮层先判；ovRole=role 命中者豁免全部几何判定
+else if(w>vw*0.5 && h>vh*0.5)                     { …'transparent'… }  // v1.32.6 红线，保留
+else if(!skipBg)                                  { …0.45… }
+```
+
+**🔴 alpha 目标值 = `0.96`（lead 2026-10-15 00:2x 裁定，见 `ANALYSIS` §6.10）**：
+- 原为 `0.92`；但 **0.92 = 8% 透光，实测仍能隐约看到底层聊天正文叠印**，而**用户投诉的正是"太透"**
+  ⇒ 提到 **`0.96`**（只留 4% 透光，肉眼不再有可辨识叠印）；**不改成全不透明**（保留玻璃质感，与面板档风格一致）。
+- **两处必须同步**：`ovFallback`（深/浅纱）与"有色相"分支，即 `WebActivity.kt` 的 `L357-358` 与 `L407`。
+- ⚠️ `L643` 另有一处 `rgba(18,24,40,0.92)` 是**短提示条**（非本浮层）——**不要顺手改**。
+- **验收断言按 0.96 写**（不是 0.92）。
+
+**⚠️ 采样必须在冻结 build 上进行**：`task-9`（tester）的核心是「≥5 次采样确认恒定」，而本轮风险正是**间歇性**（n=2 跑出 `0` 与 `0.92`）。
+若采样横跨两个 build ⇒ **整轮作废**、可能得出假结论。**强制顺序**：developer 提交+装机+报 **APK sha256** 后**停手** →
+lead 把 sha256 转 tester 放行 → tester 在该 sha256 上采样 → lead 复验通过才发布。**发布⛔暂停中。**
+
+**红线（复修后必须复跑，本轮是 PASS 的正确基线）**：
+- `QA-P12` 壁纸通道：`BynINW_frame`/`centerCol`/`html`/`body` 仍 `rgba(0,0,0,0)`、**整页**壁纸仍透出；
+- `QA-A29` **`#dsh-theme-veil` 仍 0.45**（**tester 实测确认 0.45** ⇒ lead §3 的读码推演获得独立实测支撑 ✅）。
+
+**复修后 developer 的 CDP 实测（0.92 版）**：阈值两侧（TALL `257x392` / SHORT `257x172`）**均 0.92**；
+真菜单 `role=listbox` `257x392` → 内联 `!important` 生效；三条红线全绿。
+**⛔ 但 developer 拿不到"菜单画在屏上"的整页截图**（DOM 说在、`screencap` 里没有）⇒ 交回 tester 取证链
+（tester **拍到了** `qa-P11-slash-menu*.png`）。**lead 已独立肉眼判读复修后证据：判据通过**（`ANALYSIS` §6.9）。
+
+### 3.18.5 祖先链实测：**不是分层问题**（tester 的 `qa-overlay-layers.mjs`，21 层）
+
+tester 额外量了 `background-image` 与 `::before/::after`（**关键**：`background-color:transparent !important`
+**不会移除渐变背景**，只读 `backgroundColor` 会整层漏掉）：
+
+| d | 元素 | bg(alpha) | background-image | pos/z |
+|---|---|---|---|---|
+| **0** | `Z9Jnlq_viewport` **[role=listbox]** | **0.92 ✅ / 0 ❌（两跑不同）** | none | static |
+| **1** | `_surface_ri079_1 Z9Jnlq_menu` | **0（两跑都是）** ⚠️ | none | absolute z=100 |
+| 4 | `RlGAzG_card`（输入卡） | 0.45（预期，无误伤） | none | relative |
+| 10 | `Dc7zOa_composerSeat` | 0 ⚠️ **底色是 `linear-gradient`** | **linear-gradient** | sticky z=9 |
+| 16/17/20 | `BynINW_centerCol`/`frame`/`body` | **0 transparent ✅ 红线保住** | none | — |
+
+**结论**：菜单子树**真正上色的只有 2 个元素**（表层 + 唯一高亮项 `rgba(38,49,72,0.06)`）⇒
+**不存在"夹在菜单项与面板之间的第三个上色层"** ⇒ **不需要补层**；`Dc7zOa_composerSeat` 是**干扰项**
+（不属菜单，但证明"只量 `backgroundColor` 会漏层"这条方法论）。
+
+**⚠️ 复修后仍存的残余（tester 读码预判，`task-9` 要求实测）**：外层 `_surface_ri079_1 Z9Jnlq_menu`
+（`265x400`，**无 `role`**）走几何分支 ⇒ **仍会被设成 `transparent`**；因内层比它小 4px，**预计只影响约 2px 外边**。
+
+### 3.18.6 工具发现：CDP 合成点击会**抢走输入焦点**
+
+- ❌ 先 CDP 合成点击 → 再 `Input.insertText`／`adb shell input text`／`keyevent 76`／CDP KeyEvent ⇒ **全插 0 字符**
+  （点击后 `document.activeElement` 落到 `SECTION._tabHost_*`）。
+- ✅ **`el.focus()`（不点击）+ `Input.insertText("/")`** ⇒ 成功（文本变 `/`、菜单弹出 25 项）。
+> 这**推翻了 developer 上轮的归因**（他报"insertText 坏、要用 adb IME"）——**先怀疑判据**再次奏效。
+> **同源坑**：`Open sidebar` 的合成点击也被 `_tab_*` 吃掉（上版 P13 记 BLOCKED 是**探针问题、非产品缺陷**，已补测 PASS）。
+
+### 3.18.7 本轮产物（截至 2026-10-15 00:3x）
+
+| 产物 | 内容 |
+|---|---|
+| [QA-ROUND-v1.32.11.md](F:\work\work_dsh\dsh-push\verify\QA-ROUND-v1.32.11.md) | **FAIL(P1)** 定稿 + **alpha 间歇性（n=2）**的关键更正 + 逐条用例 + **U-1…U-6 显式列出** + CDP 焦点发现 |
+| [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md) | §2.0 机制更正、§6.4（**被推翻的推理**，保留过程）、§6.5 根因到一行、**§6.6 间歇性竞态**、§6.7 祖先链、§6.8 残余风险、§7 发布检查单 |
+| [GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md) | developer 写：真实 DOM、**§1.6 P1 根因/算术/假 PASS 教训/role 豁免/红线**、CDP 输入坑 |
+| `verify/qa-overlay-probe.mjs` / `qa-overlay-layers.mjs` / `qa-overlay-r2.mjs` | 执行探针（H-1 纪律内建）+ **祖先链 21 层分层探针** + **r2 复验探针**（≥5 次采样 + 阈值两侧 + **APK sha 夹逼 bracket**） |
+| [QA-ROUND-v1.32.11-r2.md](F:\work\work_dsh\dsh-push\verify\QA-ROUND-v1.32.11-r2.md) | **复验报告**：Part A（**0.92 build** = `1D77D75A…`）PASS-with-findings、Part B（**0.96 build** = `cb1a4ce8…`）进行中 |
+| [TEAM-START.md](F:\work\work_dsh\dsh-push\verify\TEAM-START.md) | §4「已验证 vs 待下轮确认」已按实测刷新（新增 v1.32.11 三条待确认） |
+| `tmp/v13211-STATUS.md` | **lead 续跑状态**（宿主重启后靠它恢复断点；含强制四步顺序） |
+| `verify/testcases/` | 6 条新用例（**45→51**）；浮层定位法校准为 **role 优先**；A29 强化"须多次采样" |
+
+**任务链状态**：task-6 ✅ / task-7 ✅(FAIL P1) / task-8 ✅(复修已提交) / **task-9 🔄 复验 r2 进行中**（≥5 次采样 + 阈值两侧 + 复跑红线）。
+**发布**：⛔ **暂停**，等 task-9 结论。
+
+### 3.18.8 🔴 纪律：**冻结 build 的哈希必须"夹逼"采样**（本轮新增，血的教训）
+
+本轮连续出现**三种同源事故**，全部是"**验了，但验的不是那个版本**"：
+
+| # | 形态 | 实况 |
+|---|---|---|
+| 1 | **采样横跨换版** | developer 在 tester 采样期间把 `0.92→0.96` ⇒ lead **叫停采样**，避免整轮作废 |
+| 2 | **哈希标签张冠李戴** | tester Part A 采样于 `00:06–00:16`（当时设备是 **0.92**，实测 alpha 全 0.92），但哈希读于 `00:22` 装机**之后** ⇒ 读到 0.96 的 `cb1a4ce8…`，据此误判"现在设备仍是 0.92" |
+| 3 | **lead 自己的误判** | lead 见"源码 0.96、APK 哈希与 0.92 版相同" ⇒ 怀疑**构建没生效**（方向错了） |
+
+**#3 的判定法（比看哈希/看命令行都硬）：把 APK 里的 `classes*.dex` 抽出来做字面量比对**：
+```bash
+unzip -o -q app-debug.apk "classes*.dex" -d /tmp/apkx
+strings /tmp/apkx/classes*.dex | grep -c "18,24,40,0.96"   # = 1  ✅ 新值确在字节码里
+strings /tmp/apkx/classes*.dex | grep -c "18,24,40,0.92"   # = 1  ← L643 短提示条（非本浮层），符合预期
+```
+⇒ **`cb1a4ce8…` 就是 0.96 build**，构建没问题。
+
+**两个 build 的正确哈希**（**别再用错**）：
+
+| build | sha256 | 证据 |
+|---|---|---|
+| **0.92**（`f5e4a6b`） | **`1D77D75A…`** | developer 首版装机报告 |
+| **0.96**（`49a0ebd`） | **`cb1a4ce8…`** | ✅ DEX 含 `0.96` / `18,24,40,0.96` |
+
+**⇒ 固化为纪律（写进 skill）**：冻结 build 时，**哈希必须在采样前后各读一次（bracket），且与采样同刻**；
+"源码已改"、"命令成功"、"产物存在"**都不等于"设备上跑的是新版本"**。
+三者须对齐：**commit 源码 ↔ 构建产物 sha256 ↔ 设备 `pm path` 的 base.apk sha256**。
+
+**另一条本轮新增的采样纪律**：**间歇性缺陷必须 ≥5 次采样**（本轮 `alpha` 曾同版本 n=2 跑出 `0` 与 `0.92`）。
+tester Part A 已用 **5 次高菜单 + 2 次矮菜单 = 7/7 恒 0.92** 证明**间歇性已消失**（复修把 `role` 命中者彻底豁免几何判定，竞态不再影响它）。
+
+### 3.18.9 本轮最终状态（2026-10-15 01:0x）——**QA 双段全过，具备放行条件**
+
+| 项 | 状态 |
+|---|---|
+| **冻结版本** | **`cb1a4ce8…` = 0.96 build**（已在设备上；`android-app/**` 自 `49a0ebd` 起未再改动，`git diff` 为空为证）|
+| **Part A**（0.92 build） | ✅ **PASS-with-findings**：**7/7 恒 0.92**、间歇性消失、肉眼判"发花已消除"、A29 红线全绿、U-1/U-2 补齐；**P2-1** = 8% 透光淡影（→ 0.96 解决）；**P12 整页目视 BLOCKED**（并发装机杀 App ⇒ 拍到 launcher）|
+| **Part B**（0.96 build） | ✅ **PASS**：**7/7 恒 0.96**（高 `257x392` ×5 + 矮 ×2，阈值两侧）、**哈希 bracket `stable=true`**、**肉眼判"淡影已消除"**、P12 含整页目视**补齐**（并用 `P12_ALIVE` 证明 App 活着）、veil **0.45** 未动、P13/C11/C12 未回退。**无 P0/P1/P2；唯一残留 P3 = 4px rim（决定不动）** |
+| **测试期插曲** | 采样中途自愈 **fail-closed** 触发过一次 `VIOLATION`（`renderer: (COULD NOT READ)`）⇒ kill + rung1 重启；**只重启模拟器、未换 build**（重启后 sha 仍 `cb1a4ce8…`）；被中断的 2 个样本**已丢弃**，7/7 来自**一次连续未中断运行**。**这是加固版既定行为，非故障**。 |
+| **未覆盖（不影响放行）** | **A29 多浮层共存**（`dialog/alertdialog/tooltip/menu` 该页 `present:false` 唤不出）⇒ 已做成**探针常驻断言**；U-3 命中区几何「未涉及」（未动尺寸）；U-5 整轮全量留体验轮 |
+| **发布** | ✅ **具备放行条件**（lead 执行 `-Deploy`，期望 `SUMMARY: 9/9`）|
+
+### 3.18.10 本轮新增的 4 条 QA 工具纪律（tester 沉淀，建议下轮沿用）
+
+1. **APK 哈希必须 bracket 读**（采样前后各一次且与采样同刻）—— Part A 错标的直接来源；
+2. **`connect()` 需有界重试** —— 冷启后 devtools socket 约 **25s** 才出现，单次 `fetch` 会 `fetch failed`；
+3. **自愈 fail-closed 会杀模拟器** —— 采样中途 offline，先查 `emu-ladder.log` 的 `VIOLATION` 行，别当产品故障；
+4. **P12 整页目视要断言 App 进程活着**（`P12_ALIVE`）—— 并发 `install -r` 会杀进程、截到 launcher（Part A 的 BLOCKED 教训）。
 
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 

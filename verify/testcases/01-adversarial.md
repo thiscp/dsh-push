@@ -338,3 +338,50 @@
 - **结果**: PASS
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-mix-card1.png` / `qa-mix-card2.png` / `qa-mix-pill.png` / `qa-mix-after.png`（均 >1.1MB）；`acttop-qa-mix1791942927-card1/card2/pill.txt`；`notif-qa-mix1791942927-pre/-qa-mix-card1/-qa-mix-card2/-qa-mix-pill.txt`
 
+### QA-A29 `position:fixed|absolute` 扫荡：新浮层提亮规则有没有误伤别的浮层（v1.32.11 自加对抗角度）
+- **场景（本库没有的新角度，为 v1.32.11 浮层不透明度改动专门设计）**：
+  改法很可能是「给浮层/菜单加一条例外，把它从 `0.45` 提到 `≥0.92`」。这类**按"是不是浮层"打标签**的规则有两个方向都会坏：
+  - **正向误伤（过度提亮）**：页面里其它 `position:fixed|absolute` 元素被同一条规则一起提亮 ——
+    `#dsh-theme-veil`（深度纱罩，**必须保持 0.45**，被提到 0.92 会把整张壁纸盖住）、toast、下拉/菜单、dialog、
+    提示气泡（tooltip）、通知条（banner/offline bar）。其中 **`#dsh-theme-veil` 是最大目标**：它恰好就是 `position:fixed;inset:0`，
+    若规则写成"凡是 fixed 就提亮"，它就是第一个牺牲品，而且**症状与 v1.32.6 的壁纸消失一模一样**。
+  - **反向漏亮（该亮的没亮）**：真正的浮层有多个兄弟/嵌套层（外层容器透明 + 内层上色），
+    若规则只命中外层（本来就是 `transparent`）或只命中内层而外层仍 0.45，**计算值看着达标、肉眼仍发花**（本仓老坑：computed style 单独通过不算数）。
+- **前置**: v1.32.11 装机；`adb root` + `whoami`==root（H-1）；真 GPU（`emu-gpu-verdict.ps1` exit 0）；页面到 DSH shell。
+- **步骤**:
+  1. **全量枚举快照**：CDP 扫全页，列出**所有** `position` ∈ {`fixed`,`absolute`} 且 `offsetWidth>0 && offsetHeight>0` 的元素，
+     每条记录：`tagName` + `className` + `id` + `rect` + **`backgroundColor` 原始值** + **alpha** + 是否被注入改过（比对 `el.style.backgroundColor` 内联值与 computed 值是否一致）。
+  2. **对照组断言（关键）**：把清单里**"非浮层"**的元素逐个核对：
+     - `#dsh-theme-veil` → alpha **必须仍是 0.45**（**不是** 0.92；这是过度提亮的头号判据）。
+     - 其它非浮层半透元素 → alpha **不得被无故提高**（默认 0.45 保持；若原本就是别的值，记录前后是否变化）。
+     - 判据：**改动前后该清单里"非目标元素"的 alpha 集合应逐项不变**。
+  3. **浮层本体完整性**：对 slash 菜单浮层，断言**其自身 + 其祖先链上所有"上色层"**的 alpha 都 ≥0.92 或为 `transparent`
+     （防止"外层仍 0.45、只有内层亮"导致的漏亮假达标）；检查它是否真的应用了 `backdrop-filter`（若有）。
+  4. **多浮层共存**：逐一唤出至少 2 种其它浮层（如提示气泡/下拉/dialog——能唤出几个算几个，唤不出的**显式记未覆盖**），
+     复核它们没被意外提亮或意外压暗；每步截图。
+  5. 每个断言附 `screencap` + `read_image` 整页判（**整页**，不是只看浮层 —— v1.32.6 就是这么漏的）。
+- **预期**:
+  - 非目标 `fixed/absolute` 元素 alpha **逐项不变**；`#dsh-theme-veil` 稳在 **0.45**、壁纸不被盖；
+  - slash 菜单浮层**从内到外**都达到 ≥0.92（没有漏亮的外层）；
+  - 其它浮层无意外增亮/压暗。
+- **判负**: 出现「veil 被提到 0.92 / 壁纸被盖」= **P1**（视觉回归，等同 v1.32.6）；
+  出现「外层仍 0.45 导致肉眼仍发花」= **P1**（假达标）；其它浮层被无故改亮/改暗 = **P2**（视影响面）。
+- **实际**: **v1.32.11 实测（2026-10-15 00:06–00:12，n=2）—— 本用例的价值已被验证：它抓到了"不稳定"**：
+  - **非目标元素零误伤** ✅：`#dsh-theme-veil` **alpha 0.45**（`z-index:-1` + `inset:0` ⇒ `isOv=false`，两跑一致）、
+    同页输入卡 `RlGAzG_card` **0.45**、`BynINW_frame`/`centerCol` **transparent**（壁纸通道保住）。
+  - **但"反向漏亮＝假达标"确实发生了，且形式是**随机**而非固定**：菜单表层 `Z9Jnlq_viewport`(257x392)
+    **Run A alpha=0（内联 `transparent !important`）｜Run B alpha=0.92** —— 同一版本同一操作，两跑结果相反。
+  - **祖先链全量结论（21 层，`background-image` 与 `::before/::after` 都量了）**：
+    菜单子树里**真正上色的只有 2 个元素**（表层 + 唯一高亮项 `rgba(38,49,72,0.06)`），
+    **不存在"夹在菜单项与面板之间的第三个上色层"** ⇒ **不是分层问题，是判定顺序 + 尺寸阈值问题**
+    （详见 `QA-ROUND-v1.32.11.md` FINDING-1）。
+  - **顺带抓到一条工具层同类缺陷**：`Dc7zOa_composerSeat` 的底色来自 **`background-image` 渐变**（其 `background-color` 为 0）——
+    ⇒ **只用 `getComputedStyle().backgroundColor` 判"这层有没有上色"会漏层**；
+    **凡问"哪一层在画背景"，必须同时量 `backgroundImage` + `::before`/`::after`**（已沉淀进 `verify/qa-overlay-layers.mjs`）。
+- **结果**: **PASS（作为误伤闸门）**；**同时作为"探雷器"命中 P1**（浮层 alpha 不稳定）
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-A29-fixed-sweep.png`（986,089 B）｜
+  `F:\work\work_dsh\tmp\qa-overlay-run2.json` → `cases.QA-A29.sweep` / `QA-A29b-nonoverlays`｜
+  `F:\work\work_dsh\tmp\layers-report2.json` → `ancestorChain`（21 层）/ `menuPainters`
+- **🔧 强化建议（下轮，必须改）**：本条应改为**多次采样（≥3 跑）**，每跑记录"非目标 alpha 集合 + 目标 alpha"。
+  原因：单次测量**无法发现"时好时坏"** —— 本轮若只跑 Run B，会把它误判成 **PASS**（这正是它存在的意义）。
+- **去向**: 本轮跑完把结论回填本用例；若发现新缺陷，按 `TESTER.md` §5 格式写 FINDING 进 `QA-ROUND-v1.32.11.md`。
