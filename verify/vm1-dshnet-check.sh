@@ -34,7 +34,7 @@ PATCH="$DSH_HOME_REAL/profiles/$PROFILE/cordis.patch.yml"
 WEBLOG="$DSH_HOME_REAL/web.log"
 PROFILE_DIR="$DSH_HOME_REAL/profiles/$PROFILE"
 PIN_FILE="$DSH_HOME_REAL/.guard-pin"
-PUBLIC_HOST="100.75.230.18"
+PUBLIC_HOST="<tailnet-vm1>"
 
 say()  { echo "[check] $*"; }
 fail() { echo "[check] ERROR: $*"; exit 2; }

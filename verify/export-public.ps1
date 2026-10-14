@@ -48,10 +48,22 @@ $map = [ordered]@{
   'tk_REPLACE_READ'  = 'tk_REPLACE_READ'
   'tk_REPLACE_WRITE' = 'tk_REPLACE_WRITE'
 }
-$exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.kt","*.xml"
+# 3a. Which files to scrub/gate: **EVERY text file**, i.e. a BINARY DENYLIST - never an
+#     extension allowlist. Hard fact (v1.32.14): an allowlist silently skips any extension
+#     nobody remembered to add. `verify/vm1-dshnet-check.sh` leaked `<tailnet-vm1>` into the
+#     public repo for several releases because `.sh` was missing from the old `$exts` list -
+#     the scrub AND the secret gate both skipped it, and the gate still reported success.
+$binExt = @(".png",".jpg",".jpeg",".gif",".webp",".ico",".bmp",".apk",".jar",".keystore",
+            ".jks",".so",".dex",".zip",".gz",".tgz",".tar",".7z",".pdf",".woff",".woff2",
+            ".ttf",".otf",".mp3",".mp4",".wav",".exe",".dll",".bin",".pyc",".class")
+$textFiles = @(Get-ChildItem $stage -Recurse -File | Where-Object {
+  $_.FullName -notmatch '\\\.git\\' -and ($binExt -notcontains $_.Extension.ToLower())
+})
+Write-Host ("scrub/gate scope: " + $textFiles.Count + " text file(s) (binary denylist: " + $binExt.Count + " ext)")
+
 $scrubHits = [ordered]@{}
 foreach ($k in $map.Keys) { $scrubHits[$k] = 0 }
-Get-ChildItem $stage -Recurse -Include $exts -File | ForEach-Object {
+$textFiles | ForEach-Object {
   $t = [IO.File]::ReadAllText($_.FullName); $o = $t
   foreach ($k in $map.Keys) {
     $c = ([regex]::Matches($t, [regex]::Escape($k))).Count
@@ -77,9 +89,11 @@ if ($DryRun) {
   }
 }
 
-# 4. secret gate: fail loudly if anything personal leaked through
-$bad = Select-String -Path (Get-ChildItem $stage -Recurse -Include $exts -File).FullName `
-      -Pattern 'tk_[a-z0-9]{15,}|G-A-Fb3[n]|100\.(94|101|75|115)\.\d|192\.168\.1\.20|\bcnop\b'
+# 4. secret gate: fail loudly if anything personal leaked through.
+#    Scans the SAME file set as the scrub (binary denylist) - a gate narrower than the scrub
+#    is how `.sh` slipped through before.
+$bad = Select-String -Path $textFiles.FullName `
+      -Pattern 'tk_[a-z0-9]{15,}|G-A-Fb3[n]|100\.(94|101|75|115)\.\d|192\.168\.(1\.20|1\.6|12\.18|149\.128)|\bcnop\b'
 if ($bad) {
   $bad | ForEach-Object { Write-Host "LEAK: $($_.Path):$($_.LineNumber): $($_.Line.Trim().Substring(0,[Math]::Min(80,$_.Line.Trim().Length)))" }
   throw "secret gate failed - add new values to the scrub map and rerun"
