@@ -1313,7 +1313,7 @@ $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.k
 | 项 | 值 |
 |---|---|
 | 私有仓 | **`dbdbde9`**（工作树干净，已推送 origin/master） |
-| **公开镜像（最终）** | **`86107d0`**（GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push` **均已落地**，`dirty=0`）｜**全文件扫描个人值命中 = `0`** ✅｜`versionName=1.32.14` / `versionCode=80` |
+| **公开镜像（最终）** | GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push` **均已落地**、**工作树干净**｜**判据（不随每次 export 变化的那个）：对公开仓 `git ls-files` 的「全部文件」跑个人值正则 ⇒ `0` 命中** ✅｜`versionName=1.32.14` / `versionCode=80`｜⚠️ **该仓 commit 哈希每次 `export-public.ps1` 都会推进**（本文件自身也被同步过去），**所以别在此处钉哈希，钉"0 命中 + dirty=0"这两个不变量** |
 | 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=80`、**`http=200`、`size=10,993,088`、`sha256 = 2850A0D3…`（= 冻结值）** |
 | 发布 | ✅ **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-031646.log`）｜更新通知 `id: qgCcmpuMrvKX` |
 | QA | ✅ **PASS**（`QA-ROUND-v1.32.14.md`）｜**FINDING-1 已修**（白窗 3 轮零命中 + 阳性对照） |
