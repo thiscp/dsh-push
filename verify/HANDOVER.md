@@ -496,6 +496,42 @@ git fetch origin; git log --oneline origin/master..HEAD   # 对 gitee 云端：�
 `dsh-push-public` **不是手改的**，一律由私有仓镜像：`verify\export-public.ps1`（`git archive` 私有 HEAD → 脱敏 map → 密钥闸门 → 镜像 → 推 GitHub+Gitee）。
 **改完私有仓要同步开源时**：先 `-DryRun` 自证（脱敏命中数 + 闸门，零副作用），再正式跑。**别手工往 public 里改文件**（下次 `/MIR` 会覆盖）。
 
+## 3.16 ⛔ swiftshader 启动器已全面退役：4 个脚本的默认启动器改成加固自愈（2026-10-14 23:1x）
+
+**触发**：另一会话并行更新了 skill（`gpu-mode-switch` `268998f`/`c2f7663`、`dsh-push-app-dev` `19aa3b2`）——
+其中 `19aa3b2` 新增硬事实「⛔ 冷启动禁止用 `dsh-emu-sw`」，并列出受影响文件清单，**点出本仓不止文档、连脚本都在真的用它**。
+
+**已核实（lead 亲自读笔电两个 `.cmd`）**：
+| 启动器 | 实际内容 | 判定 |
+|---|---|---|
+| `dsh-emu-sw` → `G:\Android\run-emu-sw.cmd` | **`-gpu swiftshader_indirect`** | ⛔ **CPU 档，禁用**（用户禁止：风扇噪音；且让 CSS360 几何 + 截图耗时全部作废）|
+| `dsh-emu` → `G:\Android\run-emu.cmd` | `-gpu host` | ✅ 真 GPU |
+
+**改动（4 个脚本，全部纯 ASCII + `Parser::ParseFile` 语法通过）**：
+
+| 脚本 | 改动 |
+|---|---|
+| `verify/dsh-app-verify.ps1` | `$avdCm` → `run-emu.cmd`；`$task` → **`emu-selfheal`**；启动前 `Set-Content emu-ladder.gpu "host"`（把 rung 1 钉在真 GPU）；失败日志改读 `emu-ladder-rung.err`；**头注里那条「`dsh-emu` 在非交互会话会崩（glTexImage2D 0x502）」显式标注为 2026-10-14 已证伪** |
+| `verify/bw-iter.ps1` | 同上（task / selector / 注释三处） |
+| `verify/card-layout-verify.ps1` | 无设备时不再 `schtasks /Run /TN dsh-emu`，改 **`emu-selfheal` + 先钉 selector `host`** |
+| `verify/emu-bootstrap.ps1` | **根因脚本**（它就是当初把 swiftshader 设成默认的那个供给脚本）：默认任务从 `dsh-emu-sw` 改为 **`dsh-emu`（`-gpu host`）**；`run-emu-sw.cmd` 降级为**手动最后手段**并加 `rem` 说明；**仍创建该任务但不再启动它**；创建后把 selector 钉成 `host`；被证伪的 0x502 硬事实改写为测量结论 |
+
+**为什么这条重要**：这是**活雷**——发布流水线 `dsh-app-verify.ps1` 只要遇到"模拟器没起"，就会**自动拉起一个 CPU 软渲染实例**，
+既违反用户约束、又让几何基线与耗时基线静默作废（而且 `dsh-emu-sw` 起的实例渲染器不是 NVIDIA，会让 `emu-gpu-verdict.ps1` 报 3）。
+
+**判据**：`Select-String -Path verify\*.ps1 -Pattern 'dsh-emu-sw|run-emu-sw'` 的命中**全部落在注释/禁令说明/最后手段**里，**无一处active 启动**。
+**唯一权威启动路径** = `emu-selfheal`（读 selector、rung 1 无条件 `-gpu host`、渲染器非 NVIDIA 即 fail-closed）；人工冷启唯一姿势 = `verify\emu-coldstart-real-gpu.ps1`。
+
+**同批修正**：`verify/TESTER.md` 的 §附录 A 第 2 条原教 tester 用 `schtasks /Run /TN dsh-emu-sw` + `tmp\emu-cold-1440.ps1` 冷启（**已被禁**）→
+显式作废并改为 `emu-coldstart-real-gpu.ps1 -Kill`；第 1 条补 **F4 已修事实**（`config.ini` 重复键去重、`hw.gpu.enabled=yes`、
+复核判据、`hw.gpu.mode=auto` **故意保留**以免绕过 F3 救援分支）。
+
+**实测笔电现状（同期核对）**：`config.ini` 141 行、`hw.lcd.width|height|density` **各只 1 行** = `1440/3168/640`、
+`hw.gpu.enabled=yes`、`hw.gpu.mode=auto`、F4 备份 `config.ini.bak-f4-20261014-203537` 在位；
+渲染器 **NVIDIA RTX 4060**、`-gpu host`、selector `host`、自愈哈希 `21C1856B…`（未变）。
+
+**推送**：私有仓 `acdcf04..979a114` → gitee；公开镜像重导 → `2ec9015`（GitHub + Gitee 双远端）。
+
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 
 1. **DSH 上游两条补丁**（源码仓，非本仓）：`tool-ask-user` 默认值 `legacy`→`timed`；`UserQuestionService.ask()` 加完成作用域 AbortController。做掉后连 legacy 会话都不再僵卡，新用户零配置。
