@@ -12,31 +12,30 @@
 
 | 字段 | 值 |
 |---|---|
-| 本轮主题 | **App 浮层可读性修复（v1.32.11）**：用户反馈「选择传文件的控件背景透明度是否太低了点」= slash 指令菜单浮层太透、文字发花 |
-| **当前阶段** | ✅ **已发布上线（2026-10-15 01:08）**：task-6 ✅ → task-7 ✅（**FAIL P1**）→ task-8 ✅（**P1 复修**）→ task-9 ✅（**Part A 0.92 PASS-with-findings；Part B 0.96 PASS**）→ **发布 `SUMMARY: 9/9 passed`** → **开源镜像已同步**。**本轮闭环** |
-| **发布证据** | `verify\dsh-app-verify.ps1 -Deploy` → **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-010827.log`）；线上 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=77` → **http=200 size=10,992,560**（与冻结 APK 字节一致）；更新通知 `id: o4bYmdFn9gaU` |
-| **开源镜像** | `dsh-push-public` HEAD **`b6d7165`**（**收口后重导**：首次导出为 `ba8b455`，之后又提交了 4 笔收口文档 ⇒ 按"文档全提交完最后再导镜像"纪律**重导一次**），**GitHub `thiscp/dsh-push` 与 Gitee `cnopone/pub-dsh-push` 双远端均 `b6d7165`**（`-DryRun` 先自证：脱敏 9 类 + secret gate 通过；已核对镜像内含 `TESTER.md`/`README.md` 的「版本指纹与竞态纪律」与 `GLASS-OVERLAY.md` §7 收口）|
-| **冻结版本（放行采样用的就是它）** | **`cb1a4ce84032d670f1621c1c33b34cb1e45c5007025c9958bbecda2461ec08db` = 0.96 build**（`android-app/**` 自 `49a0ebd` 起**未再改动**，`git diff` 空为证）。**别与 0.92 版混淆**：0.92(`f5e4a6b`) = `1D77D75A…` |
-| **根因（**已钉死到一行**）** | `WebActivity.kt` 玻璃化注入的**分支顺序反了**：`:392` `if(w>vw*0.5&&h>vh*0.5)→'transparent'` **无条件排在 `isOv` 之前**；真菜单 `257x392` vs 视口 `360x671` ⇒ `392>335.5` ⇒ **落进大容器分支被设成 `transparent`**，浮层分支永远轮不到 ⇒ **alpha=0**。**且是间歇的**（n=2 跑出 0 / 0.92）——`apply()` 与菜单渐进渲染**竞态**。详见 `ANALYSIS-v1.32.11-overlay-opacity.md` §6.5/§6.6 |
-| **修法（已定型）** | 浮层判定**提到大容器分支之前、两者互斥**；**`role` 命中的浮层豁免全部几何判定**（真菜单正是 `role=listbox`，面积阈值反把它误判成"大容器"）。**大容器分支必须保留**（v1.32.6 红线） |
-| **alpha 目标值** | **0.96**（lead 裁定：0.92=8% 透光实测仍可见底层正文叠印，用户投诉正是"太透"）。**验收断言按 0.96 写** |
-| **两条历史护栏（本轮必须回归）** | ① **v1.32.6**：大容器必须仍走 `transparent` 的**互斥**分支，否则壁纸整层消失（**只看面板截图看不出来**）；② **v1.32.5**：展开态侧栏 0.92 由 `bwPanelBg()` 实现，**不许破坏** |
-| **⚠️ 对抗探针点名的高危目标** | `#dsh-theme-veil`（`position:fixed;inset:0;z-index:-1`）——若"凡是 fixed 就提亮"的例外规则命中它，会把整张壁纸盖住，**症状与 v1.32.6 一模一样**。QA 用例 `QA-A29` 专门扫这个方向（含"反向漏亮=假达标"）。**实测 veil 仍 0.45 ✅（tester 两跑一致）** |
-| **改前基准证据** | `F:\work\work_dsh\tmp\shots\qa\v1.32.11-before-user-report.jpg`（用户真机截图，322,712 B）+ `v1.32.11-before-evidence.md`（判读 + 代码侧判据 + 目标值表）|
-| **目标版本** | **v1.32.11 / versionCode 77**（三处同步：`build.gradle.kts` ×2 + `PushService.APP_VER`）——**复修与调 alpha 均未 bump** |
-| **QA 结论（两轮）** | **task-7**：**FAIL(P1)**（真菜单 alpha=0，根因见上）→ **task-8 复修** → **r2 Part A（0.92 build）✅ PASS-with-findings**：7/7 恒 0.92、**间歇性消失**、肉眼判"发花已消除"、A29 全绿、U-1/U-2 补齐；**P2-1** = 8% 透光淡影（**0.96 要解决的正事**）；**P12 整页目视 BLOCKED**（并发装机杀 App ⇒ 拍到 launcher）。**Part B（0.96）进行中** |
-| **下轮第一件事** | ① 看 **task-9 Part B** 是否闭环（`verify/QA-ROUND-v1.32.11-r2.md`）；② 若 PASS → lead 跑 `-Deploy` 发布（期望 `SUMMARY: 9/9`）+ `export-public.ps1` 同步开源 + `git push origin master`（**顺序**：文档全提交完最后再导镜像） |
-| **⚠️ 本轮新增的采样纪律** | **冻结 build 的哈希必须"夹逼"采样**（前后各读一次且与采样同刻）；**"源码已改/命令成功/产物存在"都不等于"设备上跑的是新版本"**；三者须对齐（commit 源码 ↔ 构建产物 sha256 ↔ 设备 `pm path`）。**间歇性缺陷必须 ≥5 次采样**。详见 §3.18.8 |
-| **上一轮（已完成）** | 建团队 + 就绪自检：生产 0.2.1 在线、笔电真 GPU、openspec strict 10/10。详见 §5.6 + §5.4.4 + `INCIDENT-2026-10-14-local-engine-prefill-oom.md` |
-| **⚠️ 派活前必做** | 按 §5.6 的"引擎探活"确认本地引擎能真服务（本轮踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
+| 本轮主题 | **App 文档预览面板透明修复（v1.32.12）**：用户反馈「**对话生成的文档，我打开后背景也是透明的**」= 文件预览/差异面板整体无实底、三层层叠发花 |
+| **当前阶段** | 🔄 **QA 进行中（2026-10-15 01:4x）**：task-10 ✅（侦察 + 修法已提交 `adc086c`）→ **task-11 🔄 tester 在冻结 build 上采样**。**发布 ⛔ 暂停** |
+| **冻结版本（放行采样用的就是它）** | **`0acc7f357edce617fac751f807733b9b217bc0b398815488973c085fa24fa756`** = **1.0 版**（`versionCode=78` / `1.32.12`）。**lead 独立三方对齐**：vm1 产物 == 笔电 `G:\Android\dsh-push.apk`（10,992,932 B）== 设备 `pm path` base.apk；**DEX 校验** `isPanel&&pm`=1 / `BynINW_`=2 / `dsh-theme-veil`=1。⚠️ developer 早前报的 `01e24af7…` 是 **0.96 版**，**不是冻结目标** |
+| **根因（实测钉死）** | 被注入层 = `SECTION._tabHost_6nhg2_162`，**`360x671` = 100%×100%** ⇒ 算术 `360>180` ✓ 且 `671>335.5` ✓ ⇒ **落进大容器 `transparent` 分支** ⇒ **`alpha=0`**（不是 0.45：本屏 `injected045=0`）。**剥内联看原生 = `rgb(255,255,255)` `nativeAlpha=1`** ⇒ **应用自己的不透明纯白阅读底被我们抹成全透明**。详见 `ANALYSIS-v1.32.12-doc-panel-transparent.md` §2 |
+| **🔴🔴 本轮最值钱的一条：颜色判据陷阱** | 同屏 **57 个大容器**枚举显示 **`BynINW_frame` 原生也是 `rgb(255,255,255)`**，与坏掉的面板**一模一样**！⇒ 任何"**原生不透明 ⇒ 就给回不透明**"的判据**会同时把壁纸通道变不透明** ⇒ 多层白叠 ⇒ **壁纸整层消失 = 直接复现 v1.32.6**。**⇒ 只能靠结构判据，绝不能靠原生颜色**（§3.19.2）|
+| **修法（三道护栏，已定型）** | `isPanel`（自身 `absolute\|fixed`，或祖先 ≤8 层内有 `absolute\|fixed` 且 ≥90%×90% 视口）＋ `isAnchor` 排除 `BynINW_*`/`_2H3hWW_root` ＋ `isVeil` 按 id 排除 ＋ `pm` 原生色相前置。分支顺序：**浮层 0.96（不动）→ `big&&isPanel&&pm&&!isAnchor&&!isVeil` → 阅读面板 `1.0` → `big` → `transparent` → `!skipBg` → `0.45`**。安全性实测 **`wouldChange=1`**（恰好且仅有该面板层）；三容器 `isPanel=False`。**两个非显然但必需的细节**：① **幂等闸门必须给面板放行**（否则一次性固化）；② **必须取"原生"色相**（`m` 已是透明，会写出透明色）——见 §3.19.3 |
+| **alpha 目标值** | **`1.0`**（lead 裁定，**从 developer 先落地的 0.96 升**）：0.96 下**空白处仍能辨认底层聊天正文淡字** ⇒ 触发预定升级规则。理由：应用原生就是不透明纯白阅读页（1.0 = 还原原生设计）；**阅读面板 ≠ 菜单/浮层**（诉求不同不必同档）；三道护栏与 alpha 取值**正交**（§3.19.4）|
+| **两条历史护栏（本轮必须回归）** | ① **v1.32.6**：`BynINW_frame`/`centerCol`/`html`/`body` 仍 `transparent`、**整页**壁纸仍透出（**开面板时与关闭后都要测**）；② **v1.32.5**：展开态侧栏 0.92 / 收起 0.45 由 `bwPanelBg()` 实现，**不许破坏** |
+| **⚠️ 本轮高危目标** | `#dsh-theme-veil`（`fixed` + 100%×100% ⇒ **会**被 `isPanel` 命中）⇒ **必须显式按 id 排除**（不能依赖"另一段注入恰好先写内联"的**隐式顺序**）。**必须实测 veil 仍 0.45** |
+| **改前基准证据** | `F:\work\work_dsh\tmp\shots\qa\v1.32.12-before-user-doc-transparent.jpg`（用户真机截图，524,038 B）+ [BEFORE-v1.32.12-doc-panel-transparent.md](F:\work\work_dsh\dsh-push\verify\BEFORE-v1.32.12-doc-panel-transparent.md)（判读 + 红线 + 待证清单）|
+| **目标版本** | **v1.32.12 / versionCode 78**（三处同步：`build.gradle.kts` ×2 + `PushService.APP_VER`）✅ 已升 |
+| **openspec** | 新增 `openspec/changes/app-doc-panel-opacity/`（**3 baseline kept, 11 in delta**）；检查器 `tools\openspec-modify-check.mjs app-doc-panel-opacity` → **exit 0**（lead 独立复跑）|
+| **已知遗留（本轮不修）** | **聊天里的大代码块** `_block_7gxqk_4`（`331x524`）**同样被抹成透明**、同样伤可读性，但**不是全屏定位面板** ⇒ 新判据不覆盖 ⇒ 探针加**常驻断言** ＋ 交接登记 ＋ **给用户汇报时显式点出**；4px rim（v1.32.11 遗留，P3）保持不动 |
+| **下轮第一件事** | ① 看 **task-11** 是否闭环（`verify/QA-ROUND-v1.32.12.md`）；② 若 PASS → lead `-Deploy`（期望 `SUMMARY: 9/9`）→ 线上 `?v=78` → `export-public.ps1`（**最后做**）＋ `git push origin master` |
+| **上一轮（✅ 已发布且用户回执「验证通过」）** | **v1.32.11 slash 菜单浮层**：发布 `SUMMARY: 9/9`、线上 `?v=77` http=200/10,992,560 B、开源镜像同步。根因＝**分支顺序反了** ＋ **`apply()` 竞态导致间歇**（n=2 跑出 0/0.92）；修法＝浮层判定提前＋互斥＋`role` 豁免几何判定、alpha 提到 **0.96**。详见 §3.18 |
+| **⚠️ 派活前必做** | 按 §5.6 的"引擎探活"确认本地引擎能真服务（曾踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
 | 团队（本轮建立） | lead + **developer**（`android-app|host-plugin|openspec`）+ **tester**（`verify/**`）；**模型均 = spawn 时 Lead 的模型 `Deepseek-V4.1-Flash`，之后无法更改**（见 §3.10 与 `TEAM-READY` §2） |
 | 笔电现网（上轮变更，仍有效） | `G:\Android\emu-selfheal.ps1` = **加固版 sha256 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`**（源在 `verify/laptop-emu-selfheal.hardened.ps1`）；**旧脚本备份 `emu-selfheal.ps1.bak-f13`（`BE99A7F9…`）可回滚，不需重启 DSH**；选择器 `emu-ladder.gpu=host` |
 | 生产环境 | 桌面 DSH：插件 **0.2.1**（HTTP 401 = 预期，无 token）。token **每次重启必换**，从 `~/.dsh/web.log` 最后一条现取 |
 | vm1 环境 | `dsh-net.sh` **运行中**（3080→3081，三地址自检全可用）；`~/.local/bin/node` v22.22.3；**构建工具链齐全**：JDK `17.0.20.1`、Gradle `8.7`（**不在 PATH**）、SDK `/home/user/android-sdk`（见 §3.12/§3.13） |
 | 笔电环境 | SSH 通；宿主 GPU **RTX 4060 Laptop / 驱动 616.92**；模拟器 **真 GPU** `1440x3168@640`（`emu-gpu-verdict.ps1` exit 0） |
-| 版本基线 | App **v1.32.11 / versionCode 77**（三处一致：`build.gradle.kts` ×2 + `PushService.APP_VER`）；host-plugin **0.2.1**（上一版为 v1.32.10/76） |
-| **QA 未完成** | 照旧：task-10 的 **P02–P06 未跑**（P07+P01 已完成，`verify/QA-ROUND-plugin-0.2.0.md`）；另有 tester 本轮列出的 **U-1…U-8**（见 `STATUS-READY` / `TEAM-READY` §6） |
-| 本轮遗留（新） | **H-1**（QA 起页需 `adbd root`，task-4 修中）；**F4/F5/F6 未做**；~~「软渲染实例被 kill+重启拉回」仅干跑证明~~ → **✅ 2026-10-14 20:00 真机验证 FIXED**（§3.14）；真 GPU **冷启**基线未重打；`openspec --all --strict` 仍 5 项 WARNING |
+| 版本基线 | App **v1.32.12 / versionCode 78**（三处一致）；host-plugin **0.2.1**（上一版为 v1.32.11/77） |
+| **QA 未完成** | 照旧：task-10 的 **P02–P06 未跑**（P07+P01 已完成，`verify/QA-ROUND-plugin-0.2.0.md`）；另有 tester 早期列出的 **U-1…U-8**（见 `STATUS-READY` / `TEAM-READY` §6）；**A29 多浮层共存**（已做成探针常驻断言）|
+| 本轮遗留（新） | **H-1**（QA 起页需 `adbd root`，已修）；**F4/F5/F6 未做**；真 GPU **冷启**基线未重打；`openspec --all --strict` 仍 5 项 WARNING |
 | 0.2.0 处置 | **作废、禁止进生产**（详见 §3.5） |
 | 0.2.1 产物 | sha256 `59B0A9D9EB7B20148C6AAFB1FEA7F09C5E0FE2742ECF016D4D684F320B456D31`（46,652 B），与 `HEAD` 四文件**逐字节 MATCH**（§3.7）。**首包 `59B0B97C…` 已作废** |
 | 回滚路径 | host-plugin：`verify/prod-rollout-plugin.ps1 -Rollback` → `-DispatchRestart` → `-Check`（备份 `*.prodroll-20261014-181419`）；模拟器自愈：`Copy-Item G:\Android\emu-selfheal.ps1.bak-f13 G:\Android\emu-selfheal.ps1 -Force` |
@@ -75,7 +74,8 @@
 
 | 轮次 | 改了什么 | 去哪看 | 遗留 |
 |---|---|---|---|
-| **v1.32.11 浮层可读性（2026-10-14 23:3x–）** | 用户反馈「选择传文件的控件背景透明度太低了点」⇒ slash 指令菜单浮层发花。**机制比初判更严重**：真实菜单两层表层是 `rgba(0,0,0,0)`，**压根没被注入过**（撞 `alpha<1` 闸门被跳过），不是"被压到 0.45"。修法：新增 `isOv` 浮层判定（role / 几何+z-index+子项数）+ **幂等闸门只约束非浮层** ⇒ 0.92；大容器 `transparent` 与 v1.32.5 侧栏 0.92 均未破 | [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md)（根因+机制更正+veil 推演+发布检查单）、[GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md)（真实 DOM/判定依据/CDP 坑）、`openspec/changes/app-overlay-opacity/`、`verify/QA-ROUND-v1.32.11.md` | 见 §3.17；QA 未跑完；真机 OriginOS 未覆盖 |
+| **v1.32.12 文档预览面板透明（2026-10-15 01:2x–）** | 用户新反馈「**对话生成的文档，我打开后背景也是透明的**」⇒ 打开对话生成的文档时，**文件预览/差异面板整体无实底**，底层页签栏/聊天正文/文档文字**互相叠印**、长文发花。**先侦察再改**（不重蹈"凭截图推断数值"的覆辙）：首要嫌疑=面板是**大容器**落进 `transparent` 分支（比 0.45 更透）；次要=未过阈值但 0.45 对阅读器太薄。**红线**：严禁"把大容器一律变不透明"（会直接触发 v1.32.6 壁纸整层消失） | [BEFORE-v1.32.12-doc-panel-transparent.md](F:\work\work_dsh\dsh-push\verify\BEFORE-v1.32.12-doc-panel-transparent.md)（改前证据+红线+待证清单）、`tmp/v13212-STATUS.md`（续跑状态）、`verify/QA-ROUND-v1.32.12.md`（待出） | ✅ 侦察完成（首要嫌疑证实）；修法已提交 `adc086c`（三道护栏 + alpha **1.0**）；**QA task-11 进行中**，发布⛔暂停 |
+| **v1.32.11 浮层可读性（2026-10-15，✅ 已发布且用户回执「验证通过」）** | 用户反馈「选择传文件的控件背景透明度太低了点」⇒ slash 指令菜单浮层发花。**机制比初判更严重**：真实菜单两层表层是 `rgba(0,0,0,0)`、**压根没被注入过**；修后又暴露**分支顺序反了**（大容器分支无条件排在浮层之前 ⇒ 真菜单 `257x392` 被设 `transparent` ⇒ alpha=0），且因 `apply()` 与渐进渲染**竞态**而**时好时坏**。修法：浮层判定提前+互斥+`role` 豁免几何判定；alpha 提到 **0.96** | [ANALYSIS-v1.32.11-overlay-opacity.md](F:\work\work_dsh\dsh-push\verify\ANALYSIS-v1.32.11-overlay-opacity.md)、[QA-ROUND-v1.32.11-r2.md](F:\work\work_dsh\dsh-push\verify\QA-ROUND-v1.32.11-r2.md)、[GLASS-OVERLAY.md](F:\work\work_dsh\dsh-push\android-app\GLASS-OVERLAY.md)、本文件 §3.18 | 4px rim（P3，决定不动）；A29 多浮层共存未覆盖 |
 | **建团队 + 就绪自检（2026-10-14 19:1x–19:3x）** | 建立三成员团队（lead/developer/tester，模型均继承 Lead=`Deepseek-V4.1-Flash`）；task-1 工具链自检 **READY**；task-2 取证链路 A–E 全绿；task-3 App 端到端 READY；**task-4 修 H-1 FIXED**；**修掉 1 条阻塞 `openspec archive` 的既有 ERROR**（`c215691`）；**拦截「`dsh-app-verify.ps1` 不加 `-Deploy` 也会推用户真机」的陷阱**；纠正 4 条过时硬事实；**20:00 真机验证软渲染自愈拉回 FIXED** | [TEAM-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\TEAM-READY-2026-10-14.md)、[STATUS-READY-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\STATUS-READY-2026-10-14.md)、本文件 §3.11（纠错）+ §3.12（推真机陷阱）+ §3.13（证据纪律）+ §3.14（自愈真机验证） | F4/F5/F6 未做；真 GPU 冷启基线未重打；`openspec --all --strict` 仍 5 项 WARNING |
 | **基础设施巡检 + F1–F3 加固部署（2026-10-14 18:4x–19:0x）** | 三台机器巡检；**证伪「无交互会话⇒真 GPU 起不来」旧前提**（实测 console 已断开仍 `-gpu host` OK、渲染器=RTX 4060）；**当场把模拟器从 swiftshader 切回真 GPU**；定位 CPU 档稳态固化根因链；产出 `emu-gpu-verdict.ps1` 一条命令闸门；**加固版 F1–F3 已部署**（含部署途中挖出并修掉的 `Run-Timeout` 死锁 + `-SelfTest` 永久回归） | [INFRA-HEALTH-2026-10-14.md](F:\work\work_dsh\dsh-push\verify\INFRA-HEALTH-2026-10-14.md)、[RUNBOOK-emu-selfheal-hardening.md](F:\work\work_dsh\dsh-push\verify\RUNBOOK-emu-selfheal-hardening.md)、skill `dsh-push-app-dev` §2（GPU 判据重写 + 死锁/ssh 长度两条新坑） | **F4/F5/F6 未做**；「软渲染被拉回」仅干跑证明；真 GPU 冷启基线未重打；截图耗时样本不对称 |
 | host-plugin 0.2.0（进行中） | 设置页「手机作答模式」开关；网页提问卡生命周期根因归档；一键安装脚本；deploy 文档 | 本文件 §2 | task-10 执行段未跑；老会话 legacy 僵卡靠「跳过」；DSH 上游补丁（默认 timed + `ask()` AbortController）未提 |
@@ -778,6 +778,94 @@ tester Part A 已用 **5 次高菜单 + 2 次矮菜单 = 7/7 恒 0.92** 证明**
 2. **`connect()` 需有界重试** —— 冷启后 devtools socket 约 **25s** 才出现，单次 `fetch` 会 `fetch failed`；
 3. **自愈 fail-closed 会杀模拟器** —— 采样中途 offline，先查 `emu-ladder.log` 的 `VIOLATION` 行，别当产品故障；
 4. **P12 整页目视要断言 App 进程活着**（`P12_ALIVE`）—— 并发 `install -r` 会杀进程、截到 launcher（Part A 的 BLOCKED 教训）。
+
+## 3.19 v1.32.12 文档预览面板透明：**颜色判据陷阱** + 两道新增护栏（2026-10-15 01:2x–）
+
+### 3.19.1 根因（实测钉死，**与 v1.32.11 同源但更隐蔽**）
+
+用户反馈「**对话生成的文档，我打开后背景也是透明的**」= 打开对话生成的文档时，
+**文件预览/差异面板整体无实底**，底层页签栏/聊天正文/文档文字**三层层叠**、长文发花。
+
+| 项 | 实测值 |
+|---|---|
+| 被注入的层 | `SECTION._tabHost_6nhg2_162 _pane…`，**`360x671` = 100%×100%** |
+| 算术 | `360>180` ✓ 且 `671>335.5` ✓ ⇒ **落进大容器 `transparent` 分支** |
+| computed / 内联 | `rgba(0,0,0,0)`（**alpha=0**）／ `transparent !important` |
+| **剥内联看原生** | **`rgb(255,255,255)`、`nativeAlpha=1`** ⇒ **应用自己的不透明纯白阅读底，被注入抹成全透明** |
+| 链上其余 13 层 | `background-image` 全 `none`、无伪元素底 ⇒ **本例不涉及渐变底坑**（已按要求两项都量）|
+
+⇒ **首要嫌疑证实（大容器分支吞掉）、次要嫌疑排除（不是 0.45 太薄，本屏 `injected045=0`）。**
+
+### 3.19.2 🔴🔴 **颜色判据陷阱**（本轮最值钱的一条）
+
+同屏 **57 个大容器**做同样的"剥内联看原生"枚举：
+
+| cls | 尺寸 | 内联 | **原生** | 锚点 |
+|---|---|---|---|---|
+| `BynINW_frame` | 360x671 | `transparent` | **`rgb(255,255,255)`** | ★锚点 |
+| `Dc7zOa_root`（聊天根） | 304x671 | `transparent` | **`rgb(255,255,255)`** | |
+| `_tabHost_6nhg2_162` | 360x671 | `transparent` | **`rgb(255,255,255)`** | ← **就是 bug** |
+| `_block_7gxqk_4`（大代码块） | 331x524 | `transparent` | `rgb(249,250,251)` | |
+
+**`BynINW_frame` 原生也是 `rgb(255,255,255)`，与坏掉的面板一模一样！**
+⇒ 任何"**原生不透明 ⇒ 就给回不透明**"的判据**会同时把壁纸通道变不透明** ⇒ 多层白叠 ⇒
+**壁纸整层消失 = 直接复现 v1.32.6 事故**。
+> **⇒ 铁律：容器该透明还是该有底，只能靠「结构/角色」判据，绝不能靠「原生颜色」。**
+
+### 3.19.3 定型修法（三道护栏，全部实测验证）
+
+```
+var big      = (w>vw*0.5 && h>vh*0.5);
+var isAnchor = cn.indexOf('BynINW_')>=0 || cn.indexOf('_2H3hWW_root')>=0;   // 护栏2
+var isPanel  = 自身 absolute|fixed，或祖先 ≤8 层内有 absolute|fixed 且 ≥90%×90% 视口;  // 护栏1（结构判据）
+var isVeil   = (e.id === 'dsh-theme-veil');                                  // 护栏3
+var pm       = 原生色相（a0>=1 用 m；否则临时摘内联读原生、读完还原）;
+
+if (isOv && (ovRole || !big))                       -> 浮层 0.96     // v1.32.11，一字不动
+else if (big && isPanel && pm && !isAnchor && !isVeil) -> 面板 1.0   // ★ 新增（见 §3.19.4）
+else if (big)                                       -> transparent  // ★ 通道仍全透
+else if (!skipBg)                                   -> 0.45
+```
+
+**判据安全性实测**：`panelFlagged=10`、**`wouldChange = 1`**（恰好且仅有 `_tabHost`）；
+`BynINW_frame` / `BynINW_centerCol` / `Dc7zOa_root` 的 `isPanel` **全为 `False`** ⇒ 行为逐字节不变。
+
+**两个非显然但必需的细节**（不改就会失败）：
+1. **幂等闸门必须给面板放行**：面板上一轮已被写成 `transparent`（`a0=0`），沿用原闸门
+   `if(!isOv && a0<1) continue` 会**直接跳过** ⇒ **一次性固化**，永远修不回来；
+2. **必须取"原生"色相**：`m`（computed）已是 `rgba(0,0,0,0)`，拿它当色相会写出**透明色**
+   ⇒ 需**临时摘掉内联读原生**（读到 `rgb(255,255,255)`）再还原（`restoreOk=True`）。
+
+### 3.19.4 alpha 最终值 = **`1.0`**（lead 裁定，**从 0.96 升**）
+
+developer 先落地 **0.96**，并**如实报保留意见**（"仍可隐约辨认底层淡影"）。
+**lead 亲自 `read_image` 看整页图**确认：面板已是实底、**三层层叠已消失**，
+**但空白处仍能辨认底层聊天正文淡字**（`判据 + 一条命令 + 自测夹具 + 事故复盘` 等）
+⇒ **触发预先定下的升级规则（"整页肉眼判若有任何可辨识透字 ⇒ 升 1.0"）**。
+
+**升 1.0 的三条理由**：
+1. **应用原生就是 `rgb(255,255,255)` 不透明纯白阅读页** ⇒ `1.0` 是**还原原生设计**，
+   而 `0.96` 是**我们叠加的近似**；
+2. **整页长文阅读面板 ≠ 菜单/浮层**：阅读面板的唯一职责是**长时间舒适阅读**；
+   浮层是"短暂浮在内容上、需要一点空间线索" ⇒ **两者诉求不同，不必同档**；
+3. **三道护栏与 alpha 取值正交** ⇒ 升 `1.0` **不改变任何安全性质**，红线仍由判据保证。
+
+> **档位表（本轮定型）**：阅读面板 **1.0** ｜ 浮层 **0.96** ｜ 展开态侧栏 **0.92** ｜
+> 普通面板/卡片/输入卡 **0.45** ｜ 大容器（壁纸通道）**`transparent`** ｜ veil **0.45**。
+
+### 3.19.5 本轮新踩的两个**探针陷阱**（下轮别再交学费）
+
+1. **`[class*='_tabHost']` 有 6 个匹配**（含 `0x0` 占位）⇒ `querySelector` 会拿到 `0x0` 那个，
+   把"**面板其实开着**"误报成"**没打开**"。**必须扫全部匹配取最高**（与 v1.32.5 侧栏同类陷阱）。
+2. **截图路径不能当第 3 个 argv 传**：`overlay-run.ps1` 只传 `(outJson, tag)`，第 3 个参数恒空
+   ⇒ 截图**被静默跳过**，却得出"截不到图"的错误结论（v1.32.11 已这样误报过一次）。**路径必须硬编码。**
+
+### 3.19.6 已知遗留（**登记，不在本轮修**）
+
+| 项 | 内容 | 处置 |
+|---|---|---|
+| **聊天里的大代码块** | `_block_7gxqk_4 md-code-block`（`331x524`）**同样被抹成透明**、同样伤可读性，但**不是全屏定位面板** ⇒ 新判据不覆盖它 | **本轮不修**（不夹带扩大改动面）；① 探针加**常驻断言**；② 交接登记；③ **在给用户的汇报里显式点出**，由他决定是否下一轮处理 |
+| 4px rim（v1.32.11 遗留） | `_surface_*` 每边外扩 4px，仍 `transparent`，整页不可见 | 保持不动（P3）|
 
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 

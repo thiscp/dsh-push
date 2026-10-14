@@ -385,11 +385,51 @@ class WebActivity : Activity() {
                         "w<=vw*0.9&&h<=vh*0.9&&" +
                         "e.querySelectorAll(\"button,a,li,[role='menuitem']," +
                         "[role='option'],[tabindex]\").length>=3){isOv=true;}}}" +
+                        // ★ v1.32.12 内容阅读面板保底：大容器分支把所有 >50%x50% 的元素一律设成
+                        // transparent，于是"对话生成的文档"预览面板被抹成全透明 —— 实测
+                        // SECTION._tabHost_6nhg2_162（360x671 = 100%x100%）内联被写成
+                        // `transparent !important`，而它的**原生**背景是 rgb(255,255,255)
+                        // （应用自己就是不透明纯白阅读页）⇒ 底层页签栏/聊天正文/文档文字互相叠印
+                        // （用户 2026-10-15 反馈"打开文档背景也是透明的"）。
+                        // ⚠ 判据必须是**结构**特征，绝不能用"原生是否不透明"：实测
+                        // BynINW_frame（壁纸唯一通道）原生**同样是** rgb(255,255,255)，用颜色判据
+                        // 会把壁纸通道一起变不透明 ⇒ 每层白叠加 ⇒ 直接复现 v1.32.6 壁纸整层消失。
+                        // 结构判据：阅读面板是**全屏定位覆盖层**（自身 absolute/fixed，或 8 层内有
+                        // "定位且 ≥90%×90% 视口"的祖先）；壁纸通道是 static/relative 常规布局。
+                        // 实测该判据下 wouldChange 恰好只有 _tabHost 一个，三项关键容器均不命中。
+                        "var big=(w>vw*0.5&&h>vh*0.5);" +
+                        "var isAnchor=cn.indexOf('BynINW_')>=0||" +
+                        "cn.indexOf('_2H3hWW_root')>=0;" +
+                        "var isPanel=false;" +
+                        "if(big&&!isAnchor&&e.id!=='dsh-theme-veil'){" +
+                        "var pcs=getComputedStyle(e);" +
+                        "if(pcs.position==='absolute'||pcs.position==='fixed'){isPanel=true;}" +
+                        "else{var pa=e.parentElement,ph=0;" +
+                        "while(pa&&ph<8){var acs=getComputedStyle(pa);" +
+                        "if(acs.position==='absolute'||acs.position==='fixed'){" +
+                        "var ar=pa.getBoundingClientRect();" +
+                        "if(ar.width>=vw*0.9&&ar.height>=vh*0.9){isPanel=true;break;}}" +
+                        "pa=pa.parentElement;ph++;}}}" +
                         "if(!m)continue;" +
-                        // 非浮层保持原保守语义：已半透明（alpha<1）的元素不重复处理（幂等）。
-                        // 浮层则**不受此限**：它本来可能是完全透明的，必须补底色才可读。
-                        "if(!isOv&&m[4]!==undefined&&" +
-                        "parseFloat(m[4])<1)continue;" +
+                        // 非浮层/非面板保持原保守语义：已半透明（alpha<1）的元素不重复处理（幂等）。
+                        // 浮层与阅读面板**不受此限**：浮层本来可能是全透明、必须补底色才可读；
+                        // 面板则可能已被我们上一轮写成 transparent，必须能再次纠正（否则一次性固化）。
+                        "var a0=(m[4]!==undefined?parseFloat(m[4]):1);" +
+                        "if(!isOv&&!(big&&isPanel)&&a0<1)continue;" +
+                        // 取面板**原生**色相：我们可能已把它的内联值改成 transparent，
+                        // 此时 computed 读不出原色 ⇒ 临时摘掉内联再读，读完按需还原。
+                        // 原生确实没有不透明底的（如 OUqwTW_panelBody/_surface_6nhg2_125）
+                        // 一律判为"不是阅读面"，还原后走原分支 —— **绝不给无底元素凭空加底**。
+                        "var pm=(a0>=1?m:null);" +
+                        "if(big&&isPanel&&a0<1){" +
+                        "var sv=e.style.getPropertyValue('background-color')," +
+                        "sp=e.style.getPropertyPriority('background-color');" +
+                        "e.style.removeProperty('background-color');" +
+                        "var nx=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?" +
+                        "/.exec(getComputedStyle(e).backgroundColor);" +
+                        "var na=(nx&&nx[4]!==undefined)?parseFloat(nx[4]):(nx?1:0);" +
+                        "if(nx&&na>=1){pm=nx;}else{if(sv)e.style.setProperty(" +
+                        "'background-color',sv,sp||'');}}" +
                         "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
                         // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
@@ -405,6 +445,19 @@ class WebActivity : Activity() {
                         "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
                         "e.style.setProperty('background-color'," +
                         "(oa<1?ovFallback:'rgba('+m[1]+','+m[2]+','+m[3]+',0.96)')," +
+                        "'important');}" +
+                        // ★ v1.32.12 阅读面板：仅当"大容器 + 全屏定位面板 + 原生确实有不透明底"时，
+                        // 用它的**原生色相**恢复不透明实底（实测应用原生就是 rgb(255,255,255)
+                        // 不透明纯白阅读页 ⇒ alpha=1 是**还原原生设计**，而非我们另造档位）。
+                        // 为何是 1 而不是与浮层同档的 0.96：整页长文阅读面板的唯一职责是长时间
+                        // 舒适阅读，与"短暂浮在内容上、需要空间线索"的菜单/浮层诉求不同 ⇒ 不必同档；
+                        // 且 0.96 实测在面板空白处**仍可辨认底层聊天正文淡影**（lead 亲自看图确认）。
+                        // 安全性与 alpha **正交**：是否命中完全由 isPanel 结构判据 + nativeOpaque
+                        // 前置 + veil/锚点显式排除三道护栏决定，改 alpha 不改变任何安全性质。
+                        // 排在 transparent 通道分支**之前且互斥**；pm 为 null（原生无底）则落到
+                        // 通道分支，行为与 v1.32.11 完全一致。
+                        "else if(big&&isPanel&&pm){e.style.setProperty(" +
+                        "'background-color','rgb('+pm[1]+','+pm[2]+','+pm[3]+')'," +
                         "'important');}" +
                         "else if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
                         "'background-color','transparent','important');}" +

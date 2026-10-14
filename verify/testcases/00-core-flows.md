@@ -173,3 +173,57 @@
 - **预期**: 点浮层外能正常收起侧栏浮层；不因新规则误伤（该收的收起、不该收的不误收）。
 - **实际**: （待填） / **结果**: （待填）
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-C12-sidebar-expanded.png` / `qa-C12-collapsed-after-outside-tap.png`（**待拍**）｜CDP JSON（`collapsed` + 矩形）
+
+### QA-C13 文档预览面板不透明度 + 开/关/滚动（v1.32.12）
+- **场景**: 用户反馈「**对话生成的文档，我打开后背景也是透明的**」—— 打开对话里生成的 `.md`（如 `story_meizijiu.md`）
+  时，文件预览/差异面板**整体无实底**，底层页签栏/聊天正文/文档文字**互相叠印**、长文阅读发花。
+  改前该层被玻璃化注入写成 `transparent`（**alpha=0**，比 0.45 更糟）；目标是**还原应用原生的不透明阅读底**。
+- **前置**: v1.32.12+ 装机；**`adb root` 且 `whoami`==`root`**（H-1：`am start .WebActivity` 需 root；**root 先于任何 forward**）；
+  真 GPU（`emu-gpu-verdict.ps1` **exit 0**）；页面到 DSH shell；**哈希夹逼**（采样前后各读一次，须等于冻结值）。
+- **步骤**:
+  1. `am force-stop` → `am start -n xyz.cpyh.dshpush/.WebActivity --es url "<带 token 的 URL>"`。
+  2. **打开文档预览面板**：点聊天里的 `.md` 链接/标签页（JS `dispatchEvent` 与 CDP 真点**双路径**，因为
+     CDP 合成点击会被 `SECTION._tabHost_*` 抢走目标）。**判据**：`[class*='_tabHost']` 中**面积最大**且
+     `pctW≥85 && pctH≥85` 的那个（**必须扫全部匹配取最大** —— 有 `0x0` 占位，`querySelector` 会误报"没打开"）。
+  3. 读该层 `getComputedStyle().backgroundColor` 的 **alpha** → **断言 = 1.0**（v1.32.12 起；改前 = 0）。
+  4. `adb shell screencap -p` + `adb pull`（**>100KB**）+ **我自己 `read_image` 看整页**：
+     **面板文字清晰、不再看到底层正文/页签叠印**（**这是主判据**，比 alpha 数值重要）。
+  5. **两种视图**：差异视图（抬头 `+N -M`）与普通阅读视图。**若两者是不同元素**要分别量；
+     实测两者**共用同一 `_tabHost` 容器**（抬头在 `TdjKvG_header`、正文在 `TdjKvG_preview`，同属该层）。
+     ⚠️ **差异视图可能唤不出**（真实改动才会产生 diff）⇒ 唤不出就**如实记未覆盖**，不要拿"同容器"当已验。
+  6. **面板内滚动到底**：找 `_tabHost` 内 `scrollHeight > clientHeight` 的最深滚动体 → `scrollTop = scrollHeight`，
+     断言 `moved=true`。**滚动必须排在"关闭面板"之前**（关闭后元素卸载，量到的是 0）。
+  7. **关闭面板** → 断言 `panelStillOpen=false`；**关闭前后都要**量红线（见下）。
+- **预期**: 面板 alpha **= 1.0**；整页肉眼判**无叠印**；面板可开可关、内滚可到底；
+  **红线同时成立**：`BynINW_frame`/`BynINW_centerCol`/`Dc7zOa_root`/`html`/`body` 仍 `rgba(0,0,0,0)`（**开、关两态都测**）、
+  `#dsh-theme-veil` 仍 **0.45**、`RlGAzG_card` 仍 **0.45**、真菜单仍 **0.96**、侧栏展开 **0.92** / 收起 **0.45**。
+- **判负**: 面板 alpha <1（或又被写成 transparent）= **P1**；**`BynINW_frame` 被提亮 ⇒ 壁纸被盖** = **P1**（等同 v1.32.6，「壁纸整层消失」）；
+  veil/卡/菜单/侧栏任一被改动 = **P1/P2**。内层 `_tabHostBody`/`_tabHostHeader` 保持透明属**正确分层**，**不判负**。
+- **⚠️ 本轮最大风险（实测已排除）**：`BynINW_frame` **原生也是 `rgb(255,255,255)`**，与坏面板**同色**
+  ⇒ 修法**只能靠结构判据 `isPanel`** 区分；任何"原生不透明就给回不透明"的颜色判据**会把壁纸通道一起变不透明 ⇒ 复现 v1.32.6**。
+- **实际**: **v1.32.12 PASS（2026-10-15 05:4x，n=5 + 差异视图补测）**：
+  - **面板 alpha = 1**（`rgb(255,255,255)`、360x671、**100%×100%**、内联 `rgb(255,255,255)`）**5/5 恒定**；
+  - **整页肉眼判**（`qa-C13-doc-panel-open.png` 554,812 B）：**纯白实底**、markdown 标题/正文/行内 code 块清晰锐利，
+    **底层聊天（`六、一句话`、`判据 + 一条命令…`）与立绘完全不可见** ⇒ 用户投诉的"三层层叠/发花"**已消除**；
+    改前对照 `v1.32.12-before-user-doc-transparent.jpg`（524,038 B）三者叠印惨状；
+  - **红线开/关两态**（5 轮逐轮复测）：`frame`/`centerCol`/**`Dc7zOa_root`**/`html`/`body` **全 `rgba(0,0,0,0)`**、
+    `veil=0.45`、`card=0.45` ⇒ **面板 1.0 与壁纸通道 0 同屏共存、互不污染**（结构判据生效的直接证据）；
+  - **整页壁纸**：关闭态 `qa-P12-panel-closed-wallpaper.png`（966,368 B）立绘+壁纸**完整透出**、未被白纱盖住；
+  - **滚动**：`scrollTop 0 → 9413.5`、`scrollHeight=10009`、`clientHeight=595`、`moved=true`；
+  - **关闭**：`panelStillOpen=false`、进程存活（`pid=7103`）；
+  - **浮层不回退**：面板关闭后真菜单 **0.96**（25 项）；侧栏 收起 **0.45** / 展开 **0.92** / 点外收起回 **0.45**；
+  - **哈希夹逼**：采样前后同 sha ⇒ `hashStable=true`。
+- **结果**: **PASS**（差异视图未覆盖，见下）
+- **⛔ 未覆盖（不得当已验）**: **差异视图（抬头 `+5 -5`）未能复现** —— 专用探针 `qa-doc-diff.mjs`
+  枚举全部标签页（`Chat`/`Trajectory`/`_tabCell`/`_tab_`）**逐个真点**，4 次尝试**全部 `isDiff=false`**（抬头恒为文件名 + `Markdown`，无 `+N -M`）。
+  **可给的推论（非判据）**：实测两视图**共用同一 `_tabHost` 层**，而该层 5/5 = **1.0** ⇒ 不透明度断言对该层应同等成立；
+  但**差异视图的视觉渲染未亲眼看**，故仍记未覆盖。**下轮补法**：先造出真实改动（编辑文档产生 diff）再打开。
+- **📌 已知遗留（本轮不修，常驻断言）**: 聊天里的大代码块 `_block_7gxqk_4`（**331x524**，91.8%×78.1%）
+  仍被大容器分支压成 **0.45**（原生 `rgb(249,250,251)`）；**lead 已裁定本轮不修**（避免夹带扩大改动面），
+  探针每轮打印 `codeBlock_a` 作为**常驻断言**，**不计为 FAIL**。
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-C13-doc-panel-open.png`（554,812 B，**主判据**）｜
+  `qa-C13-panel-closed-wallpaper.png`（511,309 B）｜`qa-P12-panel-closed-wallpaper.png`（966,368 B）｜
+  改前 `v1.32.12-before-user-doc-transparent.jpg`（524,038 B）｜
+  `F:\work\work_dsh\tmp\doc-report.json`（含 5 轮 α + 红线 + roll/close + hashStable）｜
+  详见 `verify/QA-ROUND-v1.32.12.md`
+- **去向**: 结论已回填本用例；**差异视图**作为未覆盖项登记，下轮补。
