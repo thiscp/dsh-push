@@ -126,7 +126,10 @@ const TABS = `(()=>{const out=[];
 
     // try each tab that looks like a change/diff tab, then any remaining tab, and measure
     const cands = (Array.isArray(out.tabs) ? out.tabs : []);
-    const diffFirst = cands.filter((c) => /改动|diff|变更|\+\d/.test(c.text)).concat(cands.filter((c) => !/改动|diff|变更|\+\d/.test(c.text)));
+    // diff tabs are labelled with CHINESE text (e.g. "\u7b2c2\u8f6e\u6539\u52a8"); match via unicode
+    // escapes so this file stays PURE ASCII (scripts shipped to the laptop must survive the scp hop)
+    const DIFF_RE = new RegExp("[\\u6539\\u52a8]|diff|[\\u53d8\\u66f4]|\\+\\d");
+    const diffFirst = cands.filter((c) => DIFF_RE.test(c.text)).concat(cands.filter((c) => !DIFF_RE.test(c.text)));
     out.attempts = [];
     for (const c of diffFirst.slice(0, 6)) {
       await clickAt(c.x, c.y);
