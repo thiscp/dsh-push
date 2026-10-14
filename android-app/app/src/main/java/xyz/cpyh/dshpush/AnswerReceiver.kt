@@ -23,11 +23,9 @@ import java.util.concurrent.TimeUnit
 class AnswerReceiver : BroadcastReceiver() {
 
     override fun onReceive(ctx: Context, i: Intent) {
-        // 显式已读（v1.18.0）：任务结束通知的「已读」按钮——标已读并撤掉这条通知
+        // 显式已读（v1.18.0；v1.32.10 起 markRead 内部同时撤该条通知，这里不再单独 cancel）
         if (i.getStringExtra("act") == "read") {
             PushService.markRead(ctx, i.getIntExtra("mid", 0), i.getLongExtra("ts", 0L))
-            val rnid = i.getIntExtra("nid", 0)
-            if (rnid != 0) ctx.getSystemService(NotificationManager::class.java).cancel(rnid)
             return
         }
         val callId = i.getStringExtra("callId") ?: return

@@ -23,16 +23,25 @@
 #  doubletap  QA-A23  core, then a second tap at the same point -> idempotent, no crash, no N=0 toast
 #  inapp      QA-A24  question card with #opts -> tap -> its NOTIF cancelled but card option still
 #                        tappable -> option tap -> submit echo (__expired + expired toast)
-#  single     QA-R01  regression of the OLD per-card "READ" button: push one unread while OTHER
-#                        unread entries exist -> tap that card's button -> ONLY my entry flips,
+#  single     QA-C10  per-card "READ" button: push one unread while OTHER unread entries exist ->
+#                        tap that card's button -> ONLY my entry flips AND its notif is cancelled
+#                        (v1.32.10 semantics; v1.32.9 left the notif alone - flipped by user report),
 #                        other unread/nids untouched, NO mark-all toast, pill stays visible
+#  readans    QA-A26  answered-but-unread card (supervisor echo already cancelled its notif) ->
+#                        its READ button flips read; cancel of the already-gone nid = silent no-op
+#  dblcancel  QA-A27  web msg: notif "READ" action (markRead+cancel) THEN card "open DSH" button
+#                        (WebActivity cancels the same nid again) -> double cancel idempotent,
+#                        no crash, WebActivity opens, prefs intact
+#  mix        QA-A28  3 unread -> READ two of them one by one (their notifs go) -> tap the pill ->
+#                        toast N counts ONLY the remaining 1; double-cancel of the two gone nids
+#                        stays silent; unread ends 0
 #  cleanup    delete every msgs entry whose title starts with "qa-" (prefs rewrite + force-stop)
 #
 # Watchdogs: every remote call is bounded (Start-Job + Wait-Job). Whole-run budget -TotalBudgetSec
 # (default 300). On budget/call timeout: print PARTIAL and exit 2 (never hang).
 # Exit codes: 0 all PASS, 1 any FAIL, 2 watchdog/PARTIAL, 3 device not responsive.
 param(
-    [ValidateSet("core","newmsg","answered","doubletap","inapp","single","cleanup","lib")]
+    [ValidateSet("core","newmsg","answered","doubletap","inapp","single","readans","dblcancel","mix","cleanup","lib")]
     [string]$Mode = "core",
     [string]$OutDir = "F:\work\work_dsh\tmp\shots\qa",
     [string]$Serial = "",
@@ -285,6 +294,33 @@ function Tap-And-Capture([int]$x, [int]$y, [string]$shotName) {
     return [pscustomobject]@{ Notif = $np; Shot = $sp }
 }
 
+# fire the notification's READ action (v1.18.0: AnswerReceiver act=read -> markRead + cancel).
+# Real-UI first: expand the shade and uiautomator-dump it - SystemUI DOES idle (the never-idles
+# problem is MainActivity's own ambient animation). Fallback: send the exact broadcast the
+# action's PendingIntent sends. Either way the exercised code path is the app's own.
+function Tap-NotifReadAction([int]$mid, [long]$ts, [int]$nid) {
+    $null = RemoteAdb "cmd statusbar expand-notifications"
+    Start-Sleep 2
+    $xml = ""
+    $dump = RemoteAdb "uiautomator dump /sdcard/qa-mard-shade.xml" 60
+    if ($dump -match 'dumped to') { $xml = (RemoteAdb "cat /sdcard/qa-mard-shade.xml" 60 | Out-String) }
+    $rd = [string][char]0x5DF2 + [char]0x8BFB   # the action button's label
+    $m = [regex]::Match($xml, ('<node[^>]*text="' + [regex]::Escape($rd) + '"[^>]*bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"'))
+    if ($m.Success) {
+        $x = [int](([int]$m.Groups[1].Value + [int]$m.Groups[3].Value) / 2)
+        $y = [int](([int]$m.Groups[2].Value + [int]$m.Groups[4].Value) / 2)
+        # tap while the shade is STILL EXPANDED (collapsing first makes the tap land on the app
+        # behind - v1.32.10 QA first run: bounds found fine, tap hit nothing = 2 false FAILs)
+        $null = RemoteAdb "input tap $x $y"
+        Start-Sleep 1
+        $null = RemoteAdb "cmd statusbar collapse"
+        return @{ How = "uiautomator"; XY = "$x,$y" }
+    }
+    $null = RemoteAdb "cmd statusbar collapse"
+    $null = RemoteAdb "am broadcast -n $Pkg/.AnswerReceiver --es act read --ei mid $mid --el ts $ts --ei nid $nid"
+    return @{ How = "broadcast"; XY = "" }
+}
+
 # poll prefs until an entry by title satisfies a predicate; returns @{Raw;Msgs;Entry} or $null
 function Wait-Entry([string]$title, [int]$sec, [scriptblock]$pred) {
     $deadline = (Get-Date).AddSeconds($sec)
@@ -362,9 +398,135 @@ if ($Mode -eq "cleanup") {
 $null = RemoteAdb "am start -n $Pkg/.MainActivity"
 Start-Sleep 4
 
-# ---- push phase ----
+# =================== v1.32.10 new adversarial angles (QA-A26/A27/A28) ===================
+# self-contained branches: own push/wait/assert, then Finish. They exercise the per-card READ
+# path (markRead now ALSO cancels the notif - v1.32.10) from angles the core flow cannot reach.
 $tPlain1 = "qa-$Mode $Tag p1"; $tPlain2 = "qa-$Mode $Tag p2"; $tQ = "qa-$Mode $Tag q1"; $tNew = "qa-$Mode $Tag late"
 $cid = "qa-mard-$RunT"
+if ($Mode -eq "readans") {
+    # A26: answered-but-unread card (supervisor echo already cancelled its notif) -> its READ
+    # button flips read; cancel of the ALREADY-GONE nid must be a silent no-op (A25 posture).
+    Push $tQ ("qa question $Tag`n$PhoneEmoji answer link: $Ntfy/answer/$cid`n#opts q0=optA|optB`n#qid q0") 4
+    Start-Sleep 6
+    Push "qa-$Mode echo" "#ans $cid $SupervisorPrefix qa proxy" 1
+    $w = Wait-Entry $tQ 40 { param($e) $e.answered -like "$SupervisorPrefix*" -and $e.read -eq $false }
+    if (-not $w) { Check $false "readans: supervisor-echo entry (answered + read=false) never landed"; Finish }
+    $nid = [int]$w.Entry.mid
+    $null = RemoteAdb "am start -n $Pkg/.MainActivity"
+    Start-Sleep 3
+    $pre = Dump-Notif ("notif-" + $Tag + "-pre.txt")
+    Check (-not (NotifPresent $pre $nid)) "A26: echo already cancelled the question notif (nid=$nid absent BEFORE the tap)"
+    $at = Dump-ActTop ("acttop-" + $Tag + "-before.txt")
+    $btn = Parse-FirstCardOption $at
+    if (-not $btn) { Say "FAIL" "A26: answered-unread first card has NO READ button (MainActivity answered-unread path missing?)"; $script:fail++; Finish }
+    Say "INFO" ("A26: READ button center=({0},{1}) size={2}x{3}" -f $btn.X, $btn.Y, $btn.W, $btn.H)
+    $cap = Tap-And-Capture $btn.X $btn.Y ("qa-" + $Mode + "-after")
+    $d1 = ReadUtf8 $cap.Notif
+    $msgs2 = Get-Msgs (Get-PrefsRaw "qa-mard-prefs-after.xml")
+    $e2 = FindEntry $msgs2 $tQ
+    Check ($null -ne $e2 -and $e2.read -eq $true) "A26: answered-unread entry flipped read=true via its READ button"
+    Check (-not (NotifPresent $d1 $nid)) "A26: cancel of the already-gone nid = silent no-op (nid still absent)"
+    Check ((ToastN $d1) -lt 0) "A26: no toast from per-card READ"
+    Check (ServiceNotifPresent $d1) "A26: service notif untouched"
+    $pidAlive = (RemoteAdb "pidof $Pkg" | Out-String).Trim()
+    Check ($pidAlive -match '\d+') "A26: process alive (pid=$pidAlive)"
+    Check ($null -ne $msgs2) "A26: msgs JSON intact after the double-cancel"
+    $null = Shot ("qa-" + $Mode + "-after")
+    Say "EYE" "read_image: qa-readans-after.png - expect the answered card dimmed, READ button gone, answered badge kept"
+    Finish
+}
+
+if ($Mode -eq "dblcancel") {
+    # A27: notif "READ" action (AnswerReceiver: markRead + cancel) THEN the card's "open DSH"
+    # button (WebActivity cancels the SAME nid again) -> double cancel idempotent, no crash.
+    $tWeb = "qa-$Mode $Tag w1"
+    Push $tWeb ("qa web msg $Tag`n#web $Ntfy") 3
+    $w = Wait-Entry $tWeb 40 { param($e) $true }
+    if (-not $w) { Check $false "dblcancel: web push never arrived"; Finish }
+    $nid = [int]$w.Entry.mid; $ts = [long]$w.Entry.ts
+    $pre = Dump-Notif ("notif-" + $Tag + "-pre.txt")
+    Check (NotifPresent $pre $nid) "A27: web msg notif present before (nid=$nid)"
+    $act = Tap-NotifReadAction $nid $ts $nid
+    Say "INFO" ("A27: notif READ action fired via " + $act.How + " " + $act.XY)
+    Start-Sleep 2
+    $msgs2 = Get-Msgs (Get-PrefsRaw "qa-mard-prefs-act1.xml")
+    $e2 = FindEntry $msgs2 $tWeb
+    Check ($null -ne $e2 -and $e2.read -eq $true) "A27: notif READ action flipped read=true"
+    $d1 = Dump-Notif ("notif-" + $Tag + "-act1.txt")
+    Check (-not (NotifPresent $d1 $nid)) "A27: notif cancelled by the action (nid=$nid gone)"
+    # second cancel: card "open DSH" -> WebActivity cancels the same nid again (must be silent)
+    $null = RemoteAdb "am start -n $Pkg/.MainActivity"
+    Start-Sleep 3
+    $at = Dump-ActTop ("acttop-" + $Tag + "-card.txt")
+    $btn = Parse-FirstCardOption $at
+    if (-not $btn) { Say "FAIL" "A27: open-DSH button not found on first card"; $script:fail++; Finish }
+    $null = RemoteAdb "input tap $($btn.X) $($btn.Y)"
+    Start-Sleep 4
+    $focusTxt = ReadUtf8 (Capture "dumpsys window" ("win-" + $Tag + "-web.txt") 60)
+    Check ($focusTxt -match 'mCurrentFocus=Window\{[^}]*WebActivity') "A27: open-DSH tap opened WebActivity (second cancel ran inside it)"
+    $d2 = Dump-Notif ("notif-" + $Tag + "-act2.txt")
+    Check (-not (NotifPresent $d2 $nid)) "A27: second cancel of the gone nid silent (nid still absent)"
+    $pidAlive = (RemoteAdb "pidof $Pkg" | Out-String).Trim()
+    Check ($pidAlive -match '\d+') "A27: process alive after the double cancel (pid=$pidAlive)"
+    $msgs3 = Get-Msgs (Get-PrefsRaw "qa-mard-prefs-act2.xml")
+    $e3 = FindEntry $msgs3 $tWeb
+    Check ($null -ne $e3 -and $e3.read -eq $true) "A27: read stays true (markRead idempotent)"
+    Check ($null -ne $msgs3) "A27: msgs JSON intact"
+    $null = Shot ("qa-" + $Mode + "-web")
+    Say "EYE" "read_image: qa-dblcancel-web.png - expect WebActivity showing the #web url page"
+    Finish
+}
+
+if ($Mode -eq "mix") {
+    # A28: READ two of three one by one (their notifs go), then the pill -> toast N counts ONLY
+    # the remaining unread; the two already-gone nids get double-cancelled silently.
+    $tP3 = "qa-$Mode $Tag p3"
+    $tAll = @($tPlain1, $tPlain2, $tP3)
+    Push $tPlain1 "qa marker $Tag mix one" 3
+    Push $tPlain2 "qa marker $Tag mix two" 3
+    Push $tP3 "qa marker $Tag mix three" 3
+    $w = $null
+    foreach ($t in $tAll) { $w = Wait-Entry $t 40 { param($e) $true }; if (-not $w) { break } }
+    if (-not $w) { Check $false "mix: not all three pushes arrived"; Finish }
+    $msgs = $w.Msgs
+    $unreadStart = UnreadCount $msgs
+    $nidsAll = @{}
+    foreach ($t in $tAll) { $e = FindEntry $msgs $t; if ($e) { $nidsAll[$t] = [int]$e.mid } }
+    $pre = Dump-Notif ("notif-" + $Tag + "-pre.txt")
+    foreach ($t in $nidsAll.Keys) { Check (NotifPresent $pre $nidsAll[$t]) "A28: notif present before ($t nid=$($nidsAll[$t]))" }
+    for ($k = 1; $k -le 2; $k++) {
+        $at = Dump-ActTop ("acttop-" + $Tag + "-card$k.txt")
+        $btn = Parse-FirstCardOption $at
+        if (-not $btn) { Say "FAIL" "A28: per-card READ button not found before tap $k"; $script:fail++; Finish }
+        $cap = Tap-And-Capture $btn.X $btn.Y ("qa-mix-card$k")
+        $dk = ReadUtf8 $cap.Notif
+        Check ((ToastN $dk) -lt 0) "A28: no toast from per-card READ (tap $k)"
+        $msgsK = Get-Msgs (Get-PrefsRaw "qa-mard-prefs-card$k.xml")
+        $unreadNow = UnreadCount $msgsK
+        Check ($unreadNow -eq $unreadStart - $k) "A28: unread after tap $k = $unreadNow (expect $($unreadStart - $k))"
+    }
+    $msgsB = Get-Msgs (Get-PrefsRaw "qa-mard-prefs-beforepill.xml")
+    $unreadBeforePill = UnreadCount $msgsB
+    Check ($unreadBeforePill -eq $unreadStart - 2) "A28: exactly the two tapped entries flipped (unread now $unreadBeforePill)"
+    $at2 = Dump-ActTop ("acttop-" + $Tag + "-pill.txt")
+    $pill = Parse-StatusButton $at2
+    if (-not $pill) { Say "FAIL" "A28: pill not found (unread>0 expected)"; $script:fail++; Finish }
+    $cap2 = Tap-And-Capture $pill.X $pill.Y ("qa-mix-pill")
+    $dp = ReadUtf8 $cap2.Notif
+    $tn = ToastN $dp
+    Check ($tn -eq $unreadBeforePill) "A28: mark-all toast N=$tn counts ONLY the remaining unread (was $unreadStart before the two per-card READs)"
+    Check ($tn -lt $unreadStart) "A28: the two already-read entries are NOT counted in N"
+    Check ((UnreadCount (Get-Msgs (Get-PrefsRaw "qa-mard-prefs-after.xml"))) -eq 0) "A28: unread ends at 0"
+    foreach ($t in $nidsAll.Keys) { Check (-not (NotifPresent $dp $nidsAll[$t])) "A28: notif gone after pill ($t nid=$($nidsAll[$t]); the two already-gone double-cancelled silently)" }
+    $pidAlive = (RemoteAdb "pidof $Pkg" | Out-String).Trim()
+    Check ($pidAlive -match '\d+') "A28: process alive after 3 cancels + 2 double-cancels (pid=$pidAlive)"
+    $null = Shot ("qa-" + $Mode + "-after")
+    Say "EYE" "read_image: qa-mix-after.png - expect all three mix cards dimmed, pill hidden, no unread line"
+    Finish
+}
+
+# ---- push phase ----
+# (title vars + cid already defined above, before the v1.32.10 branches)
 switch ($Mode) {
     "core"       { Push $tPlain1 "qa marker $Tag plain one" 3; Push $tPlain2 "qa marker $Tag plain two" 3 }
     "doubletap"  { Push $tPlain1 "qa marker $Tag plain one" 3; Push $tPlain2 "qa marker $Tag plain two" 3 }
@@ -465,9 +627,10 @@ if ($Mode -eq "single") {
 foreach ($t in $need) {
     $nid = $nids[$t]
     if ($Mode -eq "single") {
-        # per-card READ button = PushService.markRead: flips read ONLY, never cancels the notif
-        # (v1.18.0 design; markAllRead is the one that cancels). So: state must be UNCHANGED.
-        Check ((NotifPresent $dump1 $nid) -eq (NotifPresent $preDump $nid)) "single: my nid=$nid notif state unchanged (markRead does not cancel - v1.18.0 design)"
+        # v1.32.10: per-card READ (PushService.markRead) now ALSO cancels its own notif
+        # (user report; v1.32.9 left it alone - QA-C10 assertion flipped by Lead).
+        Check (-not (NotifPresent $dump1 $nid)) "single: my notif nid=$nid cancelled by per-card READ ($t)"
+        Check (-not (NotifPresent $dump2 $nid)) "single: still gone in late dump (nid=$nid)"
     } else {
         Check (-not (NotifPresent $dump1 $nid)) "notifs: message notif nid=$nid cancelled ($t)"
         Check (-not (NotifPresent $dump2 $nid)) "notifs: still gone in late dump (nid=$nid)"
@@ -539,7 +702,7 @@ if ($Mode -eq "inapp") {
 }
 
 if ($Mode -eq "single") {
-    Say "EYE" "read_image: $OutDir\qa-$Mode-before.png vs qa-$Mode-after.png - expect: MY card dimmed with its READ button gone, OTHER unread cards KEEP blue dot + READ button, pill and unread-count line still visible"
+    Say "EYE" "read_image: $OutDir\qa-$Mode-before.png vs qa-$Mode-after.png - expect: MY card dimmed with its READ button gone (its notif cancelled per v1.32.10), OTHER unread cards KEEP blue dot + READ button, pill and unread-count line still visible"
 } else {
     Say "EYE" "read_image: $OutDir\qa-$Mode-before.png vs qa-$Mode-after.png - expect: unread-count line gone, ALL cards dimmed (alpha 0.6), pill hidden, wallpaper intact"
 }

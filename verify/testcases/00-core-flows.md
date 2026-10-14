@@ -1,4 +1,4 @@
-# 主流程用例（core flows）
+﻿# 主流程用例（core flows）
 
 本文件覆盖 DSH 手机伴侣 App（`xyz.cpyh.dshpush`）**用户每天真正会走的主路径**：推送到达 → 点开 → 提问卡作答 → 回会话确认，以及通知栏直答、快答浮窗、侧栏、会话切换、主题、断线重连。
 
@@ -33,9 +33,9 @@
   4. 等 2~4 秒，`screencap` → `qa-C02-answered.png`（成功姿态/动画）
   5. 回会话页确认该轮已继续（对话里出现"已作答/继续工作"类痕迹）
 - **预期**: 卡片文字横排、标题不被压成竖排；点选项有明确反馈（成功姿态），随后会话继续；选项**只生效一次**，不重复作答。
-- **实际**: （待填）
-- **结果**: （待填）
-- **证据**: （待填）
+- **实际**: 2026-10-14 02:35（v1.32.10/vc76）走**消息卡片直答变体**（与 v1.32.9 轮同法）：Lead 真提问 `call_0caa44201aea463cb081a47a`（release-note-v13210 文案二选一，timed=false）已落 App；列表滚动后卡片选项 pill 在屏内（dumpsys bounds 是布局坐标不含滚动偏移，用 200px 网格截图钉死屏幕坐标 (420,2200)）→ 真点 → **~4s** prefs `answered=「完整版：卡片「已读」现在会同时撤掉该条通知——与「全部已读」行为一致」`（码点 0x5B8C0x65740x7248 前缀核验）+ read=true；Lead 侧 web.log 指纹 `answered (foreground)`，答案即时回到 Lead 会话。备注沿用：timed=false → 无折回兜底（`note: no timed wait…`），claimForeground=on 手机作答即时有效。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-c02-grid2.png`（点前定位）、`qa-c02-now.png`（卡片态）、`logcat-c02.txt`；Lead web.log `answered (foreground) call_0caa44201aea463cb081a47a`
 
 ### QA-C03 通知栏直答
 - **场景**: 用户正在用别的 App，直接从通知栏作答，不点进 App。
@@ -133,17 +133,19 @@
 > 5. 消息通知 id = `mid` = `(title+body+ts).hashCode()`；服务通知固定 id=2。
 > 6. **推送前必须先拉起 App**（`am start MainActivity`）：force-stop 后 WS 断开，ntfy 发了也没人听（developer 自测收尾常 force-stop，直接推会 40s 假「never arrived」）。
 
-### QA-C10 逐条「已读」按钮回归（v1.18.0 路径，v1.32.9 改动定向）
-- **场景**: v1.32.9 给状态卡加了「全部已读」pill，逐条「已读」按钮（`PushService.markRead`）是被改动邻居，必须证明没被牵连：只翻自己那一条、别人的未读/通知纹丝不动、不弹「已全部标为已读」toast。
+### QA-C10 逐条「已读」按钮（v1.18.0 路径；v1.32.10 起语义=标已读+撤该条通知）
+- **场景**: 逐条「已读」按钮（`PushService.markRead`）。v1.32.9 时它只翻 read 不撤通知（QA-ROUND-v1.32.9 FINDING-4 登记的语义不对称）；**用户真机反馈确认逐条也要撤**，v1.32.10 转正为需求：卡片「已读」= 标已读 + 撤该条通知，与「全部已读」一致。回归角度保留：只动自己——别人的未读/通知纹丝不动、不弹「已全部标为已读」toast。
 - **前置**: `verify\qa-markallread.ps1 -Mode single`（推 1 条未读，环境里已有其它未读条目时最有说服力——现网夜间监督条目天然提供）。
 - **步骤**（脚本全自动）:
   1. tap 前 `dumpsys notification` 快照 + 记下其它未读条目及其 nid
   2. `dumpsys activity top` 取第一卡片（=最新=自己）的「已读」按钮坐标，`input tap`
   3. prefs：未读数只减 1、自己 read=true、其它未读条目仍 read=false
-  4. 通知：自己的 nid 状态**不变**（`markRead` 设计上不撤通知，v1.18.0 起如此——撤通知是 `markAllRead` 专属）；其它 nid 状态不变；服务通知仍在
+  4. 通知：**自己的 nid 必须已撤**（tap+1s 的 dump 与 ~10s 后 late dump 都无）；其它 nid 状态不变；服务通知仍在
   5. toast：无「已全部标为已读」toast（toastN=-1）；pill 与其它未读行仍可见
-- **预期**: 只动自己；通知生命周期不变；无 toast。若逐条按钮撤了通知或弹了 toast = 改动越权，P1。
-- **实际**: 2026-10-13 20:59 `-Mode single`（tag qa-single1791925128）：tap 前未读 3（自己 + 夜间监督「⚠ 会话在跑长工具」+ qa28B 提问）；按钮 (304,1956) 352x192；tap 后未读 3→2、自己 read=true；自己 nid=1805901831 通知状态不变（pre/dump1 对照）；两条其它未读的 nid（387565073/1276874354）状态不变、条目仍 read=false；无 mark-all toast；pill+「● 2 条未读」仍可见。首轮曾 1 条 FAIL＝我预期写错（误要求逐条按钮撤通知），对照 `PushService.markRead` 源码确认设计后改为「状态不变」断言。
-- **结果**: PASS
+- **预期**（v1.32.10）: 只动自己：自己 read=true **且自己通知被撤**；他人未读/通知不变；无 toast。逐条不撤通知=需求未落地（P1）；撤了别人的通知或弹了 toast=越权（P1）。
+- **实际**:
+  - 2026-10-13 20:59 `-Mode single`（tag qa-single1791925128，**v1.32.9 旧语义**）：tap 后未读 3→2、自己 read=true；自己 nid=1805901831 通知状态**不变**（当时设计如此）；其它两条未读 nid 不变；无 toast；pill 仍可见。首轮曾 1 条 FAIL＝我预期写错（误按新语义要求撤通知），对照源码改回「状态不变」后 PASS。
+  - v1.32.10 复跑：2026-10-14 01:55 `-Mode single`（tag qa-single1791942890）：tap 前未读 12（自己 + 2 条 qa-fill 补位 + 夜间监督/developer qa-rm 等 9 条现网条目）；按钮 (304,1956) 352x192；tap 后未读 12→11、自己 read=true、**自己 nid=-297425687 在 tap+1s 与 late dump 双时点都已撤**（新语义落地）；其余 11 条未读条目仍 read=false、各自 nid 状态逐条对照不变；无 mark-all toast；pill+「● 11 条未读」仍可见。肉眼判 after：自己卡淡化无钮、他人未读卡保持蓝点+「已读」钮、状态卡「已连接 (v1.32.10)」。
+- **结果**: PASS（v1.32.9 旧语义 + v1.32.10 新语义两轮均 PASS）
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-single-before.png` / `qa-single-after.png`（肉眼判：自己卡片淡化且「已读」钮消失、其它未读卡保持蓝点+「已读」钮、pill 与未读行仍在、无 toast）；`notif-qa-single1791925128-pre.txt` / `-qa-single-after.txt`；`acttop-qa-single1791925128-before.txt`
 

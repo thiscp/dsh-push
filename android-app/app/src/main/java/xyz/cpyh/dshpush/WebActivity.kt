@@ -2,7 +2,6 @@ package xyz.cpyh.dshpush
 
 import android.app.Activity
 import android.app.DownloadManager
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
@@ -703,15 +702,14 @@ class WebActivity : Activity() {
     }
 
     // 消息通知的「打开 DSH」带 mid/ts → 该条标已读并撤掉这条通知（setAutoCancel 只管
-    // 点本体不管按钮）；常驻通知入口不带这些 extra，零副作用（v1.18.0/1.18.1）
+    // 点本体不管按钮）；常驻通知入口不带这些 extra，零副作用（v1.18.0/1.18.1；
+    // v1.32.10 起撤通知收拢进 markRead 内部，mnid 重复自撤删除——双撤本就幂等，行为不变）
     private fun markMsgRead(i: Intent?) {
         if (i == null) return
         val mid = i.getIntExtra("mmid", 0)
         val ts = i.getLongExtra("mts", 0L)
         if (mid != 0 || ts != 0L) {
             PushService.markRead(this, mid, ts)
-            val nid = i.getIntExtra("mnid", 0)
-            if (nid != 0) getSystemService(NotificationManager::class.java).cancel(nid)
         }
     }
 

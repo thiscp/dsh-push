@@ -38,7 +38,7 @@ class PushService : Service() {
         const val NOTIF_SERVICE_ID = 2
         // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
         const val EXTRA_SHOW_HOSTS = "showHosts"
-        const val APP_VER = "1.32.9"
+        const val APP_VER = "1.32.10"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
@@ -76,22 +76,31 @@ class PushService : Service() {
             } catch (e: Exception) { }
         }
 
-        // 显式已读（v1.18.0）：点通知/卡片的「已读」或「打开 DSH」才清未读；
-        // mid 为主键，老消息没这字段时按 ts 兜底
+        // 显式已读（v1.18.0；v1.32.10 起同时撤销该条通知）：点通知/卡片的「已读」或「打开 DSH」
+        // 把该条标已读并撤掉它的通知——与「一键全部已读」语义统一（真机反馈 + QA FINDING-4）。
+        // mid 为主键，老消息没这字段时按 ts 兜底；通知 id 优先取 nid，缺失按 mid 兜底
+        // （v1.18.0 起两者同哈希，任务结束消息只存 mid），都没有（0）跳过。
+        // cancel 幂等：已答题通知本就已撤，静默无害（QA-A25 已证）；其它条通知与常驻通知（ID=2）不动。
         fun markRead(ctx: android.content.Context, mid: Int, ts: Long) {
             try {
                 val p = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
                 val arr = JSONArray(p.getString("msgs", "[]") ?: "[]")
                 var changed = false
+                var hitNid = 0
                 for (k in 0 until arr.length()) {
                     val o = arr.optJSONObject(k) ?: continue
                     val hit = if (mid != 0) o.optInt("mid", 0) == mid else o.optLong("ts") == ts
-                    if (hit && !o.optBoolean("read", false)) { o.put("read", true); changed = true }
+                    if (hit) {
+                        if (hitNid == 0)
+                            hitNid = o.optInt("nid", 0).let { if (it == 0) o.optInt("mid", 0) else it }
+                        if (!o.optBoolean("read", false)) { o.put("read", true); changed = true }
+                    }
                 }
                 if (changed) {
                     p.edit().putString("msgs", arr.toString()).apply()
                     listeners.forEach { it.onNewMsg() }
                 }
+                if (hitNid != 0) ctx.getSystemService(NotificationManager::class.java).cancel(hitNid)
             } catch (e: Exception) { }
         }
 

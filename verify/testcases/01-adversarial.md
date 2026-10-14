@@ -213,7 +213,7 @@
 
 ---
 
-## 一键全部已读对抗组（QA-A20~A24，v1.32.9 新增）
+## 一键全部已读对抗组（QA-A20~A25，v1.32.9 新增；QA-A26~A28，v1.32.10 逐条已读撤通知新增）
 
 > 这组全部由 `verify\qa-markallread.ps1` 驱动（模式名写在每条步骤里），取证口径与硬事实见 **QA-C09 的备注块**（uiautomator 在 MainActivity 必挂、坐标走 `dumpsys activity top`、toast 走 `dumpsys notification` Toast Queue、prefs/dump 走设备侧 redirect+pull）。
 > ID 说明：A17/A18/A19 已在 `qa-round-driver.mjs` 与 v1.32.7/v1.32.8 报告、STATUS-task19 里占用（A19=命中区几何审计常驻用例），所以本组从 **A20** 起。
@@ -292,4 +292,42 @@
 - **实际**: 每轮 core 天然大面积命中（tap 前未读 3~6 条 vs dump 里 dshpush 消息通知仅 2~4 条，差集即"通知已不存在的未读条目"，如夜间监督遗留条目）；所有轮次断言：`pidof` 进程始终存活（pid=13626 全程未变）、tap 后 msgs 整段 JSON 仍可解析、toast N 把这些条目全部计入。
 - **结果**: PASS（core/newmsg/answered/doubletap/inapp/single 六轮顺带覆盖）
 - **证据**: 各轮 `[PASS] A25: app process alive...` / `[PASS] A25: msgs JSON still well-formed...` 日志 + `prefs-qa-*-after.xml`；差集证据见 `notif-qa-core1791925178-qa-core-after.txt`（通知数 < 未读条目数）
+
+### QA-A26 已答题（未读）卡片的「已读」按钮：cancel 一个已被回声撤掉的 nid 必须静默无害（v1.32.10）
+- **场景**: 提问被监督者代答：回声已撤掉该条通知（AnswerReceiver 路径），但条目 read=false → 卡片仍显示「已读」按钮（MainActivity 已答未读路径）。v1.32.10 起逐条「已读」也撤通知——点它会对一个**早已不存在的 nid** 再 cancel 一次：必须静默。
+- **前置**: `verify\qa-markallread.ps1 -Mode readans`（推提问 + 监督者回声，等 answered+read=false 落定）。
+- **步骤**（脚本全自动）:
+  1. tap 前 `dumpsys notification`：该条 nid 已不在（回声撤的）——先证「不存在」这个前提成立
+  2. `dumpsys activity top` 取第一卡片（已答未读）的「已读」按钮，`input tap`
+  3. 断言：条目 read=true；nid 仍不在（第二次 cancel 静默）；无 toast；服务通知仍在；`pidof` 存活；msgs JSON 完好
+- **预期**: 静默无害 + read 翻 true。崩溃 / msgs 写坏 / 冒出 toast = P0/P1。
+- **实际**: 2026-10-14 01:56 `-Mode readans`（tag qa-readans1791942967，v1.32.10/vc76）：tap 前该条 nid=-1747431689 已从 dump 消失（回声撤的，前提成立）；已答未读卡「已读」按钮 (1082,2078) 352x192 真点 → read=true、nid 仍不在（第二次 cancel 静默）、无 toast、服务通知仍在、pid=23113 存活、msgs JSON 完好。肉眼判截图：卡片淡化、「已答：【监督者自动唤醒】 qa proxy」徽章保留、「已读」钮消失。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-readans-after.png`（1.27MB）；`notif-qa-readans1791942967-pre.txt` / `-qa-readans-after.txt`；`acttop-qa-readans1791942967-before.txt`；`prefs-qa-readans1791942967-*.xml`
+
+### QA-A27 通知「已读」按钮与卡片「打开 DSH」双撤同一 nid 必须幂等不崩（v1.32.10）
+- **场景**: 带 `#web` 的消息通知有两个动作：「已读」（AnswerReceiver：markRead+cancel）与「打开 DSH」（WebActivity：起页 + 再 cancel 同一 nid + markRead）。v1.32.10 起 markRead 内部也 cancel——同一条消息最多经历**三次**对同一 nid 的 cancel（通知动作 1 次 + 一键已读顺带 + 打开 DSH 1 次）。全部必须幂等。
+- **前置**: `verify\qa-markallread.ps1 -Mode dblcancel`（推 1 条 `#web` 消息）。
+- **步骤**（脚本全自动）:
+  1. 通知在场（nid 快照）→ 触发通知「已读」动作：优先真 UI（`cmd statusbar expand-notifications` + `uiautomator dump` 找「已读」按钮——SystemUI 能 idle，MainActivity 的 dump 顽疾不适用；拿不到就退回发**同款广播** `am broadcast -n …/.AnswerReceiver --es act read --ei mid … --ei nid …`，走应用自己的代码路径）
+  2. 断言：read=true、nid 已撤
+  3. 回 MainActivity，点该卡片「打开 DSH」→ WebActivity 起页（`mCurrentFocus` 断言）
+  4. 断言：nid 仍不在（第二次 cancel 静默）、`pidof` 存活、read 保持 true、msgs JSON 完好
+- **预期**: 双撤幂等、WebActivity 正常起页。崩溃 / 通知复活 / JSON 写坏 = P0/P1。
+- **实际**: 2026-10-14 01:58 `-Mode dblcancel`（tag qa-dblcancel1791943091，v1.32.10）：通知在场（nid=1072493780）→ **真 UI 路径命中**：`cmd statusbar expand-notifications` + `uiautomator dump` 找到「已读」动作按钮 (676,1445)（SystemUI 能 idle，MainActivity 顽疾不适用）→ 展开态真点 → read=true + nid 撤；回 MainActivity 点卡片「打开 DSH」→ `mCurrentFocus=…WebActivity`（二次 cancel 在其内部跑）→ nid 仍不在、pid=23113 存活、read 保持 true、JSON 完好。肉眼判：WebActivity 起页 ntfy.cpyh.xyz:443、立绘透出。**首轮 2 FAIL 是测试侧缺陷**：助手函数先 collapse 通知栏再 tap → 点了空（已修：tap 在展开态做，之后才 collapse）。
+- **结果**: PASS（复跑；首轮 FAIL 为脚本缺陷）
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-dblcancel-web.png`（1.2MB）；`notif-qa-dblcancel1791943091-pre/-act1/-act2.txt`；`win-qa-dblcancel1791943091-web.txt`（mCurrentFocus）；`acttop-qa-dblcancel1791943091-card.txt`
+
+### QA-A28 逐条撤两条后再点「全部已读」：toast N 只数剩余未读，两个已撤 nid 双撤静默（v1.32.10）
+- **场景**: 混跑两条路径（接 QA-C09 的四件套姿势）：3 条未读 → 逐条「已读」点掉两条（各自通知被撤）→ 再点「全部已读」pill。markAllRead 的 N 计数与剩余 cancel 必须正确——两个已被逐条撤过的条目此时已 read=true，不该再进 N。
+- **前置**: `verify\qa-markallread.ps1 -Mode mix`（推 3 条未读）。
+- **步骤**（脚本全自动）:
+  1. 三条 nid 都在（pre dump）
+  2. 点第一卡片「已读」→ 未读 -1、该 nid 撤、无 toast；再点（此时第一张有按钮的卡片）「已读」→ 未读 -2、该 nid 撤、无 toast
+  3. 点 pill → toast **N == 剩余未读数**（不是 3）；剩余 nid 撤；未读=0
+  4. `pidof` 存活（3 次 cancel + 2 次双撤）
+- **预期**: N 只数剩余；任何环节崩溃 / N 多计 = P1。
+- **实际**: 2026-10-14 01:55 `-Mode mix`（tag qa-mix1791942927，v1.32.10）：三条 nid 全在场（1033934136/-1761721313/1794594418）；逐条点掉两张「已读」→ 未读 14→13→12、各自 nid 撤、两次都无 toast；点 pill → toast **N=12 == 剩余未读**（不是 14，两条已读不进 N）、剩余 nid 撤、未读=0；pid=23113 存活（3 cancel + 2 双撤）。肉眼判 after：三张 mix 卡全淡化、pill 隐藏、无未读行。
+- **结果**: PASS
+- **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-mix-card1.png` / `qa-mix-card2.png` / `qa-mix-pill.png` / `qa-mix-after.png`（均 >1.1MB）；`acttop-qa-mix1791942927-card1/card2/pill.txt`；`notif-qa-mix1791942927-pre/-qa-mix-card1/-qa-mix-card2/-qa-mix-pill.txt`
 
