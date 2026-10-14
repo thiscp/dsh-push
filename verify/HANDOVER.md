@@ -1312,12 +1312,16 @@ $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.k
 
 | 项 | 值 |
 |---|---|
-| 私有仓 | `fde4464`（工作树干净，已推送） |
-| **公开镜像** | **`219caf8`**（GitHub + Gitee 均已落地，`dirty=0`，**全文件扫描 0 命中个人值**） |
-| 线上 APK | `?v=80`、`http=200`、`size=10,993,088`、**sha256 = 冻结值** |
-| 发布 | ✅ `SUMMARY: 9/9 passed` |
-| 用户待办 | 等真机回执（更新通知 `id: qgCcmpuMrvKX`） |
-| skill | `dsh-push-app-dev` 已含本轮 3 条硬事实（`eddc1cc` 模拟器恢复 SOP 等） |
+| 私有仓 | **`dbdbde9`**（工作树干净，已推送 origin/master） |
+| **公开镜像（最终）** | **`86107d0`**（GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push` **均已落地**，`dirty=0`）｜**全文件扫描个人值命中 = `0`** ✅｜`versionName=1.32.14` / `versionCode=80` |
+| 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=80`、**`http=200`、`size=10,993,088`、`sha256 = 2850A0D3…`（= 冻结值）** |
+| 发布 | ✅ **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-031646.log`）｜更新通知 `id: qgCcmpuMrvKX` |
+| QA | ✅ **PASS**（`QA-ROUND-v1.32.14.md`）｜**FINDING-1 已修**（白窗 3 轮零命中 + 阳性对照） |
+| 用例库 | C 组 **15**（新增 `QA-C16`）｜A 组 **27**（`QA-A32` 已补复验结论） |
+| skill | `dsh-push-app-dev` **`9484f70`**（含本轮 3 条硬事实：模拟器恢复 SOP / 脱敏复查纪律 / 稳态≠动态态等） |
+| **待用户** | **真机回执**（`?v=80` 已上线，更新通知已推） |
+
+**⇒ 本轮（用户「修吧」⇒ 聊天大代码块透明）已闭环：需求修复 + 上线前抓到的 P2 一并修掉 + 发布 9/9 + 开源同步（并顺带修掉一个存在多个版本的真实 IP 泄漏）。**
 
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 
