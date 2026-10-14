@@ -398,8 +398,19 @@ class WebActivity : Activity() {
                         // "定位且 ≥90%×90% 视口"的祖先）；壁纸通道是 static/relative 常规布局。
                         // 实测该判据下 wouldChange 恰好只有 _tabHost 一个，三项关键容器均不命中。
                         "var big=(w>vw*0.5&&h>vh*0.5);" +
+                        // ★ v1.32.14：把**布局/滚动容器**一并挡在"取原生色相回写"与 isCB 之外。
+                        // 追加 Dc7zOa_root 的依据（QA-ROUND-v1.32.13 FINDING-1 实测 + lead 追查）：
+                        // 它是聊天根（304x671，原生 rgb(255,255,255) 兜底白）。v1.32.13 首版里
+                        // 「剥内联读原生」对 na>=1 的元素**不还原**（因为要把原生色相写回），
+                        // 若此刻 isCB 恰为 true（innerBig 是**运行时测量**：首屏/流式渲染中后代尚未
+                        // 撑开 ⇒ 可能临时 <=2），就会写出 rgb(255,255,255) ⇒ **聊天根变不透明白 ⇒
+                        // 壁纸被盖 ≈2s**（tester 已截到实锤 qa-C14-dcroot-nativewhite-1.png）。
+                        // 布局容器稳定态 innerBig=41/42/70 本不该命中，但**动态态会失真** ⇒
+                        // 不能只靠动态量兜底，必须**显式排除**（遵"宁可漏修、不可误修"）。
+                        // 代价：内容块(代码块)绝不会是聊天根 ⇒ wouldChange 仍 = 1。
                         "var isAnchor=cn.indexOf('BynINW_')>=0||" +
-                        "cn.indexOf('_2H3hWW_root')>=0;" +
+                        "cn.indexOf('_2H3hWW_root')>=0||" +
+                        "cn.indexOf('Dc7zOa_root')>=0;" +
                         "var isPanel=false;" +
                         "if(big&&!isAnchor&&e.id!=='dsh-theme-veil'){" +
                         "var pcs=getComputedStyle(e);" +
@@ -411,17 +422,14 @@ class WebActivity : Activity() {
                         "if(ar.width>=vw*0.9&&ar.height>=vh*0.9){isPanel=true;break;}}" +
                         "pa=pa.parentElement;ph++;}}}" +
                         "if(!m)continue;" +
-                        // 非浮层/非面板保持原保守语义：已半透明（alpha<1）的元素不重复处理（幂等）。
-                        // 浮层与阅读面板**不受此限**：浮层本来可能是全透明、必须补底色才可读；
-                        // 面板则可能已被我们上一轮写成 transparent，必须能再次纠正（否则一次性固化）。
                         "var a0=(m[4]!==undefined?parseFloat(m[4]):1);" +
-                        "if(!isOv&&!(big&&isPanel)&&a0<1)continue;" +
-                        // 取面板**原生**色相：我们可能已把它的内联值改成 transparent，
+                        // 取**原生**色相 pm（v1.32.12 起）：我们可能已把内联值改成 transparent 或 0.45，
                         // 此时 computed 读不出原色 ⇒ 临时摘掉内联再读，读完按需还原。
-                        // 原生确实没有不透明底的（如 OUqwTW_panelBody/_surface_6nhg2_125）
-                        // 一律判为"不是阅读面"，还原后走原分支 —— **绝不给无底元素凭空加底**。
+                        // 原生确实没有不透明底的（如 OUqwTW_panelBody/_surface_6nhg2_125、#dsh-theme-veil）
+                        // 一律判为"不是内容面"，**绝不给无底元素凭空加底**。
+                        // veil 按 id 显式排除：连瞬时摘除都不做，不依赖"另一段注入恰好先写"的顺序。
                         "var pm=(a0>=1?m:null);" +
-                        "if(big&&isPanel&&a0<1){" +
+                        "if(big&&!isAnchor&&a0<1&&e.id!=='dsh-theme-veil'){" +
                         "var sv=e.style.getPropertyValue('background-color')," +
                         "sp=e.style.getPropertyPriority('background-color');" +
                         "e.style.removeProperty('background-color');" +
@@ -430,6 +438,29 @@ class WebActivity : Activity() {
                         "var na=(nx&&nx[4]!==undefined)?parseFloat(nx[4]):(nx?1:0);" +
                         "if(nx&&na>=1){pm=nx;}else{if(sv)e.style.setProperty(" +
                         "'background-color',sv,sp||'');}}" +
+                        // ★ v1.32.13「内容块」判据：innerBig = 后代里**自身也超过 50%×50% 视口**的元素
+                        // 个数（"里面还套着几层大容器"）。实测布局容器 BynINW_frame/centerCol/Dc7zOa_root
+                        // = 70/42/41，而聊天里的大代码块 = **2** ⇒ 20 倍余量，是干净的**结构**判据、
+                        // **不依赖 CSS-module 类名**（v1.32.5 教训）。
+                        // ⛔ 被实测否决的判据：**"后代含 pre/code"** —— Dc7zOa_root（布局容器，
+                        // innerBig=41）后代里也有 pre/code（整棵聊天树含代码块）⇒ 会命中布局容器
+                        // ⇒ 多层白叠 ⇒ **复现 v1.32.6「壁纸整层消失」**。只能靠嵌套计数，不能靠语义/颜色。
+                        // 代价控制：innerBig 与上面的"剥内联"都**只在 big && !isAnchor 成立时才做**；
+                        // 实测该判据下 wouldChange 恰好 = 1（只有目标代码块）。
+                        "var innerBig=-1,isCB=false;" +
+                        "if(big&&!isAnchor&&pm){" +
+                        "innerBig=0;" +
+                        "var _ds=e.querySelectorAll('div,section,main," +
+                        "aside,article,pre,code,table,ul');" +
+                        "for(var _i=0;_i<_ds.length;_i++){if(_ds[_i]===e)continue;" +
+                        "var _r=_ds[_i].getBoundingClientRect();" +
+                        "if(_r.width>vw*0.5&&_r.height>vh*0.5)innerBig++;}" +
+                        "isCB=(innerBig<=2);}" +
+                        // 幂等闸门：非浮层/非面板保持原保守语义（已半透明则不再处理）。
+                        // ★ 但**内容块必须放行** —— 否则"还矮时被写成 0.45、长高后被闸门挡住"的实例
+                        // （坏态 B）**永远修不回来**。实测同屏 10 个 md-code-block，其中 8 个高度未过
+                        // 阈值、按设计就该是 0.45（本轮裁定不动）；放行只对命中 isCB 的生效。
+                        "if(!isOv&&!(big&&isPanel)&&!isCB&&a0<1)continue;" +
                         "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
                         // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
@@ -457,6 +488,16 @@ class WebActivity : Activity() {
                         // 排在 transparent 通道分支**之前且互斥**；pm 为 null（原生无底）则落到
                         // 通道分支，行为与 v1.32.11 完全一致。
                         "else if(big&&isPanel&&pm){e.style.setProperty(" +
+                        "'background-color','rgb('+pm[1]+','+pm[2]+','+pm[3]+')'," +
+                        "'important');}" +
+                        // ★ v1.32.13 内容块：聊天正文里的大代码块（实测 331x524，原生 rgb(249,250,251)
+                        // 不透明浅灰）此前落进大容器分支被抹成 transparent ⇒ 代码透出底层聊天正文
+                        // （用户 2026-10-15「修吧」）。判据 isCB = 后代中大容器数 <= 2（见上文推导）；
+                        // 给**原生色相**、alpha=1（它是**内容**不是装饰，半透明直接伤代码可读性；
+                        // 应用原生本就完全不透明 ⇒ 1.0 是还原原生，与 v1.32.12 阅读面板同构）。
+                        // 与 isPanel 分支**互斥**（isCB 计算里已含 !isAnchor，且 isPanel 在前）；
+                        // pm 为 null（原生无底）则落回通道分支，行为与 v1.32.12 一致。
+                        "else if(big&&isCB&&pm){e.style.setProperty(" +
                         "'background-color','rgb('+pm[1]+','+pm[2]+','+pm[3]+')'," +
                         "'important');}" +
                         "else if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
