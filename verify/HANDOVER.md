@@ -13,7 +13,9 @@
 | 字段 | 值 |
 |---|---|
 | 本轮主题 | **App 浮层可读性修复（v1.32.11）**：用户反馈「选择传文件的控件背景透明度是否太低了点」= slash 指令菜单浮层太透、文字发花 |
-| **当前阶段** | ✅ **QA 双段全过，具备放行条件（2026-10-15 01:0x）**：task-6 ✅ → task-7 ✅（**FAIL P1**）→ task-8 ✅（**P1 复修**）→ task-9 ✅（**Part A 0.92 PASS-with-findings；Part B 0.96 PASS**）。**下一步：lead `-Deploy` 发布 + `export-public.ps1` 同步开源** |
+| **当前阶段** | ✅ **已发布上线（2026-10-15 01:08）**：task-6 ✅ → task-7 ✅（**FAIL P1**）→ task-8 ✅（**P1 复修**）→ task-9 ✅（**Part A 0.92 PASS-with-findings；Part B 0.96 PASS**）→ **发布 `SUMMARY: 9/9 passed`** → **开源镜像已同步**。**本轮闭环** |
+| **发布证据** | `verify\dsh-app-verify.ps1 -Deploy` → **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-010827.log`）；线上 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=77` → **http=200 size=10,992,560**（与冻结 APK 字节一致）；更新通知 `id: o4bYmdFn9gaU` |
+| **开源镜像** | `dsh-push-public` HEAD **`ba8b455`**，**GitHub `thiscp/dsh-push` 与 Gitee `cnopone/pub-dsh-push` 双远端均 `ba8b455`**（`-DryRun` 先自证：脱敏 9 类 + secret gate 通过）|
 | **冻结版本（放行采样用的就是它）** | **`cb1a4ce84032d670f1621c1c33b34cb1e45c5007025c9958bbecda2461ec08db` = 0.96 build**（`android-app/**` 自 `49a0ebd` 起**未再改动**，`git diff` 空为证）。**别与 0.92 版混淆**：0.92(`f5e4a6b`) = `1D77D75A…` |
 | **根因（**已钉死到一行**）** | `WebActivity.kt` 玻璃化注入的**分支顺序反了**：`:392` `if(w>vw*0.5&&h>vh*0.5)→'transparent'` **无条件排在 `isOv` 之前**；真菜单 `257x392` vs 视口 `360x671` ⇒ `392>335.5` ⇒ **落进大容器分支被设成 `transparent`**，浮层分支永远轮不到 ⇒ **alpha=0**。**且是间歇的**（n=2 跑出 0 / 0.92）——`apply()` 与菜单渐进渲染**竞态**。详见 `ANALYSIS-v1.32.11-overlay-opacity.md` §6.5/§6.6 |
 | **修法（已定型）** | 浮层判定**提到大容器分支之前、两者互斥**；**`role` 命中的浮层豁免全部几何判定**（真菜单正是 `role=listbox`，面积阈值反把它误判成"大容器"）。**大容器分支必须保留**（v1.32.6 红线） |
@@ -768,7 +770,7 @@ tester Part A 已用 **5 次高菜单 + 2 次矮菜单 = 7/7 恒 0.92** 证明**
 | **Part B**（0.96 build） | ✅ **PASS**：**7/7 恒 0.96**（高 `257x392` ×5 + 矮 ×2，阈值两侧）、**哈希 bracket `stable=true`**、**肉眼判"淡影已消除"**、P12 含整页目视**补齐**（并用 `P12_ALIVE` 证明 App 活着）、veil **0.45** 未动、P13/C11/C12 未回退。**无 P0/P1/P2；唯一残留 P3 = 4px rim（决定不动）** |
 | **测试期插曲** | 采样中途自愈 **fail-closed** 触发过一次 `VIOLATION`（`renderer: (COULD NOT READ)`）⇒ kill + rung1 重启；**只重启模拟器、未换 build**（重启后 sha 仍 `cb1a4ce8…`）；被中断的 2 个样本**已丢弃**，7/7 来自**一次连续未中断运行**。**这是加固版既定行为，非故障**。 |
 | **未覆盖（不影响放行）** | **A29 多浮层共存**（`dialog/alertdialog/tooltip/menu` 该页 `present:false` 唤不出）⇒ 已做成**探针常驻断言**；U-3 命中区几何「未涉及」（未动尺寸）；U-5 整轮全量留体验轮 |
-| **发布** | ✅ **具备放行条件**（lead 执行 `-Deploy`，期望 `SUMMARY: 9/9`）|
+| **发布** | ✅ **已发布（2026-10-15 01:08）**：`SUMMARY: 9/9 passed`、线上 `?v=77` http=200/10,992,560 B、开源双远端 `ba8b455` |
 
 ### 3.18.10 本轮新增的 4 条 QA 工具纪律（tester 沉淀，建议下轮沿用）
 

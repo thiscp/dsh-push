@@ -223,6 +223,35 @@ powershell -File verify\dsh-app-verify.ps1
   （双引号里的 `${}` 会被 5.1 吃掉）
 - 远端 PS 一律 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File <path>`，脚本先 scp 上去再跑（远程默认 shell 可能是 cmd，PATH 里没有 powershell）
 
+### 版本指纹与竞态纪律（2026-10-15 v1.32.11 实战新增，**四条必需**）
+
+> 背景：本轮**连续三次**出现"**验了，但验的不是那个版本**"——采样横跨换版 / 哈希标签张冠李戴 /
+> 误判"构建没生效"。全部源于**没有把"被验的字节"钉死在采样那一刻**。
+
+1. **APK 哈希必须"夹逼"读（bracket）**：**采样前读一次、采样后立刻再读一次**，两者相等且等于冻结哈希。
+   探针把期望哈希做成**参数**，不匹配就 **fail-closed 拒绝采样**（本轮 Part B 即如此，输出 `stable=true`）。
+   ⚠️ **只写一个哈希、不写"何时读的" = 没有证据**：本轮 Part A 采样于 `00:06–00:16`（当时设备是 0.92），
+   哈希却读于 `00:22` 装机**之后** ⇒ 把 **0.92 的数据贴上了 0.96 的哈希**。
+   判据命令：`adb shell pm path <pkg>` → `adb shell sha256sum <base.apk>`，
+   与 **vm1 产物**、**commit 源码**三者对齐。
+2. **判定"构建有没有生效"看 DEX 字面量**（比看哈希/命令行都硬）：
+   `unzip -o -q app-debug.apk "classes*.dex" -d /tmp/apkx` 后
+   `strings /tmp/apkx/classes*.dex | grep -c "18,24,40,0.96"`。
+   ⚠️ **别只看产物 sha256/大小/时间**——同一 hash 可能来自"同源重装"而非"没构建"（本轮 lead 就误判过一次）。
+3. **`connect()` 必须有界重试**：冷启后 devtools socket 约 **25s** 才出现，单次 `fetch` 会 `fetch failed`，
+   别当成"起页失败/链路坏"。
+4. **自愈 fail-closed 会杀模拟器，别当产品故障**：采样中途 offline / `renderer: (COULD NOT READ)`，
+   **先查 `emu-ladder.log` 的 `VIOLATION` 行**——那是**加固自愈的既定行为**。
+   本轮实测：`VIOLATION` → kill + rung 1 重启，**只重启模拟器、没换 build**（重启后 sha 仍一致）。
+   ⇒ **被中断的样本丢弃**，最终结论必须来自**一次连续未中断的运行**（别拼凑跨中断样本当 n=5）。
+5. **整页目视要断言 App 进程活着**：并发 `adb install -r` 会**杀掉 App 进程**，此时 `screencap` 拍到的是
+   **launcher 桌面**（本轮 Part A 的 `QA-P12` 整页目视因此记 BLOCKED）。
+   ⇒ 截图前后各取一次 `pidof`（本轮落地为 `P12_ALIVE before=true/3555 after=true/3555`）。
+6. **间歇性缺陷必须 ≥5 次采样**：凡涉及**渲染时机/竞态/渐进渲染/`MutationObserver`** 的改动，
+   验收必须 **≥5 次采样**确认"**恒为**"期望值，**且覆盖阈值两侧**。
+   本轮真菜单 alpha 曾**同版本、同设备、同操作 n=2 跑出 `0` 与 `0.92`**（`apply()` 与菜单渐进渲染竞态）
+   ⇒ **单次绿不能证明修好**。
+
 ## 模拟器测不了什么（正式版仍需真机抽查）
 
 OriginOS 定制层行为：图标陈旧不刷新、后台被杀策略、深链落点、heads-up 白名单、系统下载组件（v1.21.1 已绕开）。模拟器负责的是：功能逻辑、数据层（prefs/DB）、UI 渲染、通知结构、Android 16 平台行为（SELinux/权限/WebView）。

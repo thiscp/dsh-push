@@ -430,22 +430,26 @@ vm1 clean assembleDebug（16 executed，源码含 0.96）
 
 ---
 
-## 7. 发布前检查单（lead 用；QA 通过后按序执行）
+## 7. 发布前检查单（lead 用）——✅ 本轮**已全部执行完毕**（2026-10-15 01:08）
 
-| # | 项 | 判据 |
-|---|---|---|
-| 1 | QA 报告结论 | `verify/QA-ROUND-v1.32.11.md` **无 P0/P1**（有则打回 developer） |
-| 2 | 版本三处 | `versionCode=77` / `versionName=1.32.11` / `APP_VER=1.32.11` |
-| 3 | 工作树 | `git status --short` 只剩已知在飞项；提交只 stage 本轮改动 |
-| 4 | **发布** | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\dsh-app-verify.ps1 -Deploy -DeployNote "…"` → 期望 **`SUMMARY: 9/9`** |
-| 5 | 线上确认 | 下载链接 `?v=77` 可达 |
-| 6 | **开源同步** | `export-public.ps1 -Msg "…"`（GitHub + Gitee；脱敏闸门须过） |
-| 7 | 交接 | `HANDOVER.md` §1/§3 登记 + 本轮产物索引；skill 沉淀"浮层判定依据" |
-| 8 | 推送 | 私有仓 → gitee `origin`；**注意顺序**：文档全提交完最后再导镜像（避免镜像落后重导） |
+| # | 项 | 判据 | 实测结果 |
+|---|---|---|---|
+| 1 | QA 报告结论 | 无 P0/P1 | ✅ Part A **PASS-with-findings**（0.92）+ Part B **PASS**（0.96）；**无 P0/P1/P2**，唯一 P3 = 4px rim（决定不动）|
+| 2 | 版本三处 | `versionCode=77` / `versionName=1.32.11` / `APP_VER=1.32.11` | ✅ 三处一致 |
+| 3 | 工作树 | 只剩已知在飞项 | ✅ `git status --short` 空 |
+| 4 | **发布** | `dsh-app-verify.ps1 -Deploy` → `SUMMARY: 9/9` | ✅ **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-010827.log`）|
+| 5 | 线上确认 | `?v=77` 可达 | ✅ **http=200 / size=10,992,560**（与冻结 APK 字节一致）|
+| 6 | **开源同步** | `export-public.ps1`（GitHub + Gitee） | ✅ `-DryRun` 自证（脱敏 9 类 + secret gate）→ 实跑 → **双远端 `ba8b455`** |
+| 7 | 交接 | `HANDOVER.md` §1/§3 登记 + skill 沉淀 | ✅ §1 快照 + §3.18（含 §3.18.1–3.18.10）；skill `dsh-push-app-dev` `2fb3ba1`+`3ecc7b5` |
+| 8 | 推送 | 私有仓 → gitee `origin` | ✅ `origin/master` = 本地 HEAD |
 
-> ⚠️ **发布脚本两条已固化的陷阱**（勿重踩）：① 它**不加 `-Deploy` 也会往生产 topic `dsh` 推一条**测试卡片
-> （见 `HANDOVER.md` §3.12）⇒ 本轮发布**本来就该发通知**，但要清楚这是发到用户真机的；
-> ② 它内部会**自己拉起模拟器**，且**现在已改用加固自愈 `emu-selfheal`**（不再用被禁的 `dsh-emu-sw`，见 §3.16）。
+> ⚠️ **发布脚本两条已固化的陷阱**（本轮均未踩）：① 它**不加 `-Deploy` 也会往生产 topic `dsh` 推一条**
+> （§3.12）——本轮**本就该发通知**，实测 `push-received` 正常；② 它内部会**自己拉起模拟器**，
+> 且**已改用加固自愈 `emu-selfheal`**（不再用被禁的 `dsh-emu-sw`，见 §3.16）。
+
+**发布流水线逐段实测**（`9/9`）：`build-vm1`（8s，APK 10,992,560 B）→ `fetch-apk` → `push-apk`
+→ `emulator-up`（`emulator-5554` api=36）→ `install`（Streamed Install Success）→ `push-received`
+（`PUSH_HTTP=200`）→ `mid-unique` → `entry-unread` → `screenshot` → `deploy`（`?v=77`）→ `update-notify`（`id: o4bYmdFn9gaU`）。
 
 ---
 

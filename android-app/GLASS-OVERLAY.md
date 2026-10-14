@@ -203,3 +203,33 @@ v1.32.4 曾因此把窄屏侧栏浮层锚死在被裁剪的网格列里）。
 `bwPanelBg()` 独立负责侧栏根 `_2H3hWW_root`：窄屏展开态 0.92 / 收起态与桌面宽度 0.45。
 本次浮层判定**显式排除** `_2H3hWW_root`，避免把收起态误提到 0.92。
 若将来要统一两处，注意别把收起态一起提亮。
+
+## 7. v1.32.11 收口（已发布 2026-10-15 01:08）
+
+**最终决策树**（`49a0ebd` 0.96 + `f5e4a6b` 分支顺序，版本 1.32.11 / code 77）：
+
+```js
+if(!m) continue;                                     // 取不到 computed bg 就跳过
+if(!isOv && alpha<1) continue;                       // 幂等闸门：只约束非浮层
+if(isOv && (ovRole || !(w>vw*0.5 && h>vh*0.5))) {    // ★ 浮层判定在前，与大容器互斥
+  setBg(oa<1 ? ovFallback : 'rgba(r,g,b,0.96)');     // ovRole 命中者豁免全部几何判定
+} else if(w>vw*0.5 && h>vh*0.5) {
+  setBg('transparent');                              // v1.32.6 红线，保留
+} else if(!skipBg) {
+  setBg('rgba(r,g,b,0.45)'); + backdrop-filter       // 普通面板
+}
+```
+
+**alpha 档位**：浮层 **0.96** ｜ 展开态侧栏 **0.92**（`bwPanelBg()`）｜ 普通面板/卡片/输入卡 **0.45** ｜
+大容器 **transparent** ｜ `#dsh-theme-veil` **0.45**。
+
+**两条"改了数值就必须同步"的地方**：`ovFallback`（`WebActivity.kt` `L357-358`）与"有色相"分支（`L407`）。
+⚠️ `L643` 另有一处 `rgba(18,24,40,0.92)` 是**短提示条**（非本浮层）——**别顺手改**。
+
+**发布证据**：`SUMMARY: 9/9 passed`；线上 `?v=77` → http=200 / 10,992,560 B。
+QA：Part A（0.92）PASS-with-findings、Part B（0.96）PASS（7/7 恒 0.96、哈希 bracket `stable=true`、肉眼淡影已消除）。
+
+**下轮改这段注入前，先读**：
+`verify/ANALYSIS-v1.32.11-overlay-opacity.md` §2（决策树两条闸门）、§3（veil 雷区）、
+§6.5/§6.6（**分支顺序 + 间歇竞态**）；以及 `verify/README.md` 的「版本指纹与竞态纪律」六条。
+
