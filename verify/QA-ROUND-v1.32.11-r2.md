@@ -39,7 +39,7 @@ lead 的判据（vm1 `clean assembleDebug` 后抽 `classes*.dex` 做字符串比
 
 | 项 | 值 |
 |---|---|
-| 设备 | `emulator-5554`（笔电 DESKTOP-CPYH）｜ `versionName=1.32.11` / `versionCode=77` / API 36 |
+| 设备 | `emulator-5554`（笔电 <win-host-a>）｜ `versionName=1.32.11` / `versionCode=77` / API 36 |
 | 档位 | `emu-gpu-verdict.ps1` **exit 0**（真 GPU，RTX 4060 Laptop / 616.92） |
 | 几何 | 1440x3168@640，CDP `innerWidth=360 / innerHeight=671 / dpr=4` |
 | 探针 | `verify/qa-overlay-r2.mjs`（Part A+B 主探针）｜ `verify/qa-overlay-r2b.mjs`（Part B 补完） |

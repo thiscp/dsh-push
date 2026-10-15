@@ -27,7 +27,7 @@
 
 | 机器 | 项 | 实测值 | 判定 |
 |---|---|---|---|
-| **台式机**<br>`DESKTOP-CPHOME` | DSH Web 3081 | 在听，pid **1552** | ✅ |
+| **台式机**<br>`<win-host-b>` | DSH Web 3081 | 在听，pid **1552** | ✅ |
 | | 代理 3080 | 在听（`0.0.0.0`），pid **20728** | ✅ |
 | | HTTP 探活 | 3080/3081 均返回 **401**（无 token）→ **属预期**，非故障 | ✅ |
 | | 桌面 web token | `RWYq5xxzwD6yPae8nUVr2dYXR5bFm8KPRro8s_B4qjE`（取自 `web.log` 最后一条 `dsh web:`；**重启必换**） | ✅ |

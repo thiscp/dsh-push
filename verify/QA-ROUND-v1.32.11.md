@@ -3,7 +3,7 @@
 > **对象**：`xyz.cpyh.dshpush` v1.32.11 / versionCode **77**（`dumpsys` 实测）
 > **主题**：slash 指令菜单浮层不透明度（用户原话「选择传文件的控件背景透明度是否太低了点」）
 > **执行者**：teammate tester ｜ **时间**：2026-10-15 00:06–00:12 (+08:00)
-> **设备**：`emulator-5554`（笔电 DESKTOP-CPYH）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
+> **设备**：`emulator-5554`（笔电 <win-host-a>）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
 > **几何**：1440x3168@640，CDP `innerWidth=360 / innerHeight=671 / dpr=4`
 > **被测 HEAD**：`b8c432428439`（含 task-6 实现 `59c9c2d`）
 > **判据**：两次独立探针跑（`qa-overlay-probe.mjs` + `qa-overlay-layers.mjs`）+ **每张图我自己 `read_image` 看整页**

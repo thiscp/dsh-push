@@ -1,4 +1,4 @@
-# remote-step4-5.ps1 -- runs ON THE LAPTOP (DESKTOP-CPYH).
+# remote-step4-5.ps1 -- runs ON THE LAPTOP (<win-host-a>).
 # Deployed by the lead via scp + `powershell -File`, because the previous attempt passed this body
 # through ssh as a base64 -EncodedCommand and blew past the ~8191-char remote command-line limit,
 # so NOTHING ran and every check came back empty (which some vacuous comparisons then mislabelled).

@@ -11,8 +11,8 @@
 | 首稿落笔时 HEAD | `a2db444fc3964c037c3d0ca17c14d3c82ad19be4` |
 | **收笔时 HEAD** | **`f7c2c27ab0ee4c4617ad776f0618e6e12f230432`** —— `docs(qa): tester 就绪自检 A-E 全绿 + GPU 判据重写 + 411 宽基线作废标注 + 就绪报告与证据`（**Lead 用它收口了 F**，见 §7） |
 | ⚠️ HEAD 在本轮执行窗口（19:11–19:22）内变了 **7 次** | `f2fbd20e` → `c2156916` → `85b4a488` → `a2db444f` → `f53e4b7` → `a2db444` → **`f7c2c27`**（**Lead 全程并行提交 `verify/**`**）。任何"与 HEAD 比对"类结论都按**收笔时** `f7c2c27` 算；F 的判定与此无关（判据是工作树本身） |
-| 编排机 | 台式机 `DESKTOP-CPHOME`（`F:\work\work_dsh\dsh-push`） |
-| 模拟器机 | 笔电 `DESKTOP-CPYH` / `user@<tailnet-laptop>`（Tailscale 固定 IP） |
+| 编排机 | 台式机 `<win-host-b>`（`F:\work\work_dsh\dsh-push`） |
+| 模拟器机 | 笔电 `<win-host-a>` / `user@<tailnet-laptop>`（Tailscale 固定 IP） |
 | 设备 | `emulator-5554`，AVD `dsh-p16`，**API 36**，`x86_64` |
 | 模拟器档位 | **真 GPU**（`-gpu host`，RTX 4060 Laptop / 驱动 616.92） |
 | 几何基线 | **CSS360**：`1440x3168 @ 640`，CDP 实测 `innerWidth=360 / dpr=4` |
@@ -41,7 +41,7 @@
 
 **实际输出（原文摘录）**：
 ```
-laptop           : DESKTOP-CPYH  (user@<tailnet-laptop>)
+laptop           : <win-host-a>  (user@<tailnet-laptop>)
 qemu processes   : 1
 qemu started     : 10/14/2026 18:40:14
 qemu argv        : …\qemu-system-x86_64-headless.exe -avd dsh-p16 -no-window -no-audio -no-boot-anim -gpu host -cores 4 -memory 4096

@@ -711,3 +711,99 @@ isCode = (e.tagName === 'PRE') || 直接子节点里有 PRE      // 等价 :scop
   不透明白（壁纸整层消失），并在 S4 放回 1 次过渡态翻面（FINDING-1 症状）。⇒ 本轮**不**采用 C1。
 - 其余场景（S1 / S5 / S6 / S8 / S9）四个变体逐项相同，既有 4 条保护（面板 1.0 / 内容块 1.0 /
   浮层 0.96 / 小元素 0.45）与窄屏侧栏 0.92 / 0.45 均未动。
+
+### 11.11 D2（P2 功能性破坏）与 D3（P3 脏状态）：类名锚点腐烂的第二笔账（v1.32.16）
+
+**D2 现象（真机 vm1，QA 取证 `verify/qa-d1-vm1b.json`）**：展开侧栏时 7 个代码块全部被压成
+**9px 宽**（`9x4975` / `9x2942` / `9x2524` / `9x2410`，`overHalf=false`、`innerBig=0`），
+收起侧栏后恢复 233px（`verify/qa-d1b-vm1.json`：`pI_x6G_centerCol` 304x671、卡片 233x353）。
+这不是观感问题，是**代码块根本读不了**。
+
+**真根因：不是「某个类名没命中」，是「整段补丁空转」。** v1.32.5 那段窄屏补丁从头到尾按类名
+前缀认元素——样式表 14 条规则里 18 处 `[class*='…']` 前缀选择器（`BynINW_` / `_2H3hWW_` /
+`hIlkoa_` / `_9lTDKa_` / `EBLgjq_` / `WgQWqa_` / `mAtvLq_`），`bwPanelBg()` 与 pointerdown
+自动收起监听还各自再 `querySelector("[class*='_2H3hWW_root']")` 一次。vm1 上真实命名是
+`pI_x6G_frame` / `pI_x6G_sidebarCol` / `pI_x6G_centerCol` / `hHd-Xa_root`，同一份 QA 取证的
+census 里 `BynINW_=0`、`_2H3hWW_root=0` ⇒ **样式表与两处 JS 查询同时失效**：展开态侧栏留在
+**流内**吃掉 280px（`pI_x6G_sidebarCol` 280x671），正文列 `pI_x6G_centerCol` 只剩 80px，卡片
+9px。这与 §11.7 登记的「类名前缀表会腐烂」同一族，只是这次从「观感退化」升级成「功能破坏」：
+**同一份上游代码，换一次 CSS-module 哈希命名，整段补丁归零**。
+
+**修法：改成按渲染盒模型 / 几何判，不依赖任何类名或前缀**（lead 的要求）。四条判据全部只读
+computed 样式与矩形：
+
+| 认什么 | 怎么认 |
+|---|---|
+| 框架 frame | computed `display` 为 `grid`、宽 ≥90% 视口、高 ≥50% 视口、`gridTemplateColumns` 解析出的 used 轨道 ≥2 条 |
+| 侧栏列 | 框架子节点里**贴左缘**（`left ≤ 框架左缘+2`）、高 ≥60% 视口、宽 ∈ [96px, 90%vw]、且 `position` 为 static/relative —— **在流内**才叫挤压，已是 fixed 浮层就不算 |
+| 饥饿（有兄弟块在吃宽度） | 同一框架里存在宽 <35% 视口、高 ≥50% 视口的兄弟列 |
+| 展开态 | 侧栏列宽 ≥ 轨道宽+40 **且** 有饥饿兄弟；否则按收起态 ⇒ **撤销**我们写过的内联 |
+
+写入（一律内联 `!important`，与玻璃化注入同一优先级手法）：
+- 框架：把侧栏那条轨道换成**实测轨道宽**（见过收起态就用实测值 `window.__bwRailW`，没见过退回
+  56，与样式表里那个 56px 同源），**紧邻其右**的轨道换成 `minmax(0,1fr)`，其余轨道保留实测 px。
+  vm1 形态即 `280px 80px 0px` → `56px minmax(0,1fr) 0px`（合成 DOM 实测写入值见下表）。
+- 侧栏列：`overflow:visible` + 中和 `backdrop-filter` / `filter` / `transform` / `contain` /
+  `will-change`（它们会把 fixed 后代变成「困在列里」的包含块，样式表那条早就踩过这个坑）。
+- 侧栏浮层：取列里 ≥轨道+40 宽、≥60% 视口高的那个子节点（没有就用列本身），写
+  `position:fixed; left/top/bottom:0; width=实测面板宽 px`（小于轨道+40 退回 280，超过 90%vw
+  收到 85%vw）`+ max-width`、`z-index:60`、`overflow-y:auto`、`overflow-x:hidden`、`box-shadow`。
+- 底色：展开态 0.92、收起态 0.45，**沿用页面自己的色相只改 alpha**（与笔电那条
+  `var a=(narrow&&expanded)?0.92:0.45` 同一取值）。
+
+三个配套（都是本轮推演 + 合成实测出来的坑，缺一个就会出事）：
+1. **先比后写**（`bwSet`）：新观察器带 `attributeFilter:['class','style']`，会看到**我们自己**
+   的写入；不先比就「写→变异→再写」永动（4Hz 强制重排）。
+2. **合并去抖 250ms**：`bwGeomFix` 每次都要量一遍盒模型，不能每个 mutation 都量。类名命中时
+   仍挂原来那个只观察侧栏 class 的观察器（行为一行未变）；只有类名没命中的宿主才挂几何版。
+3. **收起时撤销**（`bwUndo` 逐条 `removeProperty`）：样式表那条靠
+   `:not([class*='_2H3hWW_collapsed'])` 区分展开/收起，几何段没有类名可用 ⇒ 只能「每轮重判 +
+   撤销」。不撤销的话，收起侧栏会被我们的 `width:280px!important` 钉成 280px 宽。
+
+顺带三条**同族守卫**（前两条只用对象引用 `window.__bwSbEl`，不引入类名）：
+- 玻璃化注入的 `skipBg` 加几何臂：几何段认出的展开态侧栏也归 `bwPanelBg` 管，不得被写成
+  transparent——否则原生色相丢失，`bwPanelBg` 只能读到 `rgba(0,0,0,0)`（色相不可用 ⇒ 不写 ⇒
+  侧栏一直全透）。笔电上类名命中，走的仍是原来那条。
+- `isSb` 加同一条臂：同一个对象引用从布局链 / isPanel / isCB 里排除，理由同上。
+- `bwPanelBg` 的 alpha 路径加守卫：**computed 全透明（alpha=0）就不写**——没有可保留的色相时
+  硬写会把侧栏变成近黑 `rgba(0,0,0,0.92)`。
+
+**D3（P3）**：零 tab 时隐藏的 `_emptyTabHost_6nhg2_143`（360x671，`visibility:hidden`）被写成
+`rgb(255,255,255) !important`（`verify/qa-d1-vm1b.json` 里唯一 alpha=1 的大容器）。
+`visibility:hidden` 的子树**根本不渲染**，给它写底色只是留一份脏状态。判据只看**元素自己的
+computed visibility**：该属性可继承、也可被子节点显式覆盖（父 hidden + 子 `visible` 仍会渲染），
+所以「往上逐级找 hidden」反而会误判。跳过 = **完全不碰**（不写不透明也不写 transparent，也不动
+`__dshGlass` 标记）；它变可见时必然伴随 class/attribute 变化，由已挂的 MutationObserver 或
+1500/4000ms 超时重跑 `apply()` 补上。顺手把循环里的 `getComputedStyle(e)` 提成 `csE` 复用
+（浮层分支的 `ocs` 也改用它），每个元素反而少一次取样式。
+
+**合成 DOM 前后对照**（`glass-sim.mjs` + `glass-scen.mjs`，360x671，9 轮；**合成，非真机**）：
+
+| 场景 | 修前 V0 = HEAD 22c2b30 | 修后（本轮） | 判定 |
+|---|---|---|---|
+| S13 vm1 形态：展开侧栏在流内吃掉 280px，正文列 80px、卡片 9px | frame 无 `grid-template-columns`、侧栏列无中和、侧栏根 `transparent`（整段补丁空转） | frame `grid-template-columns: 56px minmax(0,1fr) 0px`、侧栏列 `backdrop-filter:none`、侧栏根 `position:fixed width:280px z-index:60` + `rgba(255,255,255,0.92)` | 修前 ✗ / 修后 ✓（9 轮 0 翻转） |
+| S13b 笔电形态对照：侧栏已是 fixed 浮层 | 侧栏根 `rgba(255,255,255,0.92)`、卡片 `rgb(249,250,251)`、正文列 `transparent` | **逐项相同**，几何段一条都没写 | 笔电 0.92 路径未回归 ✓ |
+| S13c 同 S13，第 5 轮收起侧栏 | 无写入可撤 | 第 5 轮起写过的内联**全部撤销**、底色回 0.45，r5–r9 稳定 | 收起态不会被 280px 钉死 ✓ |
+| S14 零 tab：隐藏的 `_emptyTabHost_` | `rgb(255,255,255)` ✗ | 无写入；可见的真 `_tabHost_` 仍 `rgb(255,255,255)` | 修前 ✗ / 修后 ✓ |
+
+**S1–S12 回归**：16 个场景里只有 S13 / S13c / S14 出现差异，**S1–S12 与 S13b 逐项完全一致**
+（含 v1.32.6 壁纸红线：S1 / S3 / S7 / S12 的 frame、chatRoot、tabHost 仍 `transparent`；S10 卡片
+仍 `rgb(249,250,251)`；S11 仍是那 1 次合法的 0.45→原生收敛）。时间判据：S13c 多出的那 1 次翻转
+发生在**用户收起侧栏那一轮**（r4→r5），之后 r5–r9 连续 4 个采样 0 翻转——是响应操作，不是自激。
+
+**纪律追加（接 §11.8）**：
+16. 窄屏补丁里**新增**的判据 MUST NOT 读类名/前缀；要改布局就用盒模型/几何。类名选择器只允许
+    留在 v1.32.5 那 14 条样式表里——它们腐烂时是**漏修**，这次是**错修**（展开侧栏压垮正文）。
+17. 任何会**自己写 style** 的观察器 MUST 先比后写 + 合并去抖，否则「写→变异→再写」永动。
+18. MUST NOT 给 `visibility:hidden` 的元素写底色（含 transparent）；判据只看元素自身 computed
+    visibility，不看祖先链。
+
+**没做 / 残留风险**：
+- 合成 DOM 不做真实重排：`grid-template-columns` 写进去后正文列宽度不会真的变，所以 S13 证明的是
+  「写入了正确的模板」，**9px→233px 的收敛必须真机 QA 才算数**。
+- 几何段要求宿主 frame 是 `display:grid`。上游若改成 flex，几何段不命中 = 漏修（方向安全），
+  届时再加 flex 分支。
+- `__bwRailW` 的实测值依赖「见过收起态」；没见过就用 56（与样式表同源）。若某宿主收起轨道不是
+  56 且用户从没收起过，展开态会把侧栏轨道按 56 写——只影响收起轨道宽度，不影响正文宽度。
+- 本轮**没动 openspec/**（不在 task-8 写域）：`specs/companion-app/spec.md` 里窄屏侧栏那条
+  requirement 现在多了几何判据与「撤销」语义，要不要补 MODIFIED delta 由 lead 定。

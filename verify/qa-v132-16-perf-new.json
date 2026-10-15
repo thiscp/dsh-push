@@ -1,0 +1,656 @@
+{
+ "mode": "perf",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "qa-v132-16-perfnew",
+ "pid": "4681",
+ "shaBefore": "f8b063f0335b612f7494b71d59739dd0890d55d140db2fbf0647e6914f937cec",
+ "openSession": true,
+ "startedAt": "2026-10-15T18:15:45.869Z",
+ "nav": {
+  "sidebar": {
+   "click": {
+    "found": true,
+    "x": 28,
+    "y": 36,
+    "aria": "Open sidebar",
+    "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+    "clickedAt": [
+     28,
+     36
+    ]
+   },
+   "fallback": {
+    "found": false
+   },
+   "state": {
+    "expanded": null,
+    "sidebar": null
+   }
+  },
+  "session": {
+   "found": true,
+   "rowCount": 5,
+   "text": "你好1d",
+   "x": 140,
+   "y": 258,
+   "sbcls": "hHd-Xa_root",
+   "sbw": 280,
+   "all": [
+    {
+     "t": "你好1d",
+     "x": 140,
+     "y": 258,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "你能搜索网页吗。用的自带的1d",
+     "x": 140,
+     "y": 292,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "你好1d",
+     "x": 140,
+     "y": 326,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "我本地Ubuntu每次启动都是自动25d",
+     "x": 140,
+     "y": 360,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "我在本地安装了sunshine串流软25d",
+     "x": 140,
+     "y": 394,
+     "w": 256,
+     "h": 32
+    }
+   ],
+   "raw": [
+    {
+     "t": "你好1d",
+     "time": true,
+     "y": 242,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "你能搜索网页吗。用的自带的1d",
+     "time": true,
+     "y": 276,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "你好1d",
+     "time": true,
+     "y": 310,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "我本地Ubuntu每次启动都是自动25d",
+     "time": true,
+     "y": 344,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "我在本地安装了sunshine串流软25d",
+     "time": true,
+     "y": 378,
+     "w": 256,
+     "h": 32
+    },
+    {
+     "t": "Show 7 more sessions",
+     "time": false,
+     "y": 410,
+     "w": 256,
+     "h": 28
+    },
+    {
+     "t": "work",
+     "time": false,
+     "y": 442,
+     "w": 256,
+     "h": 34
+    },
+    {
+     "t": "work",
+     "time": false,
+     "y": 442,
+     "w": 256,
+     "h": 34
+    }
+   ],
+   "pickedIndex": 3,
+   "pickedText": "我本地Ubuntu每次启动都是自动25d",
+   "collapsed": {
+    "found": true,
+    "x": 254,
+    "y": 36,
+    "aria": "Collapse sidebar",
+    "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+    "clickedAt": [
+     254,
+     36
+    ]
+   },
+   "chatBody": {
+    "body": {
+     "cls": "hWmORq_body",
+     "w": 233,
+     "h": 3344
+    },
+    "biggestPre": {
+     "cls": "_plain_7gxqk_103",
+     "w": 233,
+     "h": 311,
+     "bg": "rgb(249, 250, 251)",
+     "inline": ""
+    },
+    "preCount": 7,
+    "vw": 360,
+    "vh": 671
+   }
+  }
+ },
+ "reopen": {
+  "click": {
+   "found": true,
+   "x": 28,
+   "y": 36,
+   "aria": "Open sidebar",
+   "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+   "clickedAt": [
+    28,
+    36
+   ]
+  },
+  "fallback": {
+   "found": false
+  },
+  "state": {
+   "expanded": null,
+   "sidebar": null
+  }
+ },
+ "hook": {
+  "installed": 1
+ },
+ "perfSamples": [
+  {
+   "t": 1421,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 84,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 2856,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 170,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 4319,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 257,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 5747,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 343,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 7167,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 428,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 8609,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 515,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 10058,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 602,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 11524,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 690,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  }
+ ],
+ "perfFinal": {
+  "t": 11537,
+  "set": 0,
+  "setImp": 0,
+  "attr": 0,
+  "byProp": {},
+  "frames": 690,
+  "jankPct": 0,
+  "med": 17,
+  "p90": 17,
+  "p95": 17,
+  "max": 16.80000000000291,
+  "bwW": 0,
+  "railW": null,
+  "sbEl": 0,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  }
+ },
+ "d2": {
+  "vw": 360,
+  "vh": 671,
+  "bwRailW": null,
+  "bwW": null,
+  "bwSbEl": null,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  },
+  "bwFns": {
+   "panelBg": "function"
+  },
+  "grids": [
+   {
+    "cls": "pI_x6G_frame",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "relative",
+    "z": "auto",
+    "vis": "visible",
+    "disp": "grid",
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "background-color: transparent !important;",
+    "grid": "",
+    "prio": "important"
+   }
+  ],
+  "blocks": [
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 296,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 254,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 220,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 201,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 182,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 178,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 163,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 163,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 159,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 144,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 140,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 121,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   }
+  ],
+  "blockCount": 14,
+  "centerCol": {
+   "cls": "pI_x6G_centerCol",
+   "tag": "DIV",
+   "w": 360,
+   "h": 0,
+   "x": 0,
+   "y": 671,
+   "pos": "static",
+   "z": "auto",
+   "vis": "visible",
+   "disp": "flex",
+   "bg": "rgba(0, 0, 0, 0)",
+   "inline": "",
+   "grid": "",
+   "prio": ""
+  },
+  "sbProbe": {
+   "cls": "hHd-Xa_root",
+   "tag": "DIV",
+   "w": 280,
+   "h": 671,
+   "x": 0,
+   "y": 0,
+   "pos": "static",
+   "z": "auto",
+   "vis": "visible",
+   "disp": "flex",
+   "bg": "rgba(249, 250, 251, 0.45)",
+   "inline": "background-color: rgba(249, 250, 251, 0.45) !important; backdrop-filter: blur(12px) !important; width: 280px;",
+   "grid": "",
+   "prio": "important"
+  },
+  "railProbe": null,
+  "sbAncestry": [
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 0,
+    "h": 0,
+    "disp": "contents",
+    "grid": "none",
+    "inlineGrid": ""
+   },
+   {
+    "cls": "pI_x6G_sidebarCol",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "disp": "block",
+    "grid": "none",
+    "inlineGrid": ""
+   },
+   {
+    "cls": "pI_x6G_frame",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "disp": "grid",
+    "grid": "360px",
+    "inlineGrid": ""
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 0,
+    "h": 0,
+    "disp": "contents",
+    "grid": "none",
+    "inlineGrid": ""
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "disp": "block",
+    "grid": "none",
+    "inlineGrid": ""
+   },
+   {
+    "cls": "",
+    "tag": "BODY",
+    "w": 360,
+    "h": 671,
+    "disp": "block",
+    "grid": "none",
+    "inlineGrid": ""
+   }
+  ],
+  "sbProbeHit": {
+   "px": 20,
+   "py": 60,
+   "owner": "DIV.hHd-Xa_logoRow",
+   "selfOrDesc": true
+  }
+ },
+ "shots": [
+  {
+   "name": "qa-qa-v132-16-perfnew-perf",
+   "bytes": 689367,
+   "ok": true,
+   "pidBefore": "4681",
+   "pidAfter": "4681",
+   "alive": true
+  }
+ ],
+ "shaAfter": "f8b063f0335b612f7494b71d59739dd0890d55d140db2fbf0647e6914f937cec",
+ "pidAfter": "4681",
+ "elapsedMs": 86348,
+ "finishedAt": "2026-10-15T18:16:58.333Z"
+}

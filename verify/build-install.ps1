@@ -1,6 +1,6 @@
 # build-install.ps1 - one command: local gradle debug build -> install on the laptop emulator ->
 # launch the app straight at a DSH web URL (token pulled from web.log, never hand-copied).
-# ASCII only (PS 5.1). Emulator/adb live on the laptop DESKTOP-CPYH; build runs here.
+# ASCII only (PS 5.1). Emulator/adb live on the laptop <win-host-a>; build runs here.
 [CmdletBinding()]
 param(
   [string]$Url,                                   # DSH web URL to open; default = proxy 3080 + fresh token

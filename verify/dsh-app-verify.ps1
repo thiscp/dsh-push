@@ -27,7 +27,7 @@
 #    "crashes in non-interactive sessions (glTexImage2D 0x502)" - THAT PREMISE WAS FALSIFIED 2026-10-14:
 #    with the console session DISCONNECTED, -gpu host still came up (6s, renderer = RTX 4060). So the
 #    self-heal skips rung-1 no longer, and this pipeline pins the selector to "host" before launching.
-#  * Emulator host address is the Tailscale IP (DESKTOP-CPYH). The LAN address drifts and its
+#  * Emulator host address is the Tailscale IP (<win-host-a>). The LAN address drifts and its
 #    firewall blocks new connections - see config.local.ps1 / config.example.ps1.
 param(
   [string]$EmuIp     = "127.0.0.1",      # emulator host (see config.local.ps1 / config.example.ps1)

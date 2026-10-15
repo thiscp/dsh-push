@@ -33,7 +33,7 @@
 
 | 检查 | 命令 | 期望 |
 |---|---|---|
-| 笔电可达 | `ssh -o BatchMode=yes user@<tailnet-laptop> hostname` | `DESKTOP-CPYH`（**防双胞胎主机认错**） |
+| 笔电可达 | `ssh -o BatchMode=yes user@<tailnet-laptop> hostname` | `<win-host-a>`（**防双胞胎主机认错**） |
 | 当前档位 | `powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify\emu-gpu-verdict.ps1` | `exit 0 / PASS`（先确认起点是真 GPU） |
 | 成品在位 | `Test-Path verify\laptop-emu-selfheal.hardened.ps1` | True |
 | 现网脚本可备份 | `ssh ... powershell -NoProfile -Command "Test-Path G:\Android\emu-selfheal.ps1"` | True |

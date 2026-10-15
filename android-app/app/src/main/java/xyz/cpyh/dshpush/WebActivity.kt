@@ -317,33 +317,184 @@ class WebActivity : Activity() {
                         "[class*='WgQWqa_chevron']{min-width:20px!important;min-height:40px!important;" +
                         "display:inline-flex!important;align-items:center!important;" +
                         "justify-content:center!important;margin:-8.5px -3.9px -8.5px 1.3px!important}}\";" +
-                        "document.head.appendChild(s);" +
-                        "function bwPanelBg(){var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
-                        "if(!sb)return;var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
-                        "getComputedStyle(sb).backgroundColor);if(!m)return;" +
-                        "var narrow=window.innerWidth<=1023;" +
-                        "var expanded=sb.className.indexOf('_2H3hWW_collapsed')<0;" +
-                        "var a=(narrow&&expanded)?0.92:0.45;" +
-                        "sb.style.setProperty('background-color'," +
-                        "'rgba('+m[1]+','+m[2]+','+m[3]+','+a+')','important');}" +
-                        "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
-                        "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
-                        "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
-                        "if(psb&&!window.__bwPanelBgObs){window.__bwPanelBgObs=1;" +
-                        "new MutationObserver(function(){bwPanelBg();})" +
-                        ".observe(psb,{attributes:true,attributeFilter:['class']});" +
-                        "window.addEventListener('resize',function(){bwPanelBg();});}" +
-                        "if(window.__bwPanelClose)return;window.__bwPanelClose=1;" +
-                        "document.addEventListener('pointerdown',function(e){" +
-                        "if(window.innerWidth>1023)return;" +
-                        "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
-                        "if(!sb||sb.className.indexOf('_2H3hWW_collapsed')>=0)return;" +
-                        "var r=sb.getBoundingClientRect();" +
-                        "if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return;" +
-                        "var b=document.querySelectorAll('button');" +
-                        "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
-                        "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0){b[i].click();return;}}" +
-                        "},true);})();", null)
+                "document.head.appendChild(s);" +
+                // ★ v1.32.16 D2（P2）：上面整段样式表按**类名前缀**认元素，换宿主哈希命名后
+                //   **整体空转**。vm1 实测（verify/qa-d1-vm1b.json 的 census）：BynINW_=0、
+                //   _2H3hWW_root=0，真实名字是 pI_x6G_frame / pI_x6G_sidebarCol / hHd-Xa_root
+                //   ⇒ 展开态侧栏仍**在流内**吃掉 280px（sidebarCol 280x671），正文列
+                //   centerCol 只剩 80px，7 个代码块全被压成 **9px 宽**（9x4975 / 9x2942 /
+                //   9x2524 / 9x2410 …）；收起侧栏才恢复 233px（verify/qa-d1b-vm1.json：
+                //   centerCol 304x671、卡片 233x353）。这不是观感问题，是**功能性破坏**
+                //   （代码块根本读不了）。
+                //   下面这段**只用渲染盒模型 / 几何**认元素，MUST NOT 依赖任何类名或前缀：
+                //     · 框架 = computed display 为 grid、宽 ≥90% 视口、高 ≥50% 视口、
+                //       解析出的轨道（gridTemplateColumns 的 used 值）≥2 条；
+                //     · 侧栏列 = 框架子节点里贴左缘（left ≤ 框架左缘+2）、高 ≥60% 视口、
+                //       宽 ∈ [96px, 90%vw]、且 position 为 static/relative —— **在流内**才叫
+                //       挤压；已是 fixed 浮层（笔电样式表生效的样子）不算；
+                //     · 饥饥 = 同一框架里存在宽 <35% 视口、高 ≥50% 视口的兄弟列
+                //       （= 正文列被吃掉，即 lead 说的「检测有个兄弟块在吃宽度」）；
+                //     · 展开态 = 侧栏列宽 ≥ 轨道宽+40 **且** 有饥饥兄弟；否则按收起态处理
+                //       ⇒ **撤销**我们写过的内联（样式表那条靠
+                //       :not([class*='_2H3hWW_collapsed']) 做同一件事，几何段没有类名可用，
+                //       只能「每轮重判 + 撤销」，否则收起侧栏会被我们的 width 钉成 280px）。
+                //   轨道宽（收起态那条 56px）**优先实测**：见过窄态就把实测值存进
+                //   window.__bwRailW，没见过才退回 56（与样式表里那个 56px 同源）。
+                //   写入一律内联 !important（与玻璃化注入同一优先级手法），且**先比后写**
+                //   （bwSet）：下面的观察器带 attributeFilter:['class','style']，若每轮都重
+                //   写同样的值就会「写→变异→再写」永动（4Hz 强制重排）。
+                //   红线自查：只写 grid-template-columns / 侧栏列的包含块属性 / 侧栏浮层
+                //   定位，**没碰任何 background 通道**；笔电那条 0.92 路径（类名命中时）
+                //   一行没改（合成 DOM S13b 实测：侧栏根仍 rgba(255,255,255,0.92)、卡片仍
+                //   rgb(249,250,251)、正文列仍 transparent）。
+                "function bwRailW(){var w=window.__bwRailW;" +
+                "return (w>0&&w<160)?w:56;}" +
+                "function bwGeom(){var vw=window.innerWidth,vh=window.innerHeight;" +
+                "if(vw>1023||vw<=0||vh<=0)return null;" +
+                "var nodes=document.querySelectorAll('div,section,main');" +
+                "for(var i=0;i<nodes.length;i++){var f=nodes[i];" +
+                "var rf=f.getBoundingClientRect();" +
+                "if(rf.width<vw*0.9||rf.height<vh*0.5)continue;" +
+                "var cs=getComputedStyle(f);" +
+                "if(cs.display!=='grid'&&cs.display!=='inline-grid')continue;" +
+                "var tp=(cs.gridTemplateColumns||'').split(' '),tr=[],j,v;" +
+                "for(j=0;j<tp.length;j++){v=parseFloat(tp[j]);tr.push(v>0?v:0);}" +
+                "if(tr.length<2)continue;" +
+                "var col=null,starved=false,ch=f.children,rc;" +
+                "for(var c=0;ch&&c<ch.length;c++){rc=ch[c].getBoundingClientRect();" +
+                "if(rc.left<=rf.left+2&&rc.height>=vh*0.6&&rc.width>=96&&" +
+                "rc.width<=vw*0.9){" +
+                "var pcs=getComputedStyle(ch[c]);" +
+                "if(pcs.position==='static'||pcs.position==='relative')" +
+                "col=ch[c];}" +
+                "if(rc.width>0&&rc.width<vw*0.35&&rc.height>=vh*0.5)" +
+                "starved=true;}" +
+                "if(!col)continue;" +
+                "var colW=Math.round(col.getBoundingClientRect().width);" +
+                "var rail=bwRailW();" +
+                "if(colW<rail&&colW>=40)window.__bwRailW=colW;" +
+                "var panel=col,cc=col.children,q;" +
+                "for(q=0;cc&&q<cc.length;q++){rc=cc[q].getBoundingClientRect();" +
+                "if(rc.width>=rail+40&&rc.height>=vh*0.6){panel=cc[q];break;}}" +
+                "return {f:f,col:col,panel:panel,colW:colW,rail:rail," +
+                "starved:starved,expanded:(colW>=rail+40&&starved)};}" +
+                "return null;}" +
+                "var BWK=['position','left','top','bottom','width','max-width'," +
+                "'z-index','overflow-y','overflow-x','box-shadow'];" +
+                "var BWC=['overflow','backdrop-filter','-webkit-backdrop-filter'," +
+                "'filter','transform','contain','will-change'];" +
+                "function bwSet(el,k,v){" +
+                "if(el.style.getPropertyValue(k)===v&&" +
+                "el.style.getPropertyPriority(k)==='important')return;" +
+                "el.style.setProperty(k,v,'important');}" +
+                "function bwUndo(){var w=window.__bwW;if(!w)return;" +
+                "window.__bwW=null;window.__bwSbEl=null;" +
+                "try{if(w.f&&w.f.isConnected)" +
+                "w.f.style.removeProperty('grid-template-columns');" +
+                "if(w.col&&w.col.isConnected){for(var j=0;j<BWC.length;j++)" +
+                "w.col.style.removeProperty(BWC[j]);}}catch(e1){}" +
+                // 收起侧栏时顺手把底色从 0.92 拉回 0.45（与笔电类名那条
+                //   `var a=(narrow&&expanded)?0.92:0.45` 同一取值）：几何段撤销定位后
+                //   __bwSbEl 已被清掉、bwPanelBg 找不到对象，否则会把展开态的 0.92
+                //   留在收起态的 56px 导航条上。这里继承的是**同一个色相**——bwPanelBg
+                //   写的时候就是保留原生色相只改 alpha，所以此刻读到的仍是页面自己的色相。
+                "try{if(w.panel&&w.panel.isConnected){for(var k=0;k<BWK.length;k++)" +
+                "w.panel.style.removeProperty(BWK[k]);}}catch(e2){}" +
+                "try{if(w.panel&&w.panel.isConnected){var pb=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/" +
+                ".exec(getComputedStyle(w.panel).backgroundColor);" +
+                "if(pb)w.panel.style.setProperty('background-color','rgba('+pb[1]+','+pb[2]+','" +
+                "+pb[3]+',0.45)','important');}}catch(e3){}}" +
+                "function bwGeomFix(){var g=bwGeom();" +
+                "if(!g||!g.expanded){bwUndo();return;}" +
+                "if(window.__bwW&&(window.__bwW.f!==g.f||" +
+                "window.__bwW.panel!==g.panel))bwUndo();" +
+                "var f=g.f,col=g.col,panel=g.panel,rail=g.rail;" +
+                "var vw=window.innerWidth;" +
+                "var tp=(getComputedStyle(f).gridTemplateColumns||'').split(' ')," +
+                "tr=[],j,v;" +
+                "for(j=0;j<tp.length;j++){v=parseFloat(tp[j]);tr.push(v>0?v:0);}" +
+                "var at=-1;" +
+                "for(j=0;j<tr.length;j++){if(Math.abs(tr[j]-g.colW)<=2){at=j;break;}}" +
+                "if(at>=0){var nw=[];" +
+                "for(j=0;j<tr.length;j++){if(j===at)nw.push(rail+'px');" +
+                "else if(j===at+1)nw.push('minmax(0,1fr)');" +
+                "else nw.push(tr[j]+'px');}" +
+                "bwSet(f,'grid-template-columns',nw.join(' '));}" +
+                "for(j=0;j<BWC.length;j++)col.style.setProperty(BWC[j]," +
+                "(BWC[j]==='overflow'?'visible':(BWC[j]==='will-change'?" +
+                "'auto':'none')),'important');" +
+                "var pw=Math.round(panel.getBoundingClientRect().width);" +
+                "if(pw<rail+40)pw=280;if(pw>vw*0.9)pw=Math.round(vw*0.85);" +
+                "bwSet(panel,'position','fixed');" +
+                "bwSet(panel,'left','0px');bwSet(panel,'top','0px');" +
+                "bwSet(panel,'bottom','0px');" +
+                "bwSet(panel,'width',pw+'px');" +
+                "bwSet(panel,'max-width',pw+'px');" +
+                "bwSet(panel,'z-index','60');" +
+                "bwSet(panel,'overflow-y','auto');" +
+                "bwSet(panel,'overflow-x','hidden');" +
+                "bwSet(panel,'box-shadow','0 8px 32px rgba(0,0,0,.35)');" +
+                // 玻璃化注入可能已把侧栏根写成 transparent（类名 skipBg 在 vm1 失效）。
+                // 这里只摘**我们自己写的那一条**（值 transparent + 优先级 important 是它的
+                // 指纹），把页面原生色相露出来给下面的 bwPanelBg 调色相用；否则
+                // getComputedStyle 读到 rgba(0,0,0,0) 会被判成「黑色 92%」⇒ 侧栏变黑。
+                "if(panel.style.getPropertyValue('background-color')===" +
+                "'transparent'&&panel.style.getPropertyPriority(" +
+                "'background-color')==='important')" +
+                "panel.style.removeProperty('background-color');" +
+                "window.__bwW={f:f,col:col,panel:panel};" +
+                "window.__bwSbEl=panel;}" +
+                "function bwPanelBg(){bwGeomFix();" +
+                "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                "if(!sb){sb=window.__bwSbEl;}" +
+                "if(!sb)return;" +
+                "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/" +
+                ".exec(getComputedStyle(sb).backgroundColor);if(!m)return;" +
+                // 色相不可用（computed 全透明）就不写：没有可保留的色相，硬写会把
+                // 它变成近黑。类名命中的宿主由 skipBg 保住原生色相，走不到这条。
+                "if(m[4]!==undefined&&parseFloat(m[4])===0)return;" +
+                "var narrow=window.innerWidth<=1023;" +
+                "var expanded=sb.className.indexOf('_2H3hWW_collapsed')<0;" +
+                "if(!document.querySelector(\"[class*='_2H3hWW_root']\"))" +
+                "expanded=(getComputedStyle(sb).position==='fixed');" +
+                "var a=(narrow&&expanded)?0.92:0.45;" +
+                "sb.style.setProperty('background-color'," +
+                "'rgba('+m[1]+','+m[2]+','+m[3]+','+a+')','important');}" +
+                "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
+                "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
+                "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                "if(psb&&!window.__bwPanelBgObs){window.__bwPanelBgObs=1;" +
+                "new MutationObserver(function(){bwPanelBg();})" +
+                ".observe(psb,{attributes:true,attributeFilter:['class']});" +
+                "window.addEventListener('resize',function(){bwPanelBg();});}" +
+                // ★ v1.32.16 D2：类名没命中的宿主上面那个观察器根本没挂 ⇒ 展开/收起
+                //   侧栏不会重跑几何修复。补一个**几何版**观察器：观察 body 子树的
+                //   class/style 变化 + resize，**合并去抖 250ms**（bwGeomFix 每跑一次都要
+                //   量一遍盒模型，不能每个 mutation 都量）。配合上面的 bwSet 先比后写，
+                //   不会「写→变异→再写」永动。
+                "if(!psb&&!window.__bwGeomObs){window.__bwGeomObs=1;" +
+                "var bt=null;" +
+                "function bwLater(){if(bt)return;" +
+                "bt=setTimeout(function(){bt=null;bwPanelBg();},250);}" +
+                "new MutationObserver(function(){bwLater();})" +
+                ".observe(document.body,{attributes:true,subtree:true," +
+                "attributeFilter:['class','style']});" +
+                "window.addEventListener('resize',function(){bwLater();});}" +
+                "if(window.__bwPanelClose)return;window.__bwPanelClose=1;" +
+                "document.addEventListener('pointerdown',function(e){" +
+                "if(window.innerWidth>1023)return;" +
+                "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                "if(!sb){sb=window.__bwSbEl;if(!sb)return;" +
+                "if(getComputedStyle(sb).position!=='fixed')return;}" +
+                "else if(sb.className.indexOf('_2H3hWW_collapsed')>=0)return;" +
+                "var r=sb.getBoundingClientRect();" +
+                "if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&" +
+                "e.clientY<=r.bottom)return;" +
+                "var b=document.querySelectorAll('button');" +
+                "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
+                "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0)" +
+                "{b[i].click();return;}}" +
+                "},true);})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
@@ -391,8 +542,20 @@ class WebActivity : Activity() {
                         "if(rr.width>vw*0.5&&rr.height>vh*0.5)n++;}" +
                         "return n;}" +
                         "for(var i=0;i<all.length;i++){var e=all[i];" +
+                        // ★ v1.32.16 D3（P3）：visibility:hidden 的子树**根本不渲染**，给它写底色
+                        //   只是写脏状态：零 tab 时隐藏的 _emptyTabHost_6nhg2_143（360x671，
+                        //   visibility:hidden）被写成 rgb(255,255,255)!important（verify/qa-d1-vm1b.json
+                        //   里唯一 alpha=1 的大容器）。判据只看**元素自己的 computed visibility**：
+                        //   该属性可继承也可被子节点覆盖（父 hidden + 子显式 visible 仍会渲染），
+                        //   往上逐级找 hidden 反而会把这种情况误判成隐藏。跳过 = **完全不碰**
+                        //   （不写不透明也不写 transparent，也不动 __dshGlass 标记）；它变可见时一定
+                        //   伴随 class/attribute 变化，由已挂的 MutationObserver 或 1500/4000ms 超时
+                        //   重跑 apply() 补上。顺手把循环里的 getComputedStyle(e) 提成 csE 复用
+                        //   （浮层分支的 ocs 也改用 csE），每个元素反而少一次 getComputedStyle。
+                        "var csE=getComputedStyle(e);" +
+                        "if(csE.visibility==='hidden')continue;" +
                         "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?" +
-                        "/.exec(getComputedStyle(e).backgroundColor);" +
+                        "/.exec(csE.backgroundColor);" +
                         "var w=e.offsetWidth,h=e.offsetHeight;" +
                         "var cn=(e.className||'').toString();" +
                         // v1.32.11 浮层例外：菜单/popover/对话框此前和普通卡片一样被压到 0.45，
@@ -416,7 +579,7 @@ class WebActivity : Activity() {
                         "var role=(e.getAttribute&&e.getAttribute('role')||'').toLowerCase();" +
                         "if(role==='menu'||role==='listbox'||role==='dialog'||" +
                         "role==='alertdialog'||role==='tooltip'){isOv=true;ovRole=true;}" +
-                        "else{var ocs=getComputedStyle(e);" +
+                        "else{var ocs=csE;" +
                         "if((ocs.position==='fixed'||ocs.position==='absolute')&&" +
                         "ocs.zIndex!=='auto'&&parseInt(ocs.zIndex,10)>=10&&" +
                         "w<=vw*0.9&&h<=vh*0.9&&" +
@@ -490,7 +653,13 @@ class WebActivity : Activity() {
                         //   transparent 不再构成锁（我们没写过它 ⇒ 无标记 ⇒ 闸门关）；它仍会被大容器
                         //   兜底分支写 transparent（可见结果不变、壁纸通道优先），但之后若命中 isCode /
                         //   isCB 就能拿到原生底 ⇒ 比原先的「永久锁透明」更合理。
-                        "var isSb=cn.indexOf('_2H3hWW_root')>=0;" +
+                        // ★ v1.32.16 D2 同款**几何臂**：窄屏补丁的几何段认出的展开态侧栏
+                        //   浮层（window.__bwSbEl）在 vm1 这类换了哈希命名的宿主上拿不到
+                        //   _2H3hWW_root 这个类名，会被当成布局链写成 transparent，原生色相随后
+                        //   再也拿不回来（侧栏一直全透）。这里用同一个对象引用做排除，
+                        //   不引入任何类名；收起侧栏时 bwUndo 会把 __bwSbEl 清掉，自然回到原来的
+                        //   处理。笔电上类名命中，走的仍是原来那条，行为一行未变。
+                        "var isSb=cn.indexOf('_2H3hWW_root')>=0||window.__bwSbEl===e;" +
                         "var ancBigPos=false;" +
                         "var pa=e.parentElement,ph=0;" +
                         "while(pa&&ph<24&&pa!==document.body){" +
@@ -632,8 +801,15 @@ class WebActivity : Activity() {
                         // 0.45 的历史残留也能被拉回 transparent，方向仍是单向的）。
                         "if(!isOv&&!(big&&isPanel)&&!isCB&&!isLayout&&a0<1)" +
                         "continue;" +
-                        "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
-                        "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
+                        "var skipBg=(cn.indexOf('_2H3hWW_root')>=0&&" +
+                        "cn.indexOf('_2H3hWW_collapsed')<0||window.__bwSbEl===e)&&" +
+                        "vw<=1023;" +
+                        // ★ v1.32.16 D2 补一条**几何臂**：窄屏补丁的几何段认出的展开态侧栏
+                        //   浮层（window.__bwSbEl，见上方 v1.32.5 那段）也归 bwPanelBg 管，不得被本
+                        //   注入写成 transparent——否则它的原生色相丢失，bwPanelBg 只能读到
+                        //   rgba(0,0,0,0)（色相不可用 ⇒ 不写，侧栏就一直全透）。笔电上类名命中，
+                        //   走的仍是原来那条；__bwSbEl 只在 vw≤1023 且展开时存在，收起或变宽后
+                        //   被 bwUndo 清掉，所以这条臂自己会随状态消失，不需要任何类名。
                         // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
                         // `if(w>vw*0.5&&h>vh*0.5) -> transparent`，浮层分支排在它后面 ⇒
                         // 菜单一旦变高（实测 257x392，vw=360/vh=671 ⇒ 392>335.5）就落进大容器分支

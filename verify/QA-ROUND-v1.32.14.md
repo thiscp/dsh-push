@@ -3,7 +3,7 @@
 > **对象**：`xyz.cpyh.dshpush` **v1.32.14 / versionCode 80**（`dumpsys` 实测）
 > **主题**：复验 `task-13` 登记的 **FINDING-1[P2]**（`Dc7zOa_root` ≈2s 瞬时"原生白"窗口 ⇒ 壁纸被盖）是否已修
 > **执行者**：teammate tester ｜ **时间**：2026-10-15 03:0x–03:2x (+08:00)
-> **设备**：`emulator-5554`（笔电 DESKTOP-CPYH，**03:11:11 由 lead 用受认可真 GPU 冷启脚本恢复**）
+> **设备**：`emulator-5554`（笔电 <win-host-a>，**03:11:11 由 lead 用受认可真 GPU 冷启脚本恢复**）
 > **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop / 616.92）｜ **几何**：`1440x3168@640`，CDP `360x671 / dpr=4`
 
 ## 结论：**PASS** ✅ —— 白色窗口**已消失**（3/3 轮零命中）

@@ -1,6 +1,6 @@
 ' hidden-run.vbs - launch a command with NO visible console window.
 '
-' Why this exists (measured on DESKTOP-CPYH, 2026-10-15):
+' Why this exists (measured on <win-host-a>, 2026-10-15):
 '   Task Scheduler Settings.Hidden=$true does NOT hide the task process's console window.
 '   Canary task, Hidden=True, action "powershell.exe -File x.ps1" -> from inside the process
 '   IsWindowVisible(GetConsoleWindow()) was still True in session 1: it popped a console on

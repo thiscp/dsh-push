@@ -280,7 +280,7 @@ $AVDFILE = 'G:\Android\emu-ladder.avd'
 # The rung task must stay Interactive (LogonType Interactive) so qemu owns the real GPU in the
 # console session, but an interactive task's console window lands on <user>'s desktop.
 #
-# MEASURED on DESKTOP-CPYH 2026-10-15: Task Scheduler's Settings.Hidden=$true does NOT hide that
+# MEASURED on <win-host-a> 2026-10-15: Task Scheduler's Settings.Hidden=$true does NOT hide that
 # window. A canary task (Hidden=True, action "powershell.exe -File x.ps1") still reported
 # IsWindowVisible(GetConsoleWindow()) = True from inside the process, session 1. A window-level
 # auditor confirmed a bare cmd.exe task with Hidden=True shows up as a visible ConsoleWindowClass
@@ -491,7 +491,7 @@ if ($ForceLadder) {
     $killed = Kill-Emulator
     if (-not $killed) {
       Log 'RESULT: qemu survived taskkill -> THIS MACHINE NEEDS A REBOOT (nothing else can clear it)'
-      Ntfy 'Laptop emulator needs a REBOOT' 'emu-selfheal: could not clear a CPU-rendering emulator (qemu survived taskkill); reboot DESKTOP-CPYH. See G:\Android\emu-ladder.log'
+      Ntfy 'Laptop emulator needs a REBOOT' 'emu-selfheal: could not clear a CPU-rendering emulator (qemu survived taskkill); reboot <win-host-a>. See G:\Android\emu-ladder.log'
       Log '=== emu-selfheal end ==='
       exit 2
     }
@@ -513,7 +513,7 @@ if ($ForceLadder) {
     $killed = Kill-Emulator
     if (-not $killed) {
       Log 'RESULT: qemu survived taskkill -> THIS MACHINE NEEDS A REBOOT (nothing else can clear it)'
-      Ntfy 'Laptop emulator needs a REBOOT' ('emu-selfheal: qemu zombie survived taskkill (' + (($q0 | ForEach-Object { $_.ProcessName + ':' + $_.Id }) -join ',') + '); only a reboot of DESKTOP-CPYH clears this. See G:\Android\emu-ladder.log')
+      Ntfy 'Laptop emulator needs a REBOOT' ('emu-selfheal: qemu zombie survived taskkill (' + (($q0 | ForEach-Object { $_.ProcessName + ':' + $_.Id }) -join ',') + '); only a reboot of <win-host-a> clears this. See G:\Android\emu-ladder.log')
       Log '=== emu-selfheal end ==='
       exit 2
     }
@@ -570,7 +570,7 @@ if (-not $hostOk) {
       $k2 = Kill-Emulator
       if (-not $k2) {
         Log 'RESULT: qemu survived -> THIS MACHINE NEEDS A REBOOT'
-        Ntfy 'Laptop emulator needs a REBOOT' 'emu-selfheal: both ladder rungs failed and qemu survived taskkill; reboot DESKTOP-CPYH. See G:\Android\emu-ladder.log'
+        Ntfy 'Laptop emulator needs a REBOOT' 'emu-selfheal: both ladder rungs failed and qemu survived taskkill; reboot <win-host-a>. See G:\Android\emu-ladder.log'
         Log '=== emu-selfheal end ==='
         exit 2
       }

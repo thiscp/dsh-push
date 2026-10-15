@@ -538,7 +538,7 @@ curl -X POST -H "Content-Type: application/json" \
 # ② 让真 agent 提一个问题（单行 prompt！多行 here-string 会被 dsh.cmd 吃掉，见坑）
 & $dsh --profile pushtest --patch <overlay.yml> 'Call ask_user_question exactly once ... print RESULT_JSON: ...'
 
-# ③ 同时让模拟器里的 App 作答（笔电 DESKTOP-CPYH 的 emulator-5554，ssh 过去跑）：
+# ③ 同时让模拟器里的 App 作答（笔电 <win-host-a> 的 emulator-5554，ssh 过去跑）：
 #    轮询 prefs 等带唯一标记的那条 push → 取 callId → 走 App 自己的作答路径
 #      a) UI 路径：am start -n xyz.cpyh.dshpush/.QuickAnswerActivity --es callId <cid> + input tap 选项
 #      b) 通知按钮路径（稳，uiautomator 常挂）：am broadcast -n xyz.cpyh.dshpush/.AnswerReceiver \

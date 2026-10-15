@@ -1,7 +1,7 @@
 +    0s RUN  step=emulator-up timeout=20s
 +    0s CMD  ssh -o BatchMode=yes -o ConnectTimeout=10 user@<tailnet-laptop> hostname
 +    0s DONE step=emulator-up rc=0 out_bytes=14 elapsed=0s
-+    0s emulator host reachable: DESKTOP-CPYH (<tailnet-laptop>)
++    0s emulator host reachable: <win-host-a> (<tailnet-laptop>)
 +    0s RUN  step=seed-prefs timeout=60s
 +    0s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "C:\Temp\dsh-verify\dshpush.xml" "user@<tailnet-laptop>:G:/Android/dshpush.xml"
 +    0s DONE step=seed-prefs rc=0 out_bytes=0 elapsed=0s

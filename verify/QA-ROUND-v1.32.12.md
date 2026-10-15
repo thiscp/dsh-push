@@ -3,7 +3,7 @@
 > **对象**：`xyz.cpyh.dshpush` **v1.32.12 / versionCode 78**（`dumpsys` 实测）
 > **主题**：用户反馈「**对话生成的文档，我打开后背景也是透明的**」
 > **执行者**：teammate tester ｜ **时间**：2026-10-15 05:4x (+08:00)
-> **设备**：`emulator-5554`（笔电 DESKTOP-CPYH）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
+> **设备**：`emulator-5554`（笔电 <win-host-a>）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
 > **几何**：1440x3168@640，CDP `innerWidth=360 / innerHeight=671 / dpr=4`
 > **判据**：`verify/qa-doc-panel.mjs`（主）+ `verify/qa-doc-diff.mjs`（差异视图补测）+ **每张图我自己 `read_image` 看整页**
 

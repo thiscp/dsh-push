@@ -1,5 +1,5 @@
 # drive-hardened-dryrun.ps1 (v2) -- prove the hardened self-heal script is correct and side-effect free.
-# Runs on DESKTOP-CPYH. ASCII only.
+# Runs on <win-host-a>. ASCII only.
 #
 # SAFETY DESIGN (this is the point of the exercise):
 #   The forbidden state is "emulator running on CPU software rendering". So we must NOT test the

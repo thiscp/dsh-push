@@ -1,6 +1,6 @@
 # 桌面偶发 cmd 闪窗 —— 根因与修复记录
 
-日期：2026-10-15　机器：`DESKTOP-CPYH`（MECHREVO Yaoshi16Pro，tailnet `<tailnet-laptop>`）
+日期：2026-10-15　机器：`<win-host-a>`（MECHREVO Yaoshi16Pro，tailnet `<tailnet-laptop>`）
 
 ## 症状
 

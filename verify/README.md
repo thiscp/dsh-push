@@ -97,7 +97,7 @@ powershell -File verify\dsh-app-verify.ps1
 
 **连模拟器机（笔电）**
 - **规则：设备访问一律走 Tailscale 固定 IP，不用 LAN 地址。** 笔电用 `ssh user@<tailnet-laptop>`（同一台机，hostname
-  仍是 `DESKTOP-CPYH`）最稳；判断"是不是这台笔电"用 `ssh user@<tailnet-laptop> hostname`，别靠 IP。
+  仍是 `<win-host-a>`）最稳；判断"是不是这台笔电"用 `ssh user@<tailnet-laptop> hostname`，别靠 IP。
 - **LAN 地址有两个坑，都会让 ssh/scp 静默超时**：① **会漂** —— 2026-10-13 从 `<lan-laptop>` 漂到 `<lan-laptop>`，
   `config.local.ps1` 里的旧值把夜间验收直接打成 SKIP；② **新连接被防火墙拦** —— `ssh user@<lan-laptop>` →
   `Connection timed out`（实测）。地址写错代价很大：那次流水线在第三次 ssh 处静默挂了 **34 分钟**才被人收口，
@@ -330,7 +330,7 @@ OriginOS 定制层行为：图标陈旧不刷新、后台被杀策略、深链�
 4. **同步前先 `-DryRun` 自证** —— 它打印替换计数且**不推送**；
    同时看 `scrub/gate scope: N text file(s)` 确认覆盖面合理（本轮 `339 text file(s)`）。
 
-## 模拟器自愈与 GPU 回退阶梯（笔电 `DESKTOP-CPYH`，2026-10-13）
+## 模拟器自愈与 GPU 回退阶梯（笔电 `<win-host-a>`，2026-10-13）
 
 笔电是模拟器机：`dsh-app-verify.ps1` 通过 ssh 过去、清 AVD 锁、起模拟器、装机、断言、截图。
 现在**不需要人介入**：计划任务 `emu-selfheal`（Interactive，开机 + 登录 + 每 5 分钟）与

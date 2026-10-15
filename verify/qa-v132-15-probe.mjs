@@ -280,6 +280,111 @@ const CODEBLOCKS = [
 "})()"
 ].join("\n");
 
+// ---------------- in-page: v1.32.16 D2 geometry state (__bwW / __bwSbEl / __bwRailW / observers) ----------------
+const PERF_HOOK = [
+  "(function(){if(window.__qaPerf)return JSON.stringify({already:1,n:window.__qaPerf.set});",
+  "var P=window.__qaPerf={set:0,setImp:0,byProp:{},attr:0,frames:[],t0:Date.now(),max:0};",
+  "var sp=CSSStyleDeclaration.prototype.setProperty;",
+  "CSSStyleDeclaration.prototype.setProperty=function(a,b,c){P.set++;if(c)P.setImp++;try{P.byProp[a]=(P.byProp[a]||0)+1;}catch(e){}return sp.apply(this,arguments);};",
+  "var sa=Element.prototype.setAttribute;",
+  "Element.prototype.setAttribute=function(a,b){if(a==='style')P.attr++;return sa.apply(this,arguments);};",
+  "var last=0;",
+  "function tick(ts){var f=P.frames;if(last){var d=ts-last;if(d<2000){f.push(Math.round(d));if(d>P.max)P.max=d;}}last=ts;if(f.length<3000)requestAnimationFrame(tick);}",
+  "requestAnimationFrame(tick);",
+  "return JSON.stringify({installed:1});})()"
+].join("");
+
+const PERF_READ = [
+  "(function(){var P=window.__qaPerf;if(!P)return JSON.stringify({nohook:1});",
+  "var s=P.frames.slice().sort(function(a,b){return a-b;});",
+  "function q(p){return s.length?s[Math.min(s.length-1,Math.floor(s.length*p))]:null;}",
+  "var j=0;for(var i=0;i<s.length;i++){if(s[i]>20)j++;}",
+  "var bp={};for(var k in P.byProp){bp[k]=P.byProp[k];}",
+  "var W=window.__bwW;",
+  "return JSON.stringify({t:Math.round(Date.now()-P.t0),set:P.set,setImp:P.setImp,attr:P.attr,byProp:bp,frames:s.length,jankPct:s.length?Math.round(1000*j)/10:null,med:q(0.5),p90:q(0.9),p95:q(0.95),max:P.max,bwW:W?1:0,railW:(window.__bwRailW===undefined?null:window.__bwRailW),sbEl:window.__bwSbEl?1:0,obs:{geom:!!window.__bwGeomObs,panelBg:!!window.__bwPanelBgObs,panelClose:!!window.__bwPanelClose}});})()"
+].join("");
+
+async function scrollBurst() {
+  for (let k = 0; k < 5; k++) {
+    await send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 180, y: 400, deltaX: 0, deltaY: 300 });
+    await sleep(250);
+  }
+}
+
+const D2STATE = [
+  "(function(){",
+  "function cn(e){return (e.className||'').toString();}",
+  "function st(e){var cs=getComputedStyle(e);var r=e.getBoundingClientRect();",
+  "return {cls:cn(e).slice(0,60),tag:e.tagName,w:Math.round(r.width),h:Math.round(r.height),",
+  "x:Math.round(r.left),y:Math.round(r.top),pos:cs.position,z:cs.zIndex,vis:cs.visibility,",
+  "disp:cs.display,bg:cs.backgroundColor,inline:e.style.cssText.slice(0,220),",
+  "grid:e.style.getPropertyValue('grid-template-columns')||'',",
+  "prio:e.style.getPropertyPriority('background-color')||''};}",
+  "var vw=window.innerWidth,vh=window.innerHeight;",
+  "var W=window.__bwW||null;",
+  "var out={vw:vw,vh:vh,bwRailW:(window.__bwRailW===undefined?null:window.__bwRailW),",
+  "bwW:W?{f:st(W.f),col:st(W.col),panel:st(W.panel)}:null,",
+  "bwSbEl:window.__bwSbEl?st(window.__bwSbEl):null,",
+  "obs:{geom:!!window.__bwGeomObs,panelBg:!!window.__bwPanelBgObs,panelClose:!!window.__bwPanelClose},",
+  "bwFns:{panelBg:typeof window.__bwPanelBg}};",
+  "var gs=document.querySelectorAll('div,main,section');var grids=[];",
+  "for(var i=0;i<gs.length;i++){var e=gs[i];var cs=getComputedStyle(e);",
+  "if(cs.display!=='grid'&&cs.display!=='inline-grid')continue;var r=e.getBoundingClientRect();",
+  "if(r.width<vw*0.9||r.height<vh*0.5)continue;grids.push(st(e));if(grids.length>=4)break;}",
+  "out.grids=grids;",
+  "var bs=document.querySelectorAll('[class*=md-code-block],pre');var blocks=[];",
+  "for(var j=0;j<bs.length;j++){var e2=bs[j];var r2=e2.getBoundingClientRect();",
+  "var cs2=getComputedStyle(e2);",
+  "blocks.push({cls:cn(e2).slice(0,50),tag:e2.tagName,w:Math.round(r2.width),h:Math.round(r2.height),",
+  "x:Math.round(r2.left),bg:cs2.backgroundColor,inline:e2.style.backgroundColor||'',",
+  "overHalf:(r2.width>vw*0.5&&r2.height>vh*0.5),vis:cs2.visibility});}",
+  "blocks.sort(function(a,b){return (b.w*b.h)-(a.w*a.h);});",
+  "out.blocks=blocks.slice(0,12);out.blockCount=blocks.length;",
+  "var cands=document.querySelectorAll('[class*=centerCol]');var cc=null,ca=-1;",
+  "for(var m=0;m<cands.length;m++){var r3=cands[m].getBoundingClientRect();",
+  "if(r3.width*r3.height>ca){ca=r3.width*r3.height;cc=cands[m];}}",
+  "out.centerCol=cc?st(cc):null;",
+  "var cands2=document.querySelectorAll('div,section,aside,nav');var sbest=null,sba=-1;",
+  "for(var q2=0;q2<cands2.length;q2++){var e3=cands2[q2];var r5=e3.getBoundingClientRect();",
+  "if(r5.width<100||r5.width>vw*0.92||r5.height<vh*0.5)continue;",
+  "var tx=e3.textContent||'';",
+  "if(tx.indexOf('New Session')<0&&tx.indexOf('New Se')<0)continue;",
+  "if(tx.indexOf('Settings')<0&&tx.indexOf('Plugins')<0)continue;",
+  "var aa2=r5.width*r5.height;if(aa2>sba){sba=aa2;sbest=e3;}}",
+  "out.sbProbe=sbest?st(sbest):null;",
+  "var rails=document.querySelectorAll('div,section,aside,nav');var rb=null,rba=-1;",
+  "for(var q3=0;q3<rails.length;q3++){var e4=rails[q3];var r6=e4.getBoundingClientRect();",
+  "if(r6.width<30||r6.width>140||r6.height<vh*0.5||r6.left>10)continue;",
+  "var lab=(e4.textContent||'')+(e4.getAttribute('aria-label')||'');",
+  "var hasIcon=false;var ib2=e4.querySelectorAll('[aria-label]');",
+  "for(var q4=0;q4<ib2.length;q4++){var al2=ib2[q4].getAttribute('aria-label')||'';",
+  "if(/New session|New Session|Plugins|\\u65b0\\u4f1a\\u8bdd|\\u63d2\\u4ef6/i.test(al2)){hasIcon=true;break;}}",
+  "if(!hasIcon)continue;var aa3=r6.width*r6.height;if(aa3>rba){rba=aa3;rb=e4;}}",
+  "out.railProbe=rb?st(rb):null;",
+  "if(rb){var r7=rb.getBoundingClientRect();var px4=Math.round(r7.left+Math.min(18,r7.width/2)),py4=Math.round(r7.top+Math.min(60,r7.height/2));",
+  "var el4=document.elementFromPoint(px4,py4);",
+  "out.railProbeHit={px:px4,py:py4,owner:el4?(el4.tagName+'.'+cn(el4).slice(0,30)):'null',",
+  "selfOrDesc:el4?(el4===rb||rb.contains(el4)):false};}",
+  "if(sbest){var par=sbest.parentElement;var chain=[];",
+  "for(var u=0;u<6&&par;u++){var pc=getComputedStyle(par);var pr=par.getBoundingClientRect();",
+  "chain.push({cls:cn(par).slice(0,30),tag:par.tagName,w:Math.round(pr.width),h:Math.round(pr.height),",
+  "disp:pc.display,grid:pc.gridTemplateColumns.slice(0,60),inlineGrid:par.style.getPropertyValue('grid-template-columns')||''});",
+  "par=par.parentElement;}out.sbAncestry=chain;",
+  "var rs9=sbest.getBoundingClientRect();",
+  "var px3=Math.round(rs9.left+Math.min(20,rs9.width/2)),py3=Math.round(rs9.top+Math.min(60,rs9.height/2));",
+  "var el3=document.elementFromPoint(px3,py3);",
+  "out.sbProbeHit={px:px3,py:py3,owner:el3?(el3.tagName+'.'+cn(el3).slice(0,30)):'null',",
+  "selfOrDesc:el3?(el3===sbest||sbest.contains(el3)):false};}",
+  "var sb=window.__bwSbEl||null;",
+  "if(sb){var r4=sb.getBoundingClientRect();",
+  "var px=Math.round(r4.left+Math.min(20,r4.width/2)),py=Math.round(r4.top+Math.min(60,r4.height/2));",
+  "var el=document.elementFromPoint(px,py);",
+  "out.sbHit={px:px,py:py,owner:el?(el.tagName+'.'+cn(el).slice(0,30)):'null',",
+  "selfOrDesc:el?(el===sb||sb.contains(el)):false};",
+  "out.sbVisible=(r4.width>0&&r4.height>0&&getComputedStyle(sb).visibility!=='hidden');}",
+  "return JSON.stringify(out);",
+  "})()"
+].join("");
 // ---------------- in-page: D1 instrumentation (window.__qaCb / __qaN / node identity) ----------------
 const CBSTATE = function (nat) {
   return [
@@ -546,6 +651,15 @@ async function readSeries(n, gap) {
     const r = await evJ(READ);
     const cb = await evJ(CBSTATE(k === 0));
     r.cb = cb;
+    r.d2 = await evJ(D2STATE);
+    if (r.d2) {
+      const b0 = (r.d2.blocks && r.d2.blocks[0]) || null;
+      log("D2 bwW=" + (r.d2.bwW ? "SET" : "null") + " rail=" + r.d2.bwRailW +
+        " sb=" + (r.d2.bwSbEl ? (r.d2.bwSbEl.w + "x" + r.d2.bwSbEl.h + " " + r.d2.bwSbEl.pos + " z" + r.d2.bwSbEl.z + " " + r.d2.bwSbEl.bg) : "null") +
+        " blk0=" + (b0 ? (b0.w + "x" + b0.h + " over=" + b0.overHalf) : "-") +
+        " centerCol=" + (r.d2.centerCol ? r.d2.centerCol.w : "-") +
+        " obs=" + JSON.stringify(r.d2.obs));
+    }
     if (cb && cb.card) {
       r.out.codeCard = { id: "Q" + (cb.card.nodeSeq === null ? "-" : cb.card.nodeSeq), tag: cb.card.tag, cls: cb.card.cls, bg: cb.card.bg, alpha: cb.card.alpha, inline: cb.card.inline, prio: cb.card.prio, pos: cb.card.pos, w: cb.card.w, h: cb.card.h, big: (cb.card.w > cb.vw * 0.5 && cb.card.h > cb.vh * 0.5), z: cb.card.z, gateOpen: true, text: "" };
     }
@@ -599,6 +713,26 @@ async function sidebarState() {
 // ---------------- navigation helpers ----------------
 async function blurActive() {
   return await ev("(function(){var a=document.activeElement;if(a&&a.blur)a.blur();return 'blurred='+(document.activeElement===document.body);})()");
+}
+async function sheetCount() {
+  return await evJ([
+    "(function(){var n=0;var ds=document.querySelectorAll('[role=dialog],[class*=sheet],[class*=Sheet],[class*=mask]');",
+    "for(var i=0;i<ds.length;i++){var r=ds[i].getBoundingClientRect();",
+    "if(r.width>100&&r.height>200&&getComputedStyle(ds[i]).visibility!=='hidden')n++;}",
+    "return JSON.stringify({sheets:n});})()"
+  ].join(""));
+}
+async function dismissSheets() {
+  const before = await sheetCount();
+  for (let k = 0; k < 2; k++) {
+    for (const ty of ["keyDown", "keyUp"]) {
+      await send("Input.dispatchKeyEvent", { type: ty, key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+    }
+    await sleep(500);
+  }
+  const after = await sheetCount();
+  log("DISMISS before=" + JSON.stringify(before) + " after=" + JSON.stringify(after));
+  return { before, after };
 }
 async function openSidebar() {
   let r = await clickByText("Open sidebar");
@@ -655,9 +789,13 @@ async function openFirstSession() {
   await sleep(2000);
   await blurActive();
   await sleep(1000);
-  let col = await clickByText("Collapse sidebar");
-  if (!col.found) col = await clickByText("\u6536\u8d77");
-  hit.collapsed = col;
+  if (process.env.QA_NOCOLLAPSE === "1") {
+    hit.collapsed = { found: false, why: "QA_NOCOLLAPSE=1 (keep sidebar expanded for D2)" };
+  } else {
+    let col = await clickByText("Collapse sidebar");
+    if (!col.found) col = await clickByText("\u6536\u8d77");
+    hit.collapsed = col;
+  }
   await sleep(2500);
   hit.chatBody = await evJ([
     "(function(){var RGXS=" + RGX + ";var all=document.querySelectorAll('div,pre');",
@@ -752,6 +890,42 @@ async function main() {
     res.docPanel = await evJ(DOC_PANEL);
     res.discover = await evJ(DISCOVER);
     res.shots = [shotAlive("qa-" + TAG + "-sample")];
+  } else if (MODE === "perf") {
+    res.reopen = await openSidebar();
+    log("REOPEN " + JSON.stringify(res.reopen).slice(0, 200));
+    await sleep(1500);
+    res.hook = await evJ(PERF_HOOK);
+    log("HOOK " + JSON.stringify(res.hook));
+    res.perfSamples = [];
+    for (let k = 0; k < 8; k++) {
+      await scrollBurst();
+      const s = await evJ(PERF_READ);
+      res.perfSamples.push(s);
+      log("PERF " + k + " " + JSON.stringify(s).slice(0, 240));
+    }
+    res.perfFinal = await evJ(PERF_READ);
+    res.d2 = await evJ(D2STATE);
+    res.shots = [shotAlive("qa-" + TAG + "-perf")];
+  } else if (MODE === "d2e") {
+    res.dismiss = await dismissSheets();
+    res.reopen = await openSidebar();
+    log("REOPEN " + JSON.stringify(res.reopen).slice(0, 300));
+    await sleep(1500);
+    res.samples = await readSeries(8, 700);
+    res.analysis = analyze(res.samples);
+    res.d2 = await evJ(D2STATE);
+    res.codeblocks = await evJ(CODEBLOCKS);
+    res.docPanel = await evJ(DOC_PANEL);
+    res.shots = [shotAlive("qa-" + TAG + "-d2e")];
+  } else if (MODE === "d2") {
+    res.dismiss = await dismissSheets();
+    res.samples = await readSeries(8, 700);
+    res.analysis = analyze(res.samples);
+    res.d2 = await evJ(D2STATE);
+    res.codeblocks = await evJ(CODEBLOCKS);
+    res.docPanel = await evJ(DOC_PANEL);
+    res.discover = await evJ(DISCOVER);
+    res.shots = [shotAlive("qa-" + TAG + "-d2")];
   } else if (MODE === "redline") {
     res.read = await evJ(READ);
     res.codeblocks = await evJ(CODEBLOCKS);

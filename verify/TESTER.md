@@ -21,7 +21,7 @@
 
 ## 2. 环境硬事实（照做，别重新摸索）
 
-- **机器**：QA 跑在台式机（DESKTOP-CPHOME / 用户名以 `whoami` 为准）；模拟器在**笔电**：
+- **机器**：QA 跑在台式机（<win-host-b> / 用户名以 `whoami` 为准）；模拟器在**笔电**：
   `ssh -o BatchMode=yes -o ConnectTimeout=15 user@<tailnet-laptop>`（**只走这个 Tailscale IP**，LAN IP 会漂且被防火墙拦）。
 - **adb**：笔电上 `G:\Android\Sdk\platform-tools\adb.exe`，设备 `emulator-5554`（AVD `dsh-p16`）。
   **分辨率/密度 = `1440x3168 @ 640`（CSS360 基线，与用户真机同构）**；`wm size` 会显示 `Physical size: 1440x3168`。

@@ -4,7 +4,7 @@
 > **主题**：修掉 v1.32.12 登记的已知遗留 —— 聊天里的大代码块 `_block_7gxqk_4`（`331x524`，原生 `rgb(249,250,251)`）
 > 被玻璃化注入压成 `0.45`（面板打开时曾被压成 `transparent`），**代码文字透出底层聊天正文**。
 > **执行者**：teammate tester ｜ **时间**：2026-10-15 06:4x–07:0x (+08:00)
-> **设备**：`emulator-5554`（笔电 DESKTOP-CPYH）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
+> **设备**：`emulator-5554`（笔电 <win-host-a>）｜ **档位**：真 GPU（`emu-gpu-verdict.ps1` **exit 0**，RTX 4060 Laptop）
 > **几何**：`1440x3168@640`，CDP `innerWidth=360 / innerHeight=671 / dpr=4`（阈值 `180 / 335.5`）
 > **判据**：`qa-codeblock.mjs`（主，5 轮）+ `qa-codeblock-purechat.mjs`（纯聊天态补测）+ `qa-dcroot-settle.mjs` + `qa-dcroot-transient.mjs`（**回答 lead 的质疑**），**每张图我自己 `read_image` 看整页**
 

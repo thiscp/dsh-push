@@ -47,6 +47,12 @@ $map = [ordered]@{
   '$EmuUser = "user"'     = '$EmuUser = "user"'
   'tk_REPLACE_READ'  = 'tk_REPLACE_READ'
   'tk_REPLACE_WRITE' = 'tk_REPLACE_WRITE'
+  # 2026-10-16: the two Windows machine NAMES were still reaching the public mirror (grep
+  # proved <win-host-a> in verify/build-install.ps1, dsh-app-verify.ps1, drive-hardened-dryrun.ps1
+  # and <win-host-b> in INFRA-HEALTH-2026-10-14.md, HANDOVER.md, TESTER.md). They are
+  # user-chosen hostnames, so they get placeholders like every other infra value.
+  '<win-host-a>'    = '<win-host-a>'
+  '<win-host-b>'  = '<win-host-b>'
   # 2026-10-15: bare username in PROSE leaked the secret gate (3 lines:
   # verify/CONSOLE-WINDOW-FIX-2026-10-15.md 'console=<user>' and two comments in
   # verify/laptop-emu-selfheal.hardened.ps1 "lands on <user>'s desktop"). Every entry above only

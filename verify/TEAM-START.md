@@ -9,9 +9,9 @@
 
 | 项 | 值 |
 |---|---|
-| 编排机 | 台式机 `DESKTOP-CPHOME`（DSH Web `127.0.0.1:3080`；对外 Tailscale `<tailnet-windows>:3080`） |
+| 编排机 | 台式机 `<win-host-b>`（DSH Web `127.0.0.1:3080`；对外 Tailscale `<tailnet-windows>:3080`） |
 | 构建机 | 测试机1 vm1 `user@<tailnet-vm1>`（**台式机没有 JDK/Android SDK，本地跑不了 gradlew**；`dsh-app-verify.ps1` 的 build-vm1 步骤在这台 gradle 构建：JDK17 在 PATH、SDK 在 `/home/user/android-sdk` 需显式给、仓在 `/home/user/work/projects/dsh-push`，流水线每次 scp 覆盖 src，构建产物回传） |
-| 模拟器机 | 家里笔电 `DESKTOP-CPYH`（Tailscale **`<tailnet-laptop>`**，**不要用 LAN IP**：会漂且被防火墙拦新连接） |
+| 模拟器机 | 家里笔电 `<win-host-a>`（Tailscale **`<tailnet-laptop>`**，**不要用 LAN IP**：会漂且被防火墙拦新连接） |
 | AVD | **`dsh-p16`** 常驻笔电；adb 在笔电 `G:\Android\Sdk\platform-tools\adb.exe` |
 | 桌面 web token | **每次 DSH 重启必换**（今天死了两次都换了）→ 脚本一律从 `C:\Users\<user>\.dsh\web.log` 取**最后一条** `dsh web:` 行里的 `token=`，并把 `127.0.0.1:3081` 替换为 `<tailnet-windows>:3080` |
 | ntfy | 生产 topic `dsh`；**QA 一律用 `qa-` 前缀的正文标记**，正文里放 epoch 唯一串做断言定位；生产卡片靠 `#ans` 自清 |
