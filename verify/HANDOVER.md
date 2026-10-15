@@ -13,7 +13,8 @@
 | 字段 | 值 |
 |---|---|
 | 本轮主题 | **App 聊天里的大代码块透明修复（v1.32.13 → v1.32.14）**：用户指示「**修吧**」⇒ 修 v1.32.12 登记的**已知遗留** = 聊天正文里的大代码块被抹成透明、代码文字透出底层聊天正文 |
-| **当前阶段** | ✅ **已发布上线（2026-10-15 03:17）**：task-12 ✅（v1.32.13 实现 `8f24fcb`）→ task-13 ✅（QA **PASS-with-findings**，抓出 **FINDING-1[P2]**）→ **lead 追查确认 FINDING-1 属本轮引入** ⇒ task-14（developer 引擎侧连续失败）⇒ **lead 直接落地 `083de4f`（v1.32.14）** ⇒ task-15 ✅（QA **PASS**）⇒ **发布 `SUMMARY: 9/9 passed`** ⇒ **线上 `?v=80` 哈希与冻结值逐字节一致**。**⏭ 剩：开源镜像同步 + 等用户真机回执** |
+| **当前阶段** | ✅ **已发布上线（2026-10-15 03:17）**：task-12 ✅（v1.32.13 实现 `8f24fcb`）→ task-13 ✅（QA **PASS-with-findings**，抓出 **FINDING-1[P2]**）→ **lead 追查确认 FINDING-1 属本轮引入** ⇒ task-14（developer 引擎侧连续失败）⇒ **lead 直接落地 `083de4f`（v1.32.14）** ⇒ task-15 ✅（QA **PASS**）⇒ **发布 `SUMMARY: 9/9 passed`** ⇒ **线上 `?v=80` 哈希与冻结值逐字节一致**。**⏭ 剩：等用户真机回执**（开源镜像同步已完成，见 §3.20.21/22） |
+| **全方位体验轮（2026-10-15 10:1x–10:5x）** | ✅ **已完成**（task-1 ✅，commit `ac1ba31`）：57 条用例覆盖 ~40 条；结论 **FAIL（A14 P1 持续 = v1.32.7 FINDING-1 延续，非本轮回归）**；A14/A15/P04 CSS360 基线已重打；新探针 `qa-ux-suite.mjs`/`qa-ux-suite2.mjs`；真实提问类 C02/A05/A18 报 lead 未跑。**tester 收尾时引擎失败（`failed before it finished`）但报告+提交+用例更新全部落盘**；lead 复核发现**设备 airplane 未复位**（报告声明与实况不符）⇒ 已补复位。详见 §3.20.25 |
 | **发布证据（本轮）** | `verify\dsh-app-verify.ps1 -Deploy -DeployNote "v1.32.14 …"` → **`SUMMARY: 9/9 passed`**；`LOG: C:\Temp\dsh-verify\verify-20261015-031646.log`；线上 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=80` → **http=200 size=10,993,088**、**sha256 = `2850A0D3…`（= 冻结值）**；更新通知 `id: qgCcmpuMrvKX` |
 | **v1.32.14 修复（`083de4f`）** | `isAnchor` 追加 **`cn.indexOf('Dc7zOa_root')>=0`** —— 该闸门**同时**封住「取原生色相回写」与 `isCB` 两条路径。**版本三处 → `1.32.14` / code `80`**；openspec 增补场景 + 检查器 **exit 0**（delta 共 **18** 场景）|
 | **🔴 FINDING-1 根因（**属本轮引入，已确认**）** | `isCB` 是**运行时判据**（`innerBig` = 后代中 `>50%×50%` 视口的元素数）—— **首屏 / 局部重渲染 / 流式生成中后代尚未撑开 ⇒ `innerBig` 可能临时 ≤2** ⇒ 命中 `Dc7zOa_root`（**原生 `rgb(255,255,255)` 兜底白**）⇒ 按 `pm` 写出不透明白 ⇒ **聊天根在 84%×100% 面积上变不透明白 ≈2s** ⇒ **壁纸被盖**（tester 截图实锤 `qa-C14-dcroot-nativewhite-1.png`，341,694 B），随后 `MutationObserver` 自愈。**tester §7.3 判读成立；lead 先前"与 `isCB` 无关"的推断被推翻**（那条 `panel-open innerBig=41` **只覆盖稳定态**）|
@@ -32,8 +33,9 @@
 | **上上轮（✅ 已发布且用户回执「验证通过」）** | **v1.32.11 slash 菜单浮层**：发布 `SUMMARY: 9/9`、线上 `?v=77`；根因＝**分支顺序反了** ＋ **`apply()` 竞态导致间歇**（n=2 跑出 0/0.92）；修法＝浮层判定提前＋互斥＋`role` 豁免几何判定、alpha **0.96**。详见 §3.18 |
 | **⚠️ 派活前必做** | 按 §5.6 的"引擎探活"确认本地引擎能真服务（曾踩过：`/health` 200 骗人，引擎挂死 1 小时+，队友反复"崩"） |
 | 团队（本轮建立） | lead + **developer**（`android-app|host-plugin|openspec`）+ **tester**（`verify/**`）；**模型均 = spawn 时 Lead 的模型 `Deepseek-V4.1-Flash`，之后无法更改**（见 §3.10 与 `TEAM-READY` §2） |
-| 笔电现网（上轮变更，仍有效） | `G:\Android\emu-selfheal.ps1` = **加固版 sha256 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`**（源在 `verify/laptop-emu-selfheal.hardened.ps1`）；**旧脚本备份 `emu-selfheal.ps1.bak-f13`（`BE99A7F9…`）可回滚，不需重启 DSH**；选择器 `emu-ladder.gpu=host` |
-| 生产环境 | 桌面 DSH：插件 **0.2.1**（HTTP 401 = 预期，无 token）。token **每次重启必换**，从 `~/.dsh/web.log` 最后一条现取 |
+| 笔电现网（**2026-10-15 变更，看这行**） | `G:\Android\emu-selfheal.ps1` = **加固版 sha256 `26F2CFE123F140F0ADA463E41187C58A9C55EF5FD670317D28BA7916F34184EE`**（源在 `verify/laptop-emu-selfheal.hardened.ps1`，**已同步**）；新增 **F7 闪窗防护**。**两个备份可回滚，均不需重启 DSH**：`emu-selfheal.ps1.bak-hidden-20261015-155150`＝加 F7 前的上一版（`21C1856B…`，**要退闪窗修复就用它**）；`emu-selfheal.ps1.bak-f13`（`BE99A7F9…`）＝更旧的 F1–F3 之前版。选择器 `emu-ladder.gpu=host` |
+| **🔴 计划任务闪窗（2026-10-15，已完成并验收）** | 用户报"桌面偶发 cmd 窗口闪一下就没了"⇒ **不是模拟器本体**，是 `\emu-selfheal`（Interactive/session 1、每 5 分钟、`Write-Host` 上屏）＋ `\emu-ladder-rung`。**核心硬事实：`Settings.Hidden=$true` 不给进程窗口设 `SW_HIDE`，无效**（实测由进程内 `IsWindowVisible` 与窗口级 `EnumWindows` 双证）。**修法＝动作改走 `wscript.exe //B "G:\Android\hidden-run.vbs" "<目标>.cmd"`（SW_HIDE）＋保留 Hidden=True＋保留 Interactive**。**两个任务的 `LastResult` 现在都是 0x41301=Running（正常，不是错）**。详情见 [CONSOLE-WINDOW-FIX-2026-10-15.md](E:\work\work_dsh\dsh-push\verify\CONSOLE-WINDOW-FIX-2026-10-15.md) |
+| 生产环境（**宿主 = 笔电**，2026-10-15） | 笔电 DSH（profile `web`）：插件 **0.2.1** + `searchProvider: tavily` + `web.log` 最新 `[dsh-push-host] relay ready host=laptop topic=dsh claimForeground=on`（实测 `--dump-config` 1591 行含 `push-host` patch）。token **每次重启必换**，从 `~/.dsh/web.log` 最后一条现取。**台式机 DESKTOP-CPHOME 已退出 DSH**（`DshNetWeb` Disabled、3080/3081 实测 `TcpTestSucceeded=False`）⇒ 旧「桌面 web」口径**作废**，`verify/config.local.ps1` 的 `$DshWebUrl` 已改指 `<tailnet-laptop>:3080` |
 | vm1 环境 | `dsh-net.sh` **运行中**（3080→3081，三地址自检全可用）；`~/.local/bin/node` v22.22.3；**构建工具链齐全**：JDK `17.0.20.1`、Gradle `8.7`（**不在 PATH**）、SDK `/home/user/android-sdk`（见 §3.12/§3.13） |
 | 笔电环境 | SSH 通；宿主 GPU **RTX 4060 Laptop / 驱动 616.92**；模拟器 **真 GPU** `1440x3168@640`（`emu-gpu-verdict.ps1` exit 0） |
 | 版本基线 | App **v1.32.12 / versionCode 78**（三处一致）；host-plugin **0.2.1**（上一版为 v1.32.11/77） |
@@ -43,6 +45,8 @@
 | 0.2.1 产物 | sha256 `59B0A9D9EB7B20148C6AAFB1FEA7F09C5E0FE2742ECF016D4D684F320B456D31`（46,652 B），与 `HEAD` 四文件**逐字节 MATCH**（§3.7）。**首包 `59B0B97C…` 已作废** |
 | 回滚路径 | host-plugin：`verify/prod-rollout-plugin.ps1 -Rollback` → `-DispatchRestart` → `-Check`（备份 `*.prodroll-20261014-181419`）；模拟器自愈：`Copy-Item G:\Android\emu-selfheal.ps1.bak-f13 G:\Android\emu-selfheal.ps1 -Force` |
 | 新增/更新 skill | **`dsh-team-model-control`**（换队友/子智能体模型）；**`dsh-push-app-dev`** 本轮大改：GPU 判据重写、`emu-gpu-verdict.ps1` 一条命令判据、F1–F3 加固版、**新增 6 条硬事实**（推真机陷阱/QA 起页需 root/vm1 构建易错点/openspec 用法/长脚本下发禁令/.NET 死锁/证据纪律） |
+| **本轮环境核查改了什么（2026-10-15 16:5x）** | ① `verify/config.local.ps1` 的 `$DshWebUrl` 由**死链** `<tailnet-windows>:3080` 改指笔电 `<tailnet-laptop>:3080`（token 现取、重启必换）；② skill `dsh-push-app-dev` 的「桌面 web token」行改写为「**DSH Web（宿主=笔电）**」并写入台式机退出 DSH 的判据；③ 补两处环境缺件：笔电**对自己 ssh 的 `known_hosts` 条目**（缺了会让 `verify/emu-gpu-verdict.ps1` 及一切「ssh 自己=模拟器」的 QA 脚本 **BLOCKED exit 4**，修法＝带一次 `-o StrictHostKeyChecking=accept-new`）与 `host-plugin/node_modules/@deepseek-ai/**cosmokit@1.8.5**`（缺了自测 `ERR_MODULE_NOT_FOUND`；根因＝笔电这份 `schemastery` 是把台式机 **junction 目标拷成实体目录**带过来的、兄弟包没跟过来；补完自测 **101/101 exit 0**）；④ 设备侧 **`adb root` 已恢复**（16:04 那次 `-Kill` 冷启把 adbd 打回 `shell`，正是 H-1 那条自动因果链）。**selftest / dsh CLI 的 node 路径在笔电是 `E:\programs\dsh\...`（不是 skill 旧记的 `D:\programs\dsh\...`）**：node = `E:\programs\dsh\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`（v24.21.0），`dsh.cmd` = `E:\programs\dsh\resources\runtime\cli\bin\dsh.cmd`（不在 PATH）。**未做**：v1.32.15 的 ②QA 轮仍未开 |
+| **🔴 团队执行模式（2026-10-15 用户拍板，下轮起生效）** | **本地模型开发 ⇒ 同一时刻只允许一个成员在生成**：Lead / developer / tester / 子智能体共用**同一个串行 FIFO 引擎**（取证 [DIAG-member-revive-2026-10-15.md](E:\work\work_dsh\dsh-push\verify\DIAG-member-revive-2026-10-15.md) §7）。任务链 ①→②→③→④ 逐段串行、`blocked_by` 钉依赖、`send_message` 一次只唤醒一个、Lead 派完活即结束回合、`subagent` 一次只发一个；判据 = `list_agents` 里 `running` 成员同一时刻 ≤1。**旧「并行纪律」（developer 动手同时 tester 写用例）已作废**；已同步改写 skill `dsh-push-app-dev` §1/§2 与 [TEAM-START.md](E:\work\work_dsh\dsh-push\verify\TEAM-START.md) §1/§2/§3 || **🔴 本轮（2026-10-15 18:00–22:05）玻璃注入重构 + D1 三轮定点（尚未发布）** | 用户报「连 workVM/vm1 时背景一会儿透明能看见立绘、一会儿不透明，连笔电正常」⇒ 实测**三宿主服务的 bundle 逐字节相同**（同名同哈希 1,476,240 B）⇒ 与构建差异无关；真因 = **App 注入的类名锚点腐烂**（`isAnchor` 只认 `BynINW_`/`_2H3hWW_root`/`Dc7zOa_root`，现行命名是 `_<局部名>_<哈希5>_<行号>`）⇒ 布局容器落进运行时测量分支（`innerBig` 渲染中途失真）⇒ 写白 → 自愈抹回 → 反复翻面；慢宿主撞窗口概率高，笔电 loopback 几乎不撞。**串行四轮**：`674363c`（结构判据 `isLayout` + **单向写** + `isCB` 两轮迟滞）→ `db385d5`（补 `isCode` 内容叶子；自找两缺陷：`isCB`/`pm` **三方环形依赖死锁**、`apply()` **O(N²) 自激** 41 候选 heap OOM≈ANR）→ `4a039ab`（`isCode` 免迟滞 + `__qaCb` 插桩）→ **`5016373`（真根因定案：`isCode` 按渲染盒树判 + 拆 `isLayout` 自锁）**。QA 三轮报告 `verify/QA-ROUND-v1.32.15.md` / `-D1.md` / `-D1b.md`（证据 `qa-v132-15-*` / `qa-d1-*` / `qa-d1b-*`，证据入库 commit `18d5769`，APK 不入库）：最终**两宿主全绿**——卡片 `rgb(249,250,251)`、8×700ms **0 翻转**、六项回归全过、v1.32.6 壁纸红线未放回。**版本仍 1.32.15 / versionCode 81，线上仍 v1.32.14 / 80 ⇒ `-Deploy` 待发（只有 lead 能跑）**。遗留 **D2**（v1.32.16 议题：窄屏补丁整体腐烂——vm1 展开侧栏把代码块压到 **9px 宽**、侧栏 0.45 vs 笔电 0.92）、**D3**（无 tab 时 hidden `_emptyTabHost_` 被写不透白）、D6/D8（QA 探针自身）。 |
 
 ## 2. 本轮交接产物
 
@@ -491,9 +495,9 @@ service             : 运行中（3080 → 3081）
 
 | 仓库 | 路径 | 云端 remote | 本地 HEAD | 同步 |
 |---|---|---|---|---|
-| **dsh-push**（私有主仓） | `F:\work\work_dsh\dsh-push` | `origin` = **gitee** `cnopone/dsh-push` | `6fe6ff2` | ✅ **已对齐**（本次推 `141c2da..6fe6ff2`，**129 个提交**此前一直只在本地） |
-| **skills**（技能仓） | `C:\Users\<user>\.dsh\skills` | `origin` = **gitee** `cnopone/cp_learn_dsh_skill_windows` | `4dbf432` | ✅ **已对齐**（推 `ec8bb95..4dbf432`） |
-| **dsh-push-public**（开源镜像） | `F:\work\work_dsh\dsh-push-public` | `origin` = **GitHub** `thiscp/dsh-push`；`gitee` = `cnopone/pub-dsh-push` | `db65c51` | ✅ **双远端均已对齐** |
+| **dsh-push**（私有主仓） | `F:\work\work_dsh\dsh-push` | `origin` = **gitee** `<user>one/dsh-push` | `6fe6ff2` | ✅ **已对齐**（本次推 `141c2da..6fe6ff2`，**129 个提交**此前一直只在本地） |
+| **skills**（技能仓） | `C:\Users\<user>\.dsh\skills` | `origin` = **gitee** `<user>one/cp_learn_dsh_skill_windows` | `4dbf432` | ✅ **已对齐**（推 `ec8bb95..4dbf432`） |
+| **dsh-push-public**（开源镜像） | `F:\work\work_dsh\dsh-push-public` | `origin` = **GitHub** `thiscp/dsh-push`；`gitee` = `<user>one/pub-dsh-push` | `db65c51` | ✅ **双远端均已对齐** |
 
 ### ⚠️ 陷阱：`dsh-push` 的**上游被设成了 `vm1`**，`git status` 会误报"有 217 个提交没推"
 
@@ -1264,7 +1268,7 @@ SUMMARY: 9/9 passed
 dsh-push-public: verify/vm1-dshnet-check.sh:37: PUBLIC_HOST="<tailnet-vm1>"
 ```
 
-**⇒ 真实的 vm1 内网 IP 泄漏到了公开仓库**（GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push`）。
+**⇒ 真实的 vm1 内网 IP 泄漏到了公开仓库**（GitHub `thiscp/dsh-push` + Gitee `<user>one/pub-dsh-push`）。
 **起始点**：`db65c51`（"sync from private: emulator GPU verdict gate + …"）⇒ **已泄漏多个版本**，
 非本轮引入（`0f1ce6b` 上也存在）。
 
@@ -1313,7 +1317,7 @@ $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.k
 | 项 | 值 |
 |---|---|
 | 私有仓 | **`dbdbde9`**（工作树干净，已推送 origin/master） |
-| **公开镜像（最终）** | GitHub `thiscp/dsh-push` + Gitee `cnopone/pub-dsh-push` **均已落地**、**工作树干净**｜**判据（不随每次 export 变化的那个）：对公开仓 `git ls-files` 的「全部文件」跑个人值正则 ⇒ `0` 命中** ✅｜`versionName=1.32.14` / `versionCode=80`｜⚠️ **该仓 commit 哈希每次 `export-public.ps1` 都会推进**（本文件自身也被同步过去），**所以别在此处钉哈希，钉"0 命中 + dirty=0"这两个不变量** |
+| **公开镜像（最终）** | GitHub `thiscp/dsh-push` + Gitee `<user>one/pub-dsh-push` **均已落地**、**工作树干净**｜**判据（不随每次 export 变化的那个）：对公开仓 `git ls-files` 的「全部文件」跑个人值正则 ⇒ `0` 命中** ✅｜`versionName=1.32.14` / `versionCode=80`｜⚠️ **该仓 commit 哈希每次 `export-public.ps1` 都会推进**（本文件自身也被同步过去），**所以别在此处钉哈希，钉"0 命中 + dirty=0"这两个不变量** |
 | 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=80`、**`http=200`、`size=10,993,088`、`sha256 = 2850A0D3…`（= 冻结值）** |
 | 发布 | ✅ **`SUMMARY: 9/9 passed`**（`LOG: C:\Temp\dsh-verify\verify-20261015-031646.log`）｜更新通知 `id: qgCcmpuMrvKX` |
 | QA | ✅ **PASS**（`QA-ROUND-v1.32.14.md`）｜**FINDING-1 已修**（白窗 3 轮零命中 + 阳性对照） |
@@ -1408,14 +1412,37 @@ $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.k
 **边界（不得当已验）**：**未实做**"切到 `strata-local` 后是否真能复活"（依据是"本地无 8 MiB 上限"＋引擎有真实推理日志）；
 未验证本地引擎**并发**能力；**未重建成员、未改配置、未重启服务**（处置**待用户决定**）。
 
+### 3.20.25 v1.32.14 全方位体验轮：**FAIL（A14 P1 持续）** + CSS360 基线重打（2026-10-15 10:1x–10:5x）
+
+**报告**：[QA-ROUND-v1.32.14-experience.md](F:\work\work_dsh\dsh-push\verify\QA-ROUND-v1.32.14-experience.md)（151 行，commit `ac1ba31`）
+
+**结论**：**FAIL** —— 唯一 P1 是 **A14 命中区重叠持续**（v1.32.7 FINDING-1 延续，**非 v1.32.13→14 本轮回归**）。本轮发布引入的改动（大代码块实底、`isAnchor` 排除）**全部复测通过、无新缺陷**。
+
+| 项 | 结果 |
+|---|---|
+| **覆盖** | 57 条中 ~40 条（核心 16 中 8、对抗 28 中 20、打磨 13 中 12）；真实提问类 C02/A05/A18 报 lead 未跑（子代理发不了 ask_user_question） |
+| **FINDING-1 [P1]** | **A14 命中区重叠**：`Collapse sidebar`(40px) ↔ `Open in File Explorer`(23px 命中框) 横向重叠 **23px**；`realTaps` 7 处误触实证（点 Explorer 中心触发 New session/Collapse）。归因 = **DSH Web 上游紧凑布局**（header 按钮间距过小）＋ **App 侧 v1.32.7 的 40px 命中区放大**叠加。**App 侧能否单独修待评估**（v1.32.7 起挂账未修） |
+| **FINDING-2 [P2]** | A08/C08 **离线无提示**：飞行模式页面存活但无任何离线指示（同 v1.32.7） |
+| **FINDING-3 [P3]** | A10 极窄视口（`innerWidth=200`，人为尺寸）浮层被裁 —— 用户不会用此尺寸 |
+| **CSS360 基线重打** | ✅ A14/A15/P04 已就地重打（旧 411 宽数字作废）；**A14 仍 FAIL（P1）**、A15/P04 PASS |
+| **v1.32.14 修复复测** | ✅ P11 菜单 0.96×3 稳定（v1.32.11 FAIL 已修）｜C13 面板 1.0 5/5｜C14/C15 代码块 1.0/0.45 精确分流｜C16 `wouldChange=2` 四锚点全 0｜A30 多面板 `frame=0`｜A32 竞态 3 轮 caught=0｜C09/C10/A20–A28 已读链路全 PASS |
+| **新探针** | `verify/qa-ux-suite.mjs` / `qa-ux-suite2.mjs`（综合 UX 探针）+ `verify/qa-ux-polish.mjs`（commit `46b014f`，A04 超长文本 + P01/P02/P05 补全，未跑，下轮工具链）——均为临时产物，长期化需与 tester 协调落 `verify/` |
+| **未覆盖（显式登记）** | C01/C03/C04（推送/通知栏/快答）、C06（探针选择器未命中）、A03/A04、A07（用例界定错误，已由 A13 取代）、A13（App 内主题 UI）、A19（watchdog 150s BLOCKED）、P01/P02（部分）、P05/P06/P07/P09/P10、C13 差异视图（`diff=false` 唤不出） |
+
+**⚠️ 本轮成员失败事件（第三次，前两次见 §3.20.23/24）**：tester 完成全部工作并 commit（`ac1ba31`，10:53）后、向 lead 收尾报到之前引擎失败（`failed before it finished`，无 closing message）。
+- **三处核查（§5.4.3 纪律）**：git 提交 ✅（`ac1ba31`）｜报告 ✅（151 行完整）｜孤儿产物 ✅（`tmp/qa/overlay-report*.json` 10:23–10:25）⇒ **工作全部落盘，无需重跑**。
+- **lead 复核发现报告声明与实况不符**：报告称设备已复位，实测 `airplane_mode_on=1` 仍开着 ⇒ **已补复位**（airplane=0 / font_scale 默认 / wm size 1440x3168）。
+- **教训（追加到 §5.4.3）**：**报告里的"复位声明"也要抽验**——本轮报告写了"airplane disable"但实际没生效（可能复位命令在失败路径上没跑到）。判据：`settings get global airplane_mode_on` / `font_scale` / `wm size` 三条命令 10 秒可验。
+- **任务板**：task-1 由 lead 代为 complete（工作实质完成）。
+
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 
 1. **DSH 上游两条补丁**（源码仓，非本仓）：`tool-ask-user` 默认值 `legacy`→`timed`；`UserQuestionService.ask()` 加完成作用域 AbortController。做掉后连 legacy 会话都不再僵卡，新用户零配置。
-2. **A14/A15/P04 命中区基线在 CSS360 下未重打**（旧 411 宽数字作废）。
+2. ~~**A14/A15/P04 命中区基线在 CSS360 下未重打**~~ → ✅ **已收（2026-10-15 体验轮，commit `ac1ba31`）**：三用例基线已就地重打。**A14 仍 FAIL（P1，见 §3.20.25）**、A15/P04 PASS。
 3. **GPU 模式下的截图耗时基线未重打**（swiftshader 数字不可对照）。
 4. **QA 报告 §6 未覆盖面**：真机 OriginOS 通知栏行为、30 条消息满载、C03/C04 用例。
 5. **`claimForeground` 两种设置的用户可感差异**：产品取舍待用户拍板。
-6. **⚠️ 聊天里的大代码块 `_block_7gxqk_4`（`331x524`）仍是透明的**（v1.32.12 已实测）：
+6. ~~**⚠️ 聊天里的大代码块 `_block_7gxqk_4`（`331x524`）仍是透明的**~~ → ✅ **已修（v1.32.13/14，`8f24fcb`/`083de4f`）**：`innerBig≤2` 判据 + 幂等闸门放行 + `isAnchor` 排除布局容器；大块 1.0（5/5）、矮块 0.45（9/9）不得回退。详见 §3.20。（历史：v1.32.12 实测被抹透明、`isPanel` 不覆盖、裁定不修 → 用户「修吧」→ v1.32.13 立案）
    它**同样被抹成透明**（面板打开时 `0.45`、原生 `rgb(249,250,251)`）、**同样伤可读性**，
    但**不是全屏定位面板** ⇒ v1.32.12 的 `isPanel` 判据**不覆盖它**。
    **本轮（v1.32.12）已裁定不修**（不夹带扩大改动面，要修需另立判据、风险更高）；

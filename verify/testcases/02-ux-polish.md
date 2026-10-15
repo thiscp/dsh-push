@@ -40,7 +40,8 @@
   1. CDP 量 rail 上按钮（展开/收起/搜索/新建/设置）与面板内按钮的 `getBoundingClientRect()`
   2. 对 <40px 的记下来；并实测点边缘附近是否命中
 - **预期**: 主要图标按钮命中区 ≥40×40；相邻按钮不会互相误触（间距 ≥8px）。
-- **实际**: 25 个可点元素里 7 个高度 <40px，且基本都是图标按钮：`Collapse sidebar`/`Search sessions`/`View options`/`Add workspace`/`Agent Team` 28×28、`Open in File Explorer` 23×23、`More ways to open` 17×23；会话条目行高 28。
+- **实际（v1.32.14 CSS360 基线重打，2026-10-15）**: `expandedCount=25`；`<40px` 的主要图标：`Search sessions`/`View options`/`Add workspace` 32x40、`Agent Team` 28x40、`Open in File Explorer` 23x40、`More ways to open` 20x40、`More actions`/`Open right sidebar`/`Copy` 28x28；会话条目行高 28；`Show N more sessions` 256x28。⇒ CSS360 下大量按钮 <40px（窄屏更挤）。
+- **实际（v1.32.7 旧 411 宽，数字作废）**: 25 个可点元素里 7 个高度 <40px，且基本都是图标按钮：`Collapse sidebar`/`Search sessions`/`View options`/`Add workspace`/`Agent Team` 28×28、`Open in File Explorer` 23×23、`More ways to open` 17×23；会话条目行高 28。
 
 ### QA-P05 加载空态与反馈
 - **前置**: force-stop 后重新打开内置浏览器。
@@ -136,7 +137,8 @@
   **最后一次 `apply()` 读到的高度决定终态**：`h≤335.5` → 0.92 ✅，`h>335.5` → transparent ❌ ⇒ **这就是"掷硬币"**。
   ⇒ **不是"没命中"、也不是"少一层"，是"命中了却被前面的分支按尺寸抢走并设成透明"**。
   **菜单子树全量扫描证实：真正上色的只有 2 个元素**（表层 + 唯一高亮项），**没有隐藏的第三层**（详见报告 §3）。
-- **结果**: **FAIL（P1）**（详见 `verify/QA-ROUND-v1.32.11.md` FINDING-1）
+- **复测（v1.32.14，2026-10-15）**: **PASS** —— 3 轮采样 `alpha=0.96` 恒定（`inlineBg=rgba(255,255,255,0.96) !important`），菜单 257x392 仍 0.96（v1.32.11 的 `transparent` 分支已修）；祖先链分层正确；整页肉眼菜单项清晰不发花。`overlay-report.json`×3
+- **结果（v1.32.11）**: **FAIL（P1）**（详见 `verify/QA-ROUND-v1.32.11.md` FINDING-1）
 - **证据**: 改前 `F:\work\work_dsh\tmp\shots\qa\v1.32.11-before-user-report.jpg`（用户真机，322,712 B）｜
   Run A `F:\work\work_dsh\tmp\shots\qa\qa-P11-slash-menu.png`（985,987 B）+ `F:\work\work_dsh\tmp\qa-overlay-run2.json`｜
   Run B `F:\work\work_dsh\tmp\shots\qa\qa-P11-slash-menu-layers.png`（642,746 B）+ `F:\work\work_dsh\tmp\layers-report2.json`
@@ -173,7 +175,8 @@
   （frame/html/body 内联 `transparent !important`）；整页图肉眼判：**壁纸 + 云朵 + 立绘完整透出**，未被白纱/深纱盖住 ✅。
   **`#dsh-theme-veil` = `rgba(255,255,255,0.45)`、alpha 0.45、`z-index:-1`、360x671** ⇒
   **lead 档案 §3 的读码推演（veil 因 `z-index<10` + 面积>90% 被判 `isOv=false`）由实测独立证实** ✅。
-- **结果**: **PASS**
+- **复测（v1.32.14，2026-10-15）**: **PASS** —— `veil=0.45`（`position=fixed`/`z-index=-1`/360x671）、`frame`/`centerCol`/`html`/`body` 全 0；overlay-probe 3 轮一致。
+- **结果（v1.32.11）**: **PASS**
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-P12-wallpaper.png`（947,510 B，我 `read_image` 看过整页）｜
   `F:\work\work_dsh\tmp\qa-overlay-run2.json` → `cases.QA-P12`
 
@@ -194,6 +197,7 @@
   **用 JS `dispatchEvent(new MouseEvent('click'))` 才能展开**；**CDP 合成点击会被 `_tab_*` 抢走目标**
   （`elementFromPoint` 的 owner ≠ 按钮）⇒ 上一次跑因此误判为 BLOCKED。
   与 QA-P11 的「合成点击抢焦点」是同一个坑（见 `verify/README.md` 新增条）。
-- **结果**: **PASS**
+- **复测（v1.32.14，2026-10-15）**: **PASS** —— 展开 `alpha=0.92`/`w=280`/`position=fixed`/`z-index=60`；收起 `0.45`/`55.5`；overlay-probe + doc-panel 3 轮一致。
+- **结果（v1.32.11）**: **PASS**
 - **证据**: `F:\work\work_dsh\tmp\shots\qa\qa-P13-sidebar-expanded.png`（792,304 B，整页）｜
   `F:\work\work_dsh\tmp\layers-report2.json` → `sidebarExpanded` / `sidebarExpandedPanel` / `sidebarCollapsed`

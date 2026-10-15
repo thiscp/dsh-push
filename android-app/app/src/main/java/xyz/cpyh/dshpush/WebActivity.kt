@@ -263,7 +263,22 @@ class WebActivity : Activity() {
                     //        · Agent Team 触发器：撤掉横向扩张（带标签态自然宽 85 已够宽，横向负 margin
                     //          会把框伸进面板/邻居——FINDING-3 的死区+打架），只留纵向 -6 给 40 高；
                     //        · 面板 Collapse 钮与收起态轨道钮无同排邻居，保持 40×40。
+                    //          ⚠ 该前提在 CSS360（v1.32.8 起的基线）下不成立——见 F5。
                     //        FINDING-4 那批（More actions 等）本轮不动：它们间距也挤，扩了重演同一个洞。
+                    //      F5 命中区（v1.32.15，QA-A14 P1 的 App 侧残留）：v1.32.7 那句"面板 Collapse 钮
+                    //        无同排邻居"在 360 宽下是错的。展开态侧栏被改成浮层后，中心列被压到 304、
+                    //        头部控件整体左移（实测 智能体团队 203.8→231.8、Open-in 234.6→257.6、
+                    //        More-ways 258.9→278.9），而 toggle 的自然盒是 240→268 ⇒ **上游本身就压在一起**；
+                    //        再叠加 min-width:40 + margin:-6 的外扩 ⇒ 命中框 234→274，与 Open-in 的
+                    //        命中框重叠 23.0px（与 More-ways 15.1px）——实测 elementFromPoint 在
+                    //        Open-in 视觉中心 (246.1,25.5) 拿到的是 toggle 而非 Open-in（真页面 + 真注入复现）。
+                    //        修法：**展开态**把 toggle 的命中框收回自然宽（28×28，右缘 268 < 浮层右缘 280，
+                    //        不再越出面板侵入内容列控件条带）；**收起态（56px 轨道）无同排邻居，40×40 一字不动**。
+                    //        实测：展开态重叠 23.0→17.6（残余部分来自上游版面，App 侧无法清零）、toggle 中心/四边
+                    //        自命中全 OK；收起态 toggle 仍 40×40、轨道 6 钮 selfHit 6/6 不回归。
+                    //        诚实边界：展开态下 Open-in 等 header 控件在 360 宽下**本来就被 280px 浮层盖住**
+                    //        （浮层 z-index:60、覆盖 x≤280），用户点不到它们 ⇒ 本修**不声称"消除了用户误触"**，
+                    //        只消除命中框越界这一 App 侧缺陷（QA-A14 的判据本身）。
                     //      红线自查：玻璃化大容器 transparent 分支（壁纸唯一通道）没碰；280/0.92/56 没动。
                     // 选择器用 [class*=] 属性包含匹配，不硬编码 CSS-module 哈希；注入幂等（按 id 查重），
                     // 监听器另有标记，onPageFinished 多次触发不会重复挂。
@@ -288,6 +303,9 @@ class WebActivity : Activity() {
                         "[class*='_2H3hWW_iconButton']{min-width:40px!important;min-height:40px!important;" +
                         "display:inline-flex!important;align-items:center!important;" +
                         "justify-content:center!important;margin:-6px!important}" +
+                        "[class*='_2H3hWW_root']:not([class*='_2H3hWW_collapsed']) " +
+                        "[class*='_2H3hWW_toggle']{min-width:0!important;min-height:0!important;" +
+                        "margin:0!important}" +
                         "[class*='_9lTDKa_searchButton'],[class*='_9lTDKa_iconButton']{" +
                         "min-width:32px!important;min-height:40px!important;" +
                         "display:inline-flex!important;align-items:center!important;" +
@@ -358,6 +376,20 @@ class WebActivity : Activity() {
                         "'rgba(255,255,255,0.96)';" +
                         "var all=document.querySelectorAll('div,main,section," +
                         "header,aside,nav,button,textarea,input,ul,li');" +
+                        // ★ v1.32.15-C 实现细节：候选**每轮收集成一批**，循环外只排**一对** rAF 复核
+                        // （而不是每个候选各排一对）。原因：首屏时稳定态闸门对所有大元素都是关的，
+                        // 候选可达数十个；若每个候选复核通过就各自重跑 apply()，就是 O(N^2) 次
+                        // apply()（实测 41 个候选直接把合成 DOM 跑到 OOM），真机上等于 ANR。
+                        // ★ QA 探针：qa[] 收集本轮进入内容块候选集的元素，循环结束后整体挂到
+                        // window.__qaCb（见下方）。只读诊断，不参与判定。
+                        "var qa=[];" +
+                        "var cand=[];" +
+                        "function _cbn(t){var n=0,ds=t.querySelectorAll(" +
+                        "'div,section,main,aside,article,pre,code,table,ul');" +
+                        "for(var q=0;q<ds.length;q++){if(ds[q]===t)continue;" +
+                        "var rr=ds[q].getBoundingClientRect();" +
+                        "if(rr.width>vw*0.5&&rr.height>vh*0.5)n++;}" +
+                        "return n;}" +
                         "for(var i=0;i<all.length;i++){var e=all[i];" +
                         "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?" +
                         "/.exec(getComputedStyle(e).backgroundColor);" +
@@ -374,8 +406,13 @@ class WebActivity : Activity() {
                         // 红线守卫：大容器 transparent 分支仍然存在（v1.32.6 壁纸整层消失的教训），
                         // 但**排在浮层之后且两者互斥**；App 自身锚点（BynINW_*）与侧栏根
                         // （_2H3hWW_root，归 bwPanelBg 管）不进浮层判定。
+                        // v1.32.15：这里补上聊天根 Dc7zOa_root。全段注入里类名闸门**只保留这一处**（它防的是
+                        // "聊天根被 role/几何判成浮层⇒被提到 0.96"，与下面 isLayout 的单向写是两条
+                        // 独立防线）。它同样会随上游改名而腐烂，但**失效方向是安全侧**（漏修），
+                        // 且不参与透明/不透明的翻转，故保留作保险；反面 isAnchor 已整体换成结构判据。
                         "var isOv=false,ovRole=false;" +
-                        "if(cn.indexOf('BynINW_')<0&&cn.indexOf('_2H3hWW_root')<0){" +
+                        "if(cn.indexOf('BynINW_')<0&&cn.indexOf('_2H3hWW_root')<0&&" +
+                        "cn.indexOf('Dc7zOa_root')<0){" +
                         "var role=(e.getAttribute&&e.getAttribute('role')||'').toLowerCase();" +
                         "if(role==='menu'||role==='listbox'||role==='dialog'||" +
                         "role==='alertdialog'||role==='tooltip'){isOv=true;ovRole=true;}" +
@@ -394,42 +431,189 @@ class WebActivity : Activity() {
                         // ⚠ 判据必须是**结构**特征，绝不能用"原生是否不透明"：实测
                         // BynINW_frame（壁纸唯一通道）原生**同样是** rgb(255,255,255)，用颜色判据
                         // 会把壁纸通道一起变不透明 ⇒ 每层白叠加 ⇒ 直接复现 v1.32.6 壁纸整层消失。
-                        // 结构判据：阅读面板是**全屏定位覆盖层**（自身 absolute/fixed，或 8 层内有
-                        // "定位且 ≥90%×90% 视口"的祖先）；壁纸通道是 static/relative 常规布局。
+                        // 结构判据：阅读面板是**全屏定位覆盖层**（自身 absolute/fixed，或祖先链上有
+                        // “定位且 ≥90%×90% 视口”的覆盖层）；壁纸通道是 static/relative 常规布局。
                         // 实测该判据下 wouldChange 恰好只有 _tabHost 一个，三项关键容器均不命中。
+                        // ⚠ 已登记风险（lead 裁定 a，v1.32.15）：本判据依赖「阅读面板 = **定位**覆盖层」
+                        // 这个**当前实测事实**（自身 absolute/fixed，实测 360x671）。若哪天 DSH 把
+                        // 面板改成 position:relative 的全屏层，isLayout 会先命中它 ⇒ 面板被写
+                        // transparent ⇒ v1.32.12 回归。tester 已把「文档预览面板不透明」列为红线
+                        // 断言；放宽 static/relative 白名单之前必须先重测这条。
                         "var big=(w>vw*0.5&&h>vh*0.5);" +
-                        // ★ v1.32.14：把**布局/滚动容器**一并挡在"取原生色相回写"与 isCB 之外。
-                        // 追加 Dc7zOa_root 的依据（QA-ROUND-v1.32.13 FINDING-1 实测 + lead 追查）：
-                        // 它是聊天根（304x671，原生 rgb(255,255,255) 兜底白）。v1.32.13 首版里
-                        // 「剥内联读原生」对 na>=1 的元素**不还原**（因为要把原生色相写回），
-                        // 若此刻 isCB 恰为 true（innerBig 是**运行时测量**：首屏/流式渲染中后代尚未
-                        // 撑开 ⇒ 可能临时 <=2），就会写出 rgb(255,255,255) ⇒ **聊天根变不透明白 ⇒
-                        // 壁纸被盖 ≈2s**（tester 已截到实锤 qa-C14-dcroot-nativewhite-1.png）。
-                        // 布局容器稳定态 innerBig=41/42/70 本不该命中，但**动态态会失真** ⇒
-                        // 不能只靠动态量兜底，必须**显式排除**（遵"宁可漏修、不可误修"）。
-                        // 代价：内容块(代码块)绝不会是聊天根 ⇒ wouldChange 仍 = 1。
-                        "var isAnchor=cn.indexOf('BynINW_')>=0||" +
-                        "cn.indexOf('_2H3hWW_root')>=0||" +
-                        "cn.indexOf('Dc7zOa_root')>=0;" +
-                        "var isPanel=false;" +
-                        "if(big&&!isAnchor&&e.id!=='dsh-theme-veil'){" +
-                        "var pcs=getComputedStyle(e);" +
-                        "if(pcs.position==='absolute'||pcs.position==='fixed'){isPanel=true;}" +
-                        "else{var pa=e.parentElement,ph=0;" +
-                        "while(pa&&ph<8){var acs=getComputedStyle(pa);" +
+                        // ★ v1.32.14 曾用**类名锚点** isAnchor（BynINW_ / _2H3hWW_root / Dc7zOa_root）
+                        // 把布局/滚动容器挡在“取原生色相回写”与 isCB 之外。**该锚点已整体腐烂**
+                        // （lead 实测取证，直接采用、勿再重新假设）：三台宿主服务的 bundle
+                        // **逐字节相同**，而现行 CSS-module 命名是 《_局部名_哈希5_行号》（
+                        // _tabHost_6nhg2_162 / _surface_6nhg2_125 / _split_6nhg2_17，66 个前缀，
+                        // 配套 --dsh-dockkit-* 变量），旧方案 《哈希5_局部名》 在 1.47 MB 的 4 个 asset
+                        // 里 **0 命中** ⇒ 那道显式排除**恒为 false、等于零** ⇒ dockkit 的布局/
+                        // 滚动容器（原生正是不透明白：CSS “._tabHost_6nhg2_162:not(
+                        // ._float_6nhg2_156){background:var(--dsw-alias-bg-base)}”）落进 isPanel / isCB
+                        // 两条**运行时测量**分支；innerBig 在首屏/流式渲染中途会临时失真
+                        // （v1.32.13 FINDING-1 已实测掉到 <=2）⇒ 中途写出 rgb(255,255,255)、下一次
+                        // MutationObserver 又抹回 transparent ⇒ **背景反复翻面**；慢宿主（VM 走
+                        // tailscale、渲染节奏慢）撞窗口概率高、笔电 loopback 几乎不撞 ⇒ 用户看到的
+                        // 正是“只有连工作 VM / vm1 的 DSH Web 才一会儿透明一会儿不透明”。
+                        // ★ v1.32.15-A：换成**纯结构判据** isLayout（不再依赖任何类名哈希，换一次
+                        // DSH 版本也不再烂）。布局/滚动链 = 自身 position 为 static/relative 的
+                        // 常规流、且祖先链上**没有**「定位（absolute/fixed）且 ≥90%×90% 视口」
+                        // 覆盖层的那条浅层大容器链 —— 与 isPanel 同源互补（即上面 v1.32.12 的
+                        // 对立判据）。祖先上界取 body：html/body 由本注入无条件写 transparent，
+                        // body 之上的 fixed 不属于页面布局，不该把整棵子树改判成面板；
+                        // 祖先遍历上限也从 8 层放宽到 24 层（新的 dockkit 套层更深）。
+                        // ★ v1.32.15-B：**单向写** —— 命中 isLayout 的元素**只允许被设为 transparent**，
+                        // 永不写回不透明原生色；“取原生色相回写”只留给 isPanel（定位覆盖层，
+                        // 即 v1.32.12 的阅读面板：打开文档预览仍不得透明，不许回归）。
+                        // 为此 isLayout 必须带**稳定态闸门**：只有「**我们**上一轮把它写成
+                        // transparent」的元素才算布局链 —— 否则首屏 / 流式渲染中途 innerBig 失真
+                        // 的容器会被 isCB 抢先写成白、下一轮再被抹回 transparent，正是本次要消灭的
+                        // 翻转。React 换节点后标记与内联一起丢 ⇒ 闸门关闭、走保守路径（原生白
+                        // 瞬时露出 ≈400ms，属 v1.32.13 QA-A32 已登记的既有行为，不是翻转）。
+                        // ★ v1.32.15 D1 修复 C（**拆自锁**）：闸门原先读的是**我们自己写的 inline 值**
+                        //   （inline background-color === 'transparent'），而大容器兜底分支写的正是 transparent
+                        //   ⇒ 「进入条件」与「写入结果」互为因果 ⇒ **首轮就被锁死**：卡片首轮 a0=1
+                        //   （原生不透明）⇒ 幂等闸门（a0<1）不拦 ⇒ 落到兜底分支当轮写 transparent ⇒
+                        //   从下一轮起 inline==='transparent' 恒成立 ⇒ isLayout 恒真 ⇒ 再也进不了 isCB
+                        //   求值分支（它要求 !isLayout）⇒ 稳定停在错值（真机笔电 8 次采样 0 翻转、
+                        //   6 次运行复现；vm1 只因首帧 220px 没过 big 阈值、走了 0.45 分支才没被锁
+                        //   ⇒ **首帧高度决定命运**，与 FINDING-1 同一类：瞬态几何决定永久状态）。
+                        //   这违反 §11.8 纪律 10「判据之间 MUST NOT 互相以对方的输出为前提」——
+                        //   isLayout 读的是我们自己的写入。现改读注入自己打的**所有权标记** e.__dshGlass：
+                        //   写 transparent 的两条分支置 1、写不透明 / 浮层 / 0.45 的分支置 0 ⇒ 闸门读的是
+                        //   「这个元素的底由注入拥有」这一事实，不再读页面可见的 inline（页面改写
+                        //   我们的 inline 也不会把布局链解锁）。标记随换节点丢失，但 inline 同样会丢
+                        //   ⇒ 不比现状差；稳定态闸门的原意（防过渡态被 isCB 抢先写白）完整保留。
+                        //   **注意**：兜底分支也打标记，所以「锁」本身仍在（这是布局链的设计本意，
+                        //   合成 DOM S12 证明去掉它会触碰 v1.32.6 红线）；真正让卡片脱锁的是上面的 A
+                        //   （isCode 首轮即命中、天然绕开 isLayout）。实测数据见 GLASS-OVERLAY §11.10。
+                        // ⚠ 已登记风险（lead 裁定 d，本轮随 C 收窄）：页面**自己**把布局容器内联写成
+                        //   transparent 不再构成锁（我们没写过它 ⇒ 无标记 ⇒ 闸门关）；它仍会被大容器
+                        //   兜底分支写 transparent（可见结果不变、壁纸通道优先），但之后若命中 isCode /
+                        //   isCB 就能拿到原生底 ⇒ 比原先的「永久锁透明」更合理。
+                        "var isSb=cn.indexOf('_2H3hWW_root')>=0;" +
+                        "var ancBigPos=false;" +
+                        "var pa=e.parentElement,ph=0;" +
+                        "while(pa&&ph<24&&pa!==document.body){" +
+                        "var acs=getComputedStyle(pa);" +
                         "if(acs.position==='absolute'||acs.position==='fixed'){" +
                         "var ar=pa.getBoundingClientRect();" +
-                        "if(ar.width>=vw*0.9&&ar.height>=vh*0.9){isPanel=true;break;}}" +
-                        "pa=pa.parentElement;ph++;}}}" +
+                        "if(ar.width>=vw*0.9&&ar.height>=vh*0.9){" +
+                        "ancBigPos=true;break;}}" +
+                        "pa=pa.parentElement;ph++;}" +
+                        // ★ v1.32.15 裁定① + D1 修复 A：内容叶子判据 isCode —— 只用**渲染盒树**判，
+                        //   不用类名、也不用裸 DOM 深度。isCode = 自身是 PRE，或在**盒树上的直接
+                        //   可见子节点**里有 PRE：从直接子节点扫描，遇到 display:contents 的包裹
+                        //   层就**下钻**（最多 2 层包裹）。命中 isCode 的元素不算布局链 ⇒ 走 isCB /
+                        //   原生色相回写（带 C 的两轮迟滞，但 isCode 免迟滞，见下方 D1 注释）。
+                        // 真机为什么必须看盒树（QA-ROUND-v1.32.15-D1 实测，笔电）：卡片
+                        //   _block_7gxqk_4 md-code-block（233x410，原生 rgb(249,250,251)）的**DOM 直接
+                        //   子节点**是 _bannerWrap_7gxqk_（233x42）+ _content_7gxqk_74（**0x0**），PRE 在
+                        //   _content_ 里面 = **孙节点**；0x0 是 Blink 对 display:contents 返回的空矩形
+                        //   ⇒ 盒树上 PRE 像直接子节点、DOM 上不是 ⇒ 只按 e.children 判**必然 false**
+                        //   （这就是 D1 笔电失败、vm1 凭运气逃过的结构性原因）。
+                        // ⛔ MUST NOT 用 0x0 矩形反推「这是 contents 包裹层」：0x0 也可能是**折叠**容器
+                        //   （折叠面板/虚拟占位），那样会把折叠容器里的 PRE 误判成内容叶子。判据只读
+                        //   getComputedStyle(child).display === 'contents'，它是盒模型事实、不随布局态变化。
+                        // ⛔ 下钻深度上限 **2 层**，再深就不再算内容叶子：聊天根里的 pre 在 ≥3 层，
+                        //   放宽到整棵子树会把布局容器一起判成内容叶子 ⇒ 写不透明 ⇒ 多层白叠
+                        //   ⇒ **复现 v1.32.6「壁纸整层消失」**（§9.3 实测 wouldChange 从 1 变 2 且
+                        //   含布局容器）。所以「只看盒树直接子节点 + ≤2 层 contents」就是判据边界。
+                        // ⛔ 别顺手简化成 e.querySelector('pre')：当年被否决的正是「后代含 pre/code」。
+                        //   实现用递归扫 children 而非 querySelector(':scope > pre')：语义等价且不依赖
+                        //   选择器引擎 —— 老 WebView 遇 :scope 会抛 SyntaxError，这段注入没 try/catch，
+                        //   一处抛异常整段注入全废（v1.32.11 的教训）。
+                        // ⚖ 成本：整段扫描包在 if(big) 里（非 big 元素的 isCode 无意义，两个消费者
+                        //   都要 big），且遇到 PRE 立即停；每页 big 元素只有十几个，不会退化成全页遍历。
+                        // （措辞纪律：下文凡标「合成」的数字来自合成 DOM 360x671，不是真机。）
+                        "var isCode=(e.tagName==='PRE');" +
+                        "if(big&&!isCode&&e.children){" +
+                        "var lv=[e],dep=0;" +
+                        "while(!isCode&&dep<3){var nx=[];" +
+                        "for(var gi=0;gi<lv.length;gi++){var ch=lv[gi].children;" +
+                        "for(var qk=0;ch&&qk<ch.length;qk++){" +
+                        "var kk=ch[qk];" +
+                        "if(kk.tagName==='PRE'){isCode=true;break;}" +
+                        "if(getComputedStyle(kk).display==='contents')" +
+                        "nx.push(kk);}" +
+                        "if(isCode)break;}" +
+                        "if(isCode)break;lv=nx;dep++;}}" +
+                        "var isLayout=big&&!isCode&&e.id!=='dsh-theme-veil'&&!isSb&&" +
+                        "(e.__dshGlass===1)&&" +
+                        "(function(){var ps=getComputedStyle(e);" +
+                        "return ps.position==='static'||" +
+                        "ps.position==='relative';})()&&" +
+                        "!ancBigPos;" +
+                        "var isPanel=false;" +
+                        "if(big&&!isLayout&&!isSb&&e.id!=='dsh-theme-veil'){" +
+                        "var pcs=getComputedStyle(e);" +
+                        "if(pcs.position==='absolute'||pcs.position==='fixed'){" +
+                        "isPanel=true;}" +
+                        "else if(ancBigPos){isPanel=true;}}" +
                         "if(!m)continue;" +
                         "var a0=(m[4]!==undefined?parseFloat(m[4]):1);" +
+                        "var pm=(a0>=1?m:null);" +
+                        // ★ v1.32.13「内容块」判据：innerBig = 后代里**自身也超过 50%×50% 视口**的元素
+                        // 个数（"里面还套着几层大容器"）。实测布局容器 BynINW_frame/centerCol/Dc7zOa_root
+                        // = 70/42/41，而聊天里的大代码块 = **2** ⇒ 20 倍余量，是干净的**结构**判据、
+                        // **不依赖 CSS-module 类名**（v1.32.5 教训）。
+                        // ⛔ 被实测否决的判据：**"后代含 pre/code"** —— Dc7zOa_root（布局容器，
+                        // innerBig=41）后代里也有 pre/code（整棵聊天树含代码块）⇒ 会命中布局容器
+                        // ⇒ 多层白叠 ⇒ **复现 v1.32.6「壁纸整层消失」**。只能靠嵌套计数，不能靠语义/颜色。
+                        // ★ v1.32.15 修正（本轮合成 DOM 实测出来的，不是推测）：isCB 的求值顺序
+                        // 必须**早于**取原生色相 pm，且 MUST NOT 以 pm 非空为前提。原因：pm 只在
+                        // a0>=1 时非空，而内容块第一轮会被兜底分支写成 transparent ⇒ 第二轮起
+                        // a0=0 ⇒ pm=null ⇒ 若 isCB 要求 pm 则恒为 false ⇒ 而 B 又把「剥内联读原生」
+                        // 收窄成 (isPanel||isCB) ⇒ 三者互相咬死成**死锁**，聊天代码块永远停在
+                        // transparent（v1.32.13 不回归才怪）。现顺序：isCB 先算（只要求 big 且不在
+                        // 布局链/定位面板/侧栏根/veil）→ 再由它解锁剥内联 → pm 由原生色填充。
+                        // ★ v1.32.15-C 迟滞：innerBig 是**运行时量**，首屏/局部重渲染/流式生成
+                        // 中途会临时失真（v1.32.13 FINDING-1 实测布局容器从 41 掉到 <=2）。
+                        // **单轮命中一律不写**：首轮只把元素标成候选，2x requestAnimationFrame
+                        // （≈两帧）后**复核**同一判据，仍 <=2 才置 e.__cbOk=1 并重跑 apply()
+                        // 落地写入 = **连续两轮成立才允许写不透明**。过渡态只要有一帧
+                        // 被后代撑开就不落地；稳定态内容块两帧后仍是 2，代价只是多 ≈32ms。
+                        // 一旦 innerBig 变回 >2（或元素被换节点/退出候选集）就**清掉复核标记**，
+                        // 下次必须重新连续两轮；已确认过的也不会再排复核 ⇒ apply() 不自激。
+                        "var innerBig=-1,isCB=false;" +
+                        "if(big&&!isLayout&&!isPanel&&!isSb&&" +
+                        "e.id!=='dsh-theme-veil'){" +
+                        "if(e.__qaSeq===undefined){window.__qaN=" +
+                        "(window.__qaN||0)+1;e.__qaSeq=window.__qaN;}" +
+                        "var qrec={cls:cn.slice(0,90),innerBig:-1," +
+                        "cbOk:(e.__cbOk===1),nodeSeq:e.__qaSeq,isCode:isCode,isCB:false};" +
+                        "e.__qaRec=qrec;qa.push(qrec);" +
+                        "innerBig=_cbn(e);qrec.innerBig=innerBig;" +
+                        "if(innerBig<=2){" +
+                        // ★ v1.32.15 D1（真机 QA 实测，P1）：命中 isCode 的元素**免两轮迟滞**，
+                        // 当轮就允许原生不透明回写。理由写死在这里，别让下次又给它加回迟滞：
+                        // · FINDING-1 的失真面是「**布局容器**在渲染中途 innerBig 临时掉到 <=2」，
+                        //   而 isCode 是**标签结构**判据（自身 PRE 或直接子节点 PRE），不是测量；
+                        //   且它排在 isLayout / isPanel 之后，两者已把布局容器与定位面板排除掉。
+                        // · 真机 innerBig=1 恰好证明「大后代只有一个 PRE」就是内容叶子的**稳定**
+                        //   形态（卡片 233x410 里那个 233x368 的 PRE），不该被迟滞卡住。
+                        // · 更关键：聊天列表**虚拟化会换节点**，而 __cbOk 挂在 DOM 节点上 ⇒ 每轮
+                        //   都是新节点 ⇒ 永远攒不满「连续两轮」⇒ 兜底分支当轮写 transparent、
+                        //   不透明要晚一轮 ⇒ 长期停在 transparent（D1 实测 4 次运行稳定复现）。
+                        // · 不会把 FINDING-1 放回来：isCode 元素被写的值是它**自己的原生色相**，
+                        //   只取决于它自身的 CSS、不随后代增减而变 ⇒ 早一轮写与晚一轮写**同一个值**，
+                        //   没有可翻转的第二值；且 innerBig<=2 与「原生必须真的不透明」两道闸仍在。
+                        "isCB=isCode||(e.__cbOk===1);" +
+                        "if(!isCB)cand.push(e);" +
+                        "}else{e.__cbOk=0;}" +
+                        "qrec.isCB=isCB;" +
+                        "}else{e.__cbOk=0;}" +
                         // 取**原生**色相 pm（v1.32.12 起）：我们可能已把内联值改成 transparent 或 0.45，
                         // 此时 computed 读不出原色 ⇒ 临时摘掉内联再读，读完按需还原。
                         // 原生确实没有不透明底的（如 OUqwTW_panelBody/_surface_6nhg2_125、#dsh-theme-veil）
-                        // 一律判为"不是内容面"，**绝不给无底元素凭空加底**。
-                        // veil 按 id 显式排除：连瞬时摘除都不做，不依赖"另一段注入恰好先写"的顺序。
-                        "var pm=(a0>=1?m:null);" +
-                        "if(big&&!isAnchor&&a0<1&&e.id!=='dsh-theme-veil'){" +
+                        // 一律判为“不是内容面”，**绝不给无底元素凭空加底**。
+                        // veil 按 id 显式排除：连瞬时摘除都不做，不依赖“另一段注入恰好先写”的顺序。
+                        // ★ v1.32.15-B：入口从 `big && !isAnchor` 收窄为 `big && !isLayout &&
+                        // (isPanel || isCB)` —— 只有定位面板与内容叶子才可能被写不透明，
+                        // 布局链与侧栏根（归 bwPanelBg 的 0.92 管）**连瞬时摘内联都不做**，
+                        // 否则“原生不透明就不还原”的既有语义会把它们的底色抹掉。
+                        // 注意 isCB 已在上面算好（且不以 pm 为前提），这里才能用它当解锁条件。
+                        "if(big&&!isLayout&&(isPanel||isCB)&&a0<1&&" +
+                        "e.id!=='dsh-theme-veil'){" +
                         "var sv=e.style.getPropertyValue('background-color')," +
                         "sp=e.style.getPropertyPriority('background-color');" +
                         "e.style.removeProperty('background-color');" +
@@ -438,29 +622,16 @@ class WebActivity : Activity() {
                         "var na=(nx&&nx[4]!==undefined)?parseFloat(nx[4]):(nx?1:0);" +
                         "if(nx&&na>=1){pm=nx;}else{if(sv)e.style.setProperty(" +
                         "'background-color',sv,sp||'');}}" +
-                        // ★ v1.32.13「内容块」判据：innerBig = 后代里**自身也超过 50%×50% 视口**的元素
-                        // 个数（"里面还套着几层大容器"）。实测布局容器 BynINW_frame/centerCol/Dc7zOa_root
-                        // = 70/42/41，而聊天里的大代码块 = **2** ⇒ 20 倍余量，是干净的**结构**判据、
-                        // **不依赖 CSS-module 类名**（v1.32.5 教训）。
-                        // ⛔ 被实测否决的判据：**"后代含 pre/code"** —— Dc7zOa_root（布局容器，
-                        // innerBig=41）后代里也有 pre/code（整棵聊天树含代码块）⇒ 会命中布局容器
-                        // ⇒ 多层白叠 ⇒ **复现 v1.32.6「壁纸整层消失」**。只能靠嵌套计数，不能靠语义/颜色。
-                        // 代价控制：innerBig 与上面的"剥内联"都**只在 big && !isAnchor 成立时才做**；
-                        // 实测该判据下 wouldChange 恰好 = 1（只有目标代码块）。
-                        "var innerBig=-1,isCB=false;" +
-                        "if(big&&!isAnchor&&pm){" +
-                        "innerBig=0;" +
-                        "var _ds=e.querySelectorAll('div,section,main," +
-                        "aside,article,pre,code,table,ul');" +
-                        "for(var _i=0;_i<_ds.length;_i++){if(_ds[_i]===e)continue;" +
-                        "var _r=_ds[_i].getBoundingClientRect();" +
-                        "if(_r.width>vw*0.5&&_r.height>vh*0.5)innerBig++;}" +
-                        "isCB=(innerBig<=2);}" +
                         // 幂等闸门：非浮层/非面板保持原保守语义（已半透明则不再处理）。
                         // ★ 但**内容块必须放行** —— 否则"还矮时被写成 0.45、长高后被闸门挡住"的实例
                         // （坏态 B）**永远修不回来**。实测同屏 10 个 md-code-block，其中 8 个高度未过
                         // 阈值、按设计就该是 0.45（本轮裁定不动）；放行只对命中 isCB 的生效。
-                        "if(!isOv&&!(big&&isPanel)&&!isCB&&a0<1)continue;" +
+                        // ★ v1.32.15-B：布局链（isLayout）也放行 —— 它只会被写 transparent，重写是
+                        // 同值幂等的，不放行反而会把"被 React 换节点后露出原生白"的瞬时露白
+                        // 固化下去（那时 a0=1，闸门本就不拦；这里补上是为了 a0 已被写成
+                        // 0.45 的历史残留也能被拉回 transparent，方向仍是单向的）。
+                        "if(!isOv&&!(big&&isPanel)&&!isCB&&!isLayout&&a0<1)" +
+                        "continue;" +
                         "var skipBg=cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0&&vw<=1023;" +
                         // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
@@ -476,7 +647,16 @@ class WebActivity : Activity() {
                         "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
                         "e.style.setProperty('background-color'," +
                         "(oa<1?ovFallback:'rgba('+m[1]+','+m[2]+','+m[3]+',0.96)')," +
-                        "'important');}" +
+                        "'important');e.__dshGlass=0;}" +
+                        // ★ v1.32.15-B 布局/滚动链（壁纸唯一通道）：**只允许 transparent**。
+                        // 排在浮层之后、isPanel/isCB 之前且与它们互斥：命中布局链的元素
+                        // 永远触碰不到"取原生色相回写"，因此即使过渡态测量失真，最坏也
+                        // 只是一次**同值幂等**的 transparent 重写，**不可能**再出现
+                        // "中途写白、下一轮抹回"的翻面（本次修复的主目标）。
+                        // 也不再需要类名锚点：旧的 else if(w>vw*0.5&&h>vh*0.5) 仍保留在面板/
+                        // 内容块之后兜底（v1.32.6 红线，一个字符不动）。
+                        "else if(isLayout){e.style.setProperty(" +
+                        "'background-color','transparent','important');e.__dshGlass=1;}" +
                         // ★ v1.32.12 阅读面板：仅当"大容器 + 全屏定位面板 + 原生确实有不透明底"时，
                         // 用它的**原生色相**恢复不透明实底（实测应用原生就是 rgb(255,255,255)
                         // 不透明纯白阅读页 ⇒ alpha=1 是**还原原生设计**，而非我们另造档位）。
@@ -484,31 +664,54 @@ class WebActivity : Activity() {
                         // 舒适阅读，与"短暂浮在内容上、需要空间线索"的菜单/浮层诉求不同 ⇒ 不必同档；
                         // 且 0.96 实测在面板空白处**仍可辨认底层聊天正文淡影**（lead 亲自看图确认）。
                         // 安全性与 alpha **正交**：是否命中完全由 isPanel 结构判据 + nativeOpaque
-                        // 前置 + veil/锚点显式排除三道护栏决定，改 alpha 不改变任何安全性质。
+                        // 前置 + veil/布局链/侧栏根显式排除三道护栏决定（v1.32.15 起锚点换为
+                        // isLayout 结构判据），改 alpha 不改变任何安全性质。
                         // 排在 transparent 通道分支**之前且互斥**；pm 为 null（原生无底）则落到
                         // 通道分支，行为与 v1.32.11 完全一致。
                         "else if(big&&isPanel&&pm){e.style.setProperty(" +
                         "'background-color','rgb('+pm[1]+','+pm[2]+','+pm[3]+')'," +
-                        "'important');}" +
+                        "'important');e.__dshGlass=0;}" +
                         // ★ v1.32.13 内容块：聊天正文里的大代码块（实测 331x524，原生 rgb(249,250,251)
                         // 不透明浅灰）此前落进大容器分支被抹成 transparent ⇒ 代码透出底层聊天正文
                         // （用户 2026-10-15「修吧」）。判据 isCB = 后代中大容器数 <= 2（见上文推导）；
                         // 给**原生色相**、alpha=1（它是**内容**不是装饰，半透明直接伤代码可读性；
                         // 应用原生本就完全不透明 ⇒ 1.0 是还原原生，与 v1.32.12 阅读面板同构）。
-                        // 与 isPanel 分支**互斥**（isCB 计算里已含 !isAnchor，且 isPanel 在前）；
+                        // 与 isPanel 分支**互斥**（isCB 计算里已含 !isLayout && !isPanel，且 isPanel 在前）；
                         // pm 为 null（原生无底）则落回通道分支，行为与 v1.32.12 一致。
                         "else if(big&&isCB&&pm){e.style.setProperty(" +
                         "'background-color','rgb('+pm[1]+','+pm[2]+','+pm[3]+')'," +
-                        "'important');}" +
+                        "'important');e.__dshGlass=0;}" +
+                        // ★ v1.32.15 D1-C：大容器兜底分支（v1.32.6 红线，写 transparent）也打所有权标记：
+                        //   「兜底写过 transparent」本身就是布局链的证据。它们全都打标记，
+                        //   链上元素才不会被 isCB 抢走。合成 DOM S12 实测：聊天只有一个大后代
+                        //   行时 innerBig≤2，若兜底不打标记，聊天根 / tabHost 会被写成不透明白
+                        //   ⇒ 壁纸整层消失（v1.32.6 红线）。写不透明的分支（面板 / 内容块 / 浮层 /
+                        //   0.45）一律置 0，保证标记始终等于「我们上一次写的是不是 transparent」。
                         "else if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
-                        "'background-color','transparent','important');}" +
-                        "else if(!skipBg){e.style.setProperty('background-color','rgba('+" +
+                        "'background-color','transparent','important');e.__dshGlass=1;}" +
+                        "else if(!skipBg){e.__dshGlass=0;e.style.setProperty(" +
+                        "'background-color','rgba('+" +
                         "m[1]+','+m[2]+','+m[3]+',0.45)','important');" +
                         "if(w>vw*0.08&&h>vh*0.03&&" +
                         "!(/BynINW_(sidebarCol|frame)/.test(cn))){" +
                         "e.style.setProperty('backdrop-filter','blur(12px)'," +
                         "'important');e.style.setProperty('-webkit-backdrop-" +
                         "filter','blur(12px)','important');}}}" +
+                        // ★ QA 探针（D1 取证用，只读数组、不参与任何判定）：每轮把候选集导出到
+                        // window.__qaCb。字段 cls / innerBig / cbOk / nodeSeq / isCode / isCB；
+                        // nodeSeq 是注入侧给每个 DOM 节点发的自增身份号，**换节点就会换号**，
+                        // 用来区分「同一元素被 React 换成新节点」（虚拟列表回收 ⇒ __cbOk 与 nodeSeq
+                        // 一起丢，正是 D1 的指纹）。复核通过时上面那行会把对应记录的 cbOk 置 true。
+                        "window.__qaCb=qa;" +
+                        // ★ 一批一次复核：两帧后仍 <=2 的候选全部置 e.__cbOk=1，然后**只重跑一次**
+                        // apply() 落地。重跑那一轮里它们已是 isCB=true ⇒ 不会再进 cand ⇒ 不会自激。
+                        "if(cand.length){requestAnimationFrame(" +
+                        "function(){requestAnimationFrame(function(){" +
+                        "var ch=false;for(var c=0;c<cand.length;c++){" +
+                        "var t2=cand[c];if(t2.isConnected&&_cbn(t2)<=2)" +
+                        "{t2.__cbOk=1;ch=true;if(t2.__qaRec)" +
+                        "t2.__qaRec.cbOk=true;}}if(ch)apply();" +
+                        "});});}" +
                         "var v=document.getElementById('dsh-theme-veil');" +
                         "if(!v){v=document.createElement('div');v.id='dsh-theme-veil';" +
                         "document.body.appendChild(v);}" +

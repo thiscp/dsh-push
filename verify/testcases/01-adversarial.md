@@ -183,7 +183,8 @@
   4. 对 owner≠target 的点用 CDP Input.dispatchMouseEvent **真点一次**，看记录器里实际触发的是谁
   5. 再对每个按钮的**图标中心**真点一次，确认"自己点自己"
 - **预期**: 图标中心与图标内的点必须触发它自己；只有"故意点到邻居图标上"才触发邻居。命中框可以重叠，但**不能让 A 的视觉区落在 B 的命中框里**。
-- **实际**: v1.32.7 **不满足**：Open in File Explorer(40x40 @279.3) 与 More ways to open(40x40 @299.3) 横向重叠 20px，前者图标视觉中心(299.3) 的 owner 是后者 —— elementFromPoint 与真实输入双重确认"点它的中心打开了邻居的菜单"；Workspaces 行 Search sessions / View options / Add workspace（各 40x40，中心距 32px）两两重叠 8px，点右/左边缘分别触发邻居（真点验证 3 处）。
+- **实际（v1.32.14 CSS360 复测，2026-10-15）**: **CSS360 基线重打完成，重叠仍存在**：收起态 header 7 按钮命中框 `Collapse sidebar`(40x40 @234,16)、`Open in File Explorer`(23x40 @235.1,5.1)、`More ways to open`(20x40 @259.4,5.1)；**`Collapse sidebar`↔`Open in File Explorer` 横向重叠 23px**（面积 669.3）、**`Collapse sidebar`↔`More ways to open` 重叠 14.6px**；`realTaps` 实证：点 `Open in File Explorer` 中心 (246.6,25.1) 触发 `New session`/`Collapse sidebar`（`selfHit=false`），7 处边缘/中心误触（`Search sessions`/`View options`/`Add workspace` 左右边缘触发 `Workspaces`）。⇒ **v1.32.7 FINDING-1 延续，P1 持续**（归因：DSH Web 上游紧凑布局 + App 40px 放大）。
+- **实际（v1.32.7 旧 411 宽，数字作废）**: v1.32.7 **不满足**：Open in File Explorer(40x40 @279.3) 与 More ways to open(40x40 @299.3) 横向重叠 20px，前者图标视觉中心(299.3) 的 owner 是后者 —— elementFromPoint 与真实输入双重确认"点它的中心打开了邻居的菜单"；Workspaces 行 Search sessions / View options / Add workspace（各 40x40，中心距 32px）两两重叠 8px，点右/左边缘分别触发邻居（真点验证 3 处）。
 - **结果**: **FAIL（P1）**，见 verify/QA-ROUND-v1.32.7.md FINDING-1/2
 - **证据**: tmp\shots\v1327-qa\qa-A14-hitboxes.png（红=命中框、绿=图标）、qa-report 的 QA-A14.dom.realTaps
 
@@ -198,7 +199,8 @@
   2. 断言：轨道宽仍 ≈55.6；轨道内按钮右边界 ≤ 轨道宽；相邻行纵向不重叠
   3. 截图 qa-A15-rail.png
 - **预期**: 轨道宽度不变、按钮不顶出、纵向有间隙；收起态外观与 v1.32.6 一致。
-- **实际**: 轨道 55.6px 不变；轨道内按钮（Open sidebar / New session / Plugins / Add workspace / Search sessions / Settings）最大 40x40、右边界 ≤44px **未顶出**；纵向行距 32px、40px 框之间留 8px **无重叠** ✓
+- **实际（v1.32.14 CSS360 复测，2026-10-15）**: 轨道 `w=55.5` `collapsed=true`；轨道内 6 按钮 `railSelfHit` 全 true、不顶出、纵向不重叠；`buttonCount=279`、`buttonsAtLeast40High=9`。**PASS**。
+- **实际（v1.32.7 旧 411 宽，数字作废）**: 轨道 55.6px 不变；轨道内按钮（Open sidebar / New session / Plugins / Add workspace / Search sessions / Settings）最大 40x40、右边界 ≤44px **未顶出**；纵向行距 32px、40px 框之间留 8px **无重叠** ✓
 - **结果**: PASS
 - **证据**: tmp\shots\v1327-qa\qa-A15-rail.png
 

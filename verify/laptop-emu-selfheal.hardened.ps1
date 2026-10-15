@@ -276,14 +276,63 @@ $RUNGCWD = 'G:\Android\emu-ladder-rung.cmd'
 $RUNGMODE = 'G:\Android\emu-ladder.gpu'
 $AVDFILE = 'G:\Android\emu-ladder.avd'
 
+# ---- console-window suppression -----------------------------------------------------------------
+# The rung task must stay Interactive (LogonType Interactive) so qemu owns the real GPU in the
+# console session, but an interactive task's console window lands on <user>'s desktop.
+#
+# MEASURED on DESKTOP-CPYH 2026-10-15: Task Scheduler's Settings.Hidden=$true does NOT hide that
+# window. A canary task (Hidden=True, action "powershell.exe -File x.ps1") still reported
+# IsWindowVisible(GetConsoleWindow()) = True from inside the process, session 1. A window-level
+# auditor confirmed a bare cmd.exe task with Hidden=True shows up as a visible ConsoleWindowClass
+# window. The action-level launch through a wscript shim (SW_HIDE) DOES suppress it
+# (IsWindowVisible = False) while keeping the child in session 1. So: keep Hidden=True AND route
+# the action through the shim. Both are needed; neither alone is sufficient.
+$SHIM = 'C:\Windows\System32\wscript.exe'
+$SHIMVBS = 'G:\Android\hidden-run.vbs'
+
+function New-RungAction {
+  return New-ScheduledTaskAction -Execute $SHIM -Argument ('//B "{0}" {1}' -f $SHIMVBS, $RUNGCWD)
+}
+
+function Test-RungActionHidden([object]$task) {
+  $a = $task.Actions[0]
+  if (-not $a) { return $false }
+  return (($a.Execute -like '*wscript.exe') -and ($a.Arguments -like ('*' + $SHIMVBS + '*')))
+}
+
 function Ensure-RungTask {
   $existing = Get-ScheduledTask -TaskName $RUNGTASK -ErrorAction SilentlyContinue
-  if ($existing) { return $true }
+  if ($existing) {
+    # Repair path: an older rung task was registered with a bare console action (and/or with
+    # Hidden=False), which is exactly what flashed a cmd window on the desktop every time a rung
+    # started. Re-assert BOTH properties on every pass so a re-registered task cannot bring the
+    # flash back silently.
+    $needsAction = -not (Test-RungActionHidden $existing)
+    $needsHidden = ($existing.Settings.Hidden -ne $true)
+    if ($needsAction -or $needsHidden) {
+      if ($DryRun) {
+        Log ('  DRYRUN: would fix rung task ' + $RUNGTASK + ' (action=' + $needsAction + ' hidden=' + $needsHidden + ')')
+      } else {
+        try {
+          $fix = $existing.Settings
+          $fix.Hidden = $true
+          if ($needsAction) {
+            Set-ScheduledTask -TaskName $RUNGTASK -Action (New-RungAction) -Settings $fix | Out-Null
+          } else {
+            Set-ScheduledTask -TaskName $RUNGTASK -Settings $fix | Out-Null
+          }
+          Log ('  fixed rung task ' + $RUNGTASK + ' (action=' + $needsAction + ' hidden=' + $needsHidden + ')')
+        } catch { Log ('  could NOT fix rung task: ' + $_.Exception.Message) }
+      }
+    }
+    return $true
+  }
   if ($DryRun) { Log ('  DRYRUN: would create one-shot rung task ' + $RUNGTASK); return $true }
   try {
-    $action = New-ScheduledTaskAction -Execute $RUNGCWD
+    $action = New-RungAction
     $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Hours 12)
+    $settings.Hidden = $true
     Register-ScheduledTask -TaskName $RUNGTASK -Action $action -Principal $principal -Settings $settings -Force | Out-Null
     Log ('  created one-shot rung task ' + $RUNGTASK)
     return $true
@@ -399,6 +448,16 @@ if ($SshdOnly) {
 # 2) session state is recorded for humans only (see F1 note above)
 $interactive = InteractiveSession
 Log ('interactive console session: ' + $interactive + ' (INFORMATIONAL ONLY - no longer gates the GPU ladder)')
+
+# 2b) always-on console-window guard.
+# The rung task's action is what decides whether a rung start flashes a console window on <user>'s
+# desktop. This must run on EVERY pass, not just inside Start-Rung: the common case is "already
+# healthy -> exit 0", which never reaches Start-Rung, so a rung task that had drifted back to a
+# bare visible cmd action would sit there un-repaired until the next real ladder run -- and the
+# rung's own registration is exactly what flashes. Regression-tested: deliberately re-registered
+# the rung task with (Hidden=False, Execute=emu-ladder-rung.cmd), ran this pass, and confirmed it
+# is restored to (Hidden=True, wscript shim) before the health gate can exit.
+if (-not (Ensure-RungTask)) { Log 'WARNING: rung task unavailable; a later rung start may fall back to a visible console' }
 
 # 3) health check -- now renderer-aware (F2)
 $q0 = QemuProcs

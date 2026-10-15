@@ -1,0 +1,58 @@
++    0s RUN  step=emulator-up timeout=20s
++    0s CMD  ssh -o BatchMode=yes -o ConnectTimeout=10 user@<tailnet-laptop> hostname
++    0s DONE step=emulator-up rc=0 out_bytes=14 elapsed=0s
++    0s emulator host reachable: DESKTOP-CPYH (<tailnet-laptop>)
++    0s RUN  step=seed-prefs timeout=60s
++    0s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "C:\Temp\dsh-verify\dshpush.xml" "user@<tailnet-laptop>:G:/Android/dshpush.xml"
++    0s DONE step=seed-prefs rc=0 out_bytes=0 elapsed=0s
++    0s RUN  step=build-vm1 timeout=60s
++    0s CMD  ssh -o BatchMode=yes -o ConnectTimeout=10 user@<tailnet-vm1> "rm -rf work/projects/dsh-push/android-app/app/src"
++    0s DONE step=build-vm1 rc=0 out_bytes=0 elapsed=0s
++    0s RUN  step=build-vm1 timeout=60s
++    0s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 -r "E:\work\work_dsh\dsh-push\verify\..\android-app\app\src" "user@<tailnet-vm1>:work/projects/dsh-push/android-app/app/"
++    6s DONE step=build-vm1 rc=0 out_bytes=0 elapsed=6s
++    6s RUN  step=build-vm1 timeout=60s
++    6s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "E:\work\work_dsh\dsh-push\verify\..\android-app\app\build.gradle.kts" "user@<tailnet-vm1>:work/projects/dsh-push/android-app/app/"
++    6s DONE step=build-vm1 rc=0 out_bytes=0 elapsed=6s
++    6s RUN  step=build-vm1 timeout=60s
++    6s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "E:\work\work_dsh\dsh-push\verify\..\android-app\build.gradle.kts" "E:\work\work_dsh\dsh-push\verify\..\android-app\settings.gradle.kts" "E:\work\work_dsh\dsh-push\verify\..\android-app\gradle.properties" "user@<tailnet-vm1>:work/projects/dsh-push/android-app/"
++    7s DONE step=build-vm1 rc=0 out_bytes=0 elapsed=7s
++    7s RUN  step=build-vm1 timeout=900s
++    7s CMD  ssh -F NUL -o BatchMode=yes -o ConnectTimeout=10 user@<tailnet-vm1> "tr -d '\r' | bash -s"
++   13s DONE step=build-vm1 rc=0 out_bytes=9 elapsed=13s
++   13s RUN  step=fetch-apk timeout=60s
++   13s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "user@<tailnet-vm1>:work/projects/dsh-push/android-app/app/build/outputs/apk/debug/app-debug.apk" "C:\Temp\dsh-verify\dsh-push.apk"
++   15s DONE step=fetch-apk rc=0 out_bytes=0 elapsed=15s
+[PASS] build-vm1 - apk 10993764 bytes
++   15s RUN  step=push-apk timeout=60s
++   15s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "C:\Temp\dsh-verify\dsh-push.apk" "user@<tailnet-laptop>:G:/Android/dsh-push.apk"
++   15s DONE step=push-apk rc=0 out_bytes=0 elapsed=15s
++   15s RUN  step=drive timeout=60s
++   15s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "C:\Temp\dsh-verify\drive.ps1" "user@<tailnet-laptop>:G:/Android/verify-drive.ps1"
++   15s DONE step=drive rc=0 out_bytes=0 elapsed=15s
++   15s RUN  step=drive timeout=660s
++   15s CMD  ssh -o BatchMode=yes -o ConnectTimeout=10 user@<tailnet-laptop> "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File G:\Android\verify-drive.ps1 < NUL"
++   58s DONE step=drive rc=0 out_bytes=463 elapsed=58s
+[PASS] emulator-up - serial=emulator-5554 api=36
+[PASS] install - Performing Streamed Install | Success
+[PASS] push-received - entries with unique body: 1; PUSH_HTTP=200 BODY=auto-verify 1792075008
+[PASS] mid-unique - distinct mids: 1975878847
+[PASS] entry-unread
++   58s RUN  step=screenshot timeout=60s
++   58s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "user@<tailnet-laptop>:G:/Android/verify-shot.png" "C:\Temp\dsh-verify\verify-223648.png"
++   59s DONE step=screenshot rc=0 out_bytes=0 elapsed=59s
+[PASS] screenshot - C:\Temp\dsh-verify\verify-223648.png
++   59s RUN  step=deploy timeout=60s
++   59s CMD  scp -o BatchMode=yes -o ConnectTimeout=10 "C:\Temp\dsh-verify\dsh-push.apk" "aliyun:/var/www/certbot/dl/dsh-push.apk"
++   60s DONE step=deploy rc=0 out_bytes=0 elapsed=60s
++   60s RUN  step=deploy timeout=60s
++   60s CMD  curl.exe -s -o "C:\Temp\dsh-verify\dl-check.apk" -w "%{http_code} %{size_download}" "https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=81"
++   60s DONE step=deploy rc=0 out_bytes=12 elapsed=60s
+[PASS] deploy - link: https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=81
++   60s RUN  step=update-notify timeout=60s
++   60s CMD  curl.exe -s -X POST -H "Authorization: Bearer tk_REPLACE_WRITE" -H "Content-Type: application/json" --data-binary "@C:\Temp\dsh-verify\upd-note.json" https://ntfy.cpyh.xyz
++   60s DONE step=update-notify rc=0 out_bytes=275 elapsed=60s
+[PASS] update-notify - id: 6jJhMQKV6N5z
+
+SUMMARY: 9/9 passed
+LOG: C:\Temp\dsh-verify\verify-20261015-223632.log

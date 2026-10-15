@@ -1,11 +1,16 @@
 # RUNBOOK：把笔电模拟器自愈脚本加固到 F1–F3（禁 CPU 软渲染）
 
 > **读者**：下一轮的 leader（或任何要动笔电模拟器基础设施的人）。
-> **状态**：✅ **已执行完成（2026-10-14 19:02）**。加固版已部署为笔电现网脚本
-> `G:\Android\emu-selfheal.ps1`（sha256 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`），
+> **状态**：✅ **已执行完成（2026-10-14 19:02）**，并在 **2026-10-15 追加 F7**。
+> 加固版已部署为笔电现网脚本 `G:\Android\emu-selfheal.ps1`。
+> ⚠️ **现网 sha256 已变**：F1–F3 完成时为 `21C1856BB181476C882D05A4981F6CAA84BFDEADF6B155045A49BA1FE0358C3D`，
+> **2026-10-15 加 F7 后 = `26F2CFE123F140F0ADA463E41187C58A9C55EF5FD670317D28BA7916F34184EE`**。
+> **F7 = 每次 pass 断言 rung 任务为「shim 动作 + Hidden=True」**（治"桌面闪窗"，见
+> `CONSOLE-WINDOW-FIX-2026-10-15.md`）。改脚本后必须同步 `verify/laptop-emu-selfheal.hardened.ps1`。
 > 生产模式验收通过。**本手册保留为复现/换机器/回滚指南**，执行记录与踩坑见
 > `verify/INFRA-HEALTH-2026-10-14.md` §9（含首跑挖出的 `Run-Timeout` 死锁根因与修法）。
-> 备份：`G:\Android\emu-selfheal.ps1.bak-f13`（= 旧脚本 `BE99A7F9…`）→ 回滚见 §4。
+> 备份：`G:\Android\emu-selfheal.ps1.bak-f13`（= 旧脚本 `BE99A7F9…`，F1–F3 之前）→ 回滚见 §4；
+> **加 F7 前的上一版 = `emu-selfheal.ps1.bak-hidden-20261015-155150`（`21C1856B…`）**。
 > **配套**：`verify/INFRA-HEALTH-2026-10-14.md`（根因与取证）、`verify/laptop-emu-selfheal.hardened.ps1`（成品）、
 > `verify/drive-hardened-dryrun.ps1`（证明脚本）、`verify/emu-gpu-verdict.ps1`（一条命令判档位）。
 

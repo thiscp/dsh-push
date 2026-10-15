@@ -1,0 +1,275 @@
+{
+ "mode": "discover",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "v132-15-vm1",
+ "pid": "5438",
+ "shaBefore": "597ff2672ebe9fe88c2930dfa48eecf9fc46ecc628e35cc4624bc462e8e57827",
+ "startedAt": "2026-10-15T11:23:23.953Z",
+ "discover": {
+  "vw": 360,
+  "vh": 671,
+  "dpr": 4,
+  "census": {
+   "BynINW_": 0,
+   "_2H3hWW_root": 0,
+   "_2H3hWW_collapsed": 0,
+   "Dc7zOa_root": 0,
+   "md-code-block": 0,
+   "_tabHost_": 0,
+   "_surface_": 0,
+   "_split_": 0,
+   "_root_": 3,
+   "_frame_": 0,
+   "_centerCol_": 0,
+   "_float_": 0,
+   "Z9Jnlq_": 0
+  },
+  "bigCount": 8,
+  "big": [
+   {
+    "tag": "DIV",
+    "cls": "",
+    "w": 360,
+    "h": 671,
+    "pos": "static",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "",
+    "gateOpen": false,
+    "isCode": false,
+    "innerBig": 6,
+    "text": "Into the UnknownPreviewCho"
+   },
+   {
+    "tag": "DIV",
+    "cls": "pI_x6G_frame",
+    "w": 360,
+    "h": 671,
+    "pos": "relative",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "transparent",
+    "gateOpen": true,
+    "isCode": false,
+    "innerBig": 5,
+    "text": "Into the UnknownPreviewCho"
+   },
+   {
+    "tag": "DIV",
+    "cls": "pI_x6G_overlayLayer",
+    "w": 360,
+    "h": 671,
+    "pos": "absolute",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "transparent",
+    "gateOpen": true,
+    "isCode": false,
+    "innerBig": 0,
+    "text": ""
+   },
+   {
+    "tag": "DIV",
+    "cls": "",
+    "w": 360,
+    "h": 671,
+    "pos": "fixed",
+    "alpha": 0.45,
+    "bg": "rgba(255, 255, 255, 0.45)",
+    "inline": "rgba(255, 255, 255, 0.45)",
+    "gateOpen": false,
+    "isCode": false,
+    "innerBig": 0,
+    "text": ""
+   },
+   {
+    "tag": "DIV",
+    "cls": "pI_x6G_centerCol",
+    "w": 304,
+    "h": 671,
+    "pos": "static",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "",
+    "gateOpen": false,
+    "isCode": false,
+    "innerBig": 3,
+    "text": "Into the UnknownPreviewCho"
+   },
+   {
+    "tag": "DIV",
+    "cls": "wSkVaW_root",
+    "w": 304,
+    "h": 671,
+    "pos": "relative",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "transparent",
+    "gateOpen": true,
+    "isCode": false,
+    "innerBig": 2,
+    "text": "Into the UnknownPreviewCho"
+   },
+   {
+    "tag": "DIV",
+    "cls": "wSkVaW_body",
+    "w": 304,
+    "h": 671,
+    "pos": "relative",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "transparent",
+    "gateOpen": true,
+    "isCode": false,
+    "innerBig": 1,
+    "text": "Into the UnknownPreviewCho"
+   },
+   {
+    "tag": "DIV",
+    "cls": "wSkVaW_scrollBody",
+    "w": 302,
+    "h": 671,
+    "pos": "static",
+    "alpha": 0,
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "transparent",
+    "gateOpen": true,
+    "isCode": false,
+    "innerBig": 0,
+    "text": "Into the UnknownPreviewCho"
+   }
+  ],
+  "opaqueWritten": [],
+  "opaqueCount": 0,
+  "htmlInline": "transparent",
+  "bodyInline": "transparent",
+  "veilInline": "position: fixed; inset: 0px; z-index: -1; pointer-events: none; background: rgba(255, 255, 255, 0.45);"
+ },
+ "read": {
+  "vw": 360,
+  "vh": 671,
+  "t0": 5178,
+  "out": {
+   "html": {
+    "id": 1,
+    "tag": "HTML",
+    "cls": "",
+    "domId": "",
+    "bg": "rgba(0, 0, 0, 0)",
+    "alpha": 0,
+    "inline": "transparent",
+    "prio": "important",
+    "pos": "static",
+    "z": "auto",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "big": true,
+    "gateOpen": true,
+    "text": ":root{color-scheme:light}body{"
+   },
+   "body": {
+    "id": 2,
+    "tag": "BODY",
+    "cls": "",
+    "domId": "",
+    "bg": "rgba(0, 0, 0, 0)",
+    "alpha": 0,
+    "inline": "transparent",
+    "prio": "important",
+    "pos": "static",
+    "z": "auto",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "big": true,
+    "gateOpen": true,
+    "text": "(() => { const preference = \"s"
+   },
+   "frame": {
+    "absent": true
+   },
+   "centerCol": {
+    "absent": true
+   },
+   "rootBig": {
+    "absent": true
+   },
+   "tabHost": {
+    "absent": true
+   },
+   "surfaceBig": {
+    "id": 3,
+    "tag": "DIV",
+    "cls": "_surface_6nhg2_125",
+    "domId": "",
+    "bg": "rgba(0, 0, 0, 0)",
+    "alpha": 0,
+    "inline": "",
+    "prio": "",
+    "pos": "static",
+    "z": "auto",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "big": true,
+    "gateOpen": false,
+    "text": "Empty pane"
+   },
+   "split": {
+    "absent": true
+   },
+   "bigPre": {
+    "absent": true
+   },
+   "smallCB": {
+    "absent": true
+   },
+   "inputCard": {
+    "absent": true
+   },
+   "veil": {
+    "id": 4,
+    "tag": "DIV",
+    "cls": "",
+    "domId": "dsh-theme-veil",
+    "bg": "rgba(255, 255, 255, 0.45)",
+    "alpha": 0.45,
+    "inline": "rgba(255, 255, 255, 0.45)",
+    "prio": "",
+    "pos": "fixed",
+    "z": "-1",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "big": true,
+    "gateOpen": false,
+    "text": ""
+   },
+   "menu": {
+    "absent": true
+   },
+   "sidebar": {
+    "absent": true
+   }
+  }
+ },
+ "shots": [
+  {
+   "name": "qa-v132-15-vm1-discover",
+   "bytes": 943947,
+   "ok": true,
+   "pidBefore": "5438",
+   "pidAfter": "5438",
+   "alive": true
+  }
+ ],
+ "shaAfter": "597ff2672ebe9fe88c2930dfa48eecf9fc46ecc628e35cc4624bc462e8e57827",
+ "pidAfter": "5438",
+ "elapsedMs": 10220,
+ "finishedAt": "2026-10-15T11:23:25.899Z"
+}

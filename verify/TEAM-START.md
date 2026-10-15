@@ -50,6 +50,11 @@
     所以你**可能观察到模拟器被自愈重启一次**——看 `emu-ladder.log` 有无 `VIOLATION` 行再判定，别当故障。
   - **截图耗时基线（真 GPU）**：`screencap`+`pull` 稳态 **1.0–1.25s**（n=3）；单次受预热影响，只能当旁证，**旧 swiftshader 数字作废**。
   - 判定"客机真的健康"用 `boot_completed=1` **且** `adb shell echo ok` 有回应 —— **`adb devices` 看得到 ≠ 客机健康**。
+  - 🔴 **闪窗已修（2026-10-15，F7）**：桌面偶发的 cmd 闪窗**不是模拟器本体**，是 `\emu-selfheal`（Interactive/session 1，每 5 分钟，`Write-Host` 上屏）＋ `\emu-ladder-rung`。**核心硬事实：计划任务的 `Settings.Hidden=$true` 不给进程窗口设 `SW_HIDE`，因此无效**（进程内 `IsWindowVisible` + 窗口级 `EnumWindows` 双证）。**修法＝动作改走 `wscript.exe //B "G:\Android\hidden-run.vbs" "<目标>.cmd"` ＋ 保留 `Hidden=True` ＋ 保留 `Interactive`**（子进程仍需在 session 1 才拿得到真 GPU）。
+    - **判据**：不要只看 `Get-ScheduledTask` 的 `Hidden` 字段，也不要只看 `LastTaskResult`（`0` 只证明任务跑了、不证明没弹窗）；**唯一可信的是窗口级取证**——`verify\console-audit.ps1` 必须以 **Interactive 任务在 session 1** 跑（session 0 的 agent 看不到用户桌面），认 `kind=ONSREEN iconic=False`。
+    - **两个任务的 `LastResult=0x41301`(267009) = Running 是正常的**（rung 任务在模拟器运行期间一直 Running，12h `ExecutionTimeLimit` 语义未变），**不是错误码**。
+    - **冷启动会连带清掉遗留闪窗**：`emu-coldstart-real-gpu.ps1 -Kill` 走的就是新隐藏路径；实测 exit 0、渲染器 NVIDIA RTX 4060、`1440x3168@640`、`-Kill` 后**零可见控制台**。详情见 `verify/CONSOLE-WINDOW-FIX-2026-10-15.md`。
+    - ⚠️ **改完必须跑"健康路径"回归**：修复首版只写在 `Start-Rung` 里，而**最常见的一轮是"已健康 → exit 0"，永远走不到那里** ⇒ 漂移永不自愈。现已在 main **每次必跑**的位置断言。
 
 ### 0.2 ask_user_question 的两个坑（**已验证**）
 1. **子代理发不了提问**：harness 报 `owned by another live agent`（"owned by another live agent"）→ **N5 类"真实折回"用例必须借 lead 会话发问**，不要让 teammate 自己发。
@@ -72,16 +77,21 @@
 
 **写作用一句话钉死**：tester 只动 `verify/**`，developer 只动 `android-app|host-plugin|openspec`，leader 独占发布链与跨域改动 —— 重叠即冲突。
 
+**🔴 执行模式（2026-10-15 用户拍板，对所有角色生效）**：**同一时刻只有一个成员在干活**——本地模型只有一个串行 FIFO 引擎，
+三个角色与全部子智能体共用它。并发不会更快，只会互相排队 + 降质量。任务链 ①→②→③→④ **逐段串行**；
+`send_message` 一次只唤醒一个成员；Lead 派完活**立刻结束回合**让出服务槽；`subagent` 一次只发一个。
+不占 LLM 的活（跑脚本 / adb / scp / 构建 / 截图）不受此限。
+
 ## 2. 启动 prompt 模板（复制即用）
 
 **leader**：
-> 读 `verify/TEAM-START.md` 与 `verify/README.md`（含"AI 开发工作流硬事实"）。你是 leader：负责编排/验收/发布（`verify\dsh-app-verify.ps1 -Deploy -DeployNote "…"`，期望 `SUMMARY: 9/9`）。现在要做：<需求>。请先出任务链（实现 → 改动验证轮 → 发布），再按需 spawn developer/tester。
+> 读 `verify/TEAM-START.md` 与 `verify/README.md`（含"AI 开发工作流硬事实"）。你是 leader：负责编排/验收/发布（`verify\dsh-app-verify.ps1 -Deploy -DeployNote "…"`，期望 `SUMMARY: 9/9`）。现在要做：<需求>。请先出任务链（实现 → 改动验证轮 → 发布），再按需 spawn developer/tester（**串行**：同一时刻只让一个成员在跑，见 §3）。
 
 **developer**：
 > 读 `verify/TEAM-START.md`。你是 developer，写入范围 `android-app/**`、`host-plugin/**`、`openspec/**`。本笔：<需求>。先写 openspec 变更（proposal + specs delta，MODIFIED 逐字保留既有场景），实现后自己跑一遍能跑的自测，然后交 tester。
 
 **tester**：
-> 读 `verify/TEAM-START.md` 与 `verify/TESTER.md`。你是 tester，写入范围 `verify/**`。本笔：对 <版本/提交> 做改动验证轮。注意：几何基线请按 **CSS360** 重打（旧 411 宽数字作废）；真实折回用例要借 lead 会话发问；生产推送一律带 `qa-` 标记；测完复位设备（airplane disable / font_scale 1.0 / force-stop）。
+> 读 `verify/TEAM-START.md` 与 `verify/TESTER.md`。你是 tester，写入范围 `verify/**`。本笔：对 <版本/提交> 做改动验证轮。注意：几何基线请按 **CSS360** 重打（旧 411 宽数字作废）；真实折回用例要借 lead 会话发问；生产推送一律带 `qa-` 标记；测完复位设备（airplane disable / font_scale 1.0 / force-stop）。**串行**：等 developer 的实现提交后再开工，不要提前并行写用例。
 
 ## 3. 任务链模板
 
@@ -94,9 +104,16 @@
                      → 线上 ?v=<versionCode> 确认 → export-public.ps1 -Msg "…"
 ④ 交接（三角色各写自己那格）: 见 §5，缺一不算收工
 ```
-**并行化（task-16/17 的教训）**：developer 一动手，tester 就**同时**把新功能的声明式用例写好（不必等实现完成）——串行等待是上一轮浪费时间的根源。
+**🔴 串行化（2026-10-15 用户拍板，作废 task-16/17 的旧「并行化」结论）**：本项目全程用**本地模型**，
+Lead / developer / tester / 子智能体**共用同一个串行 FIFO 推理引擎**（取证：
+[DIAG-member-revive-2026-10-15.md](DIAG-member-revive-2026-10-15.md) §7）⇒ **同一时刻只允许一个成员在生成**。
+旧结论「developer 一动手 tester 就同时写用例」是**云端多模型时代**的账，本地模型下并发只会互相排队、拖慢速度、降低质量。
+**做法**：①→②→③→④ 逐段推进，用 `blocked_by` 钉依赖；`send_message` 一次只唤醒一个成员；
+Lead 派完活立刻结束自己回合让出服务槽；`subagent` 一次只发一个（要结果就 `run_in_background:false`）。
+**判据**：`list_agents` 里 `status=running` 的成员同一时刻 **≤1**（Lead 自己那一轮除外）。
+**例外**：不占 LLM 的活（脚本/adb/scp/构建/截图）可重叠；确需真并行只能把部分成员切云端路由。
 
-**⚠️ 但"共享资源"必须串行（2026-10-14 新增）**：**模拟器 `emulator-5554` 只有一个**。
+**⚠️ 但"共享资源"也必须串行（2026-10-14 新增）**：**模拟器 `emulator-5554` 只有一个**。
 凡两端都要动它的任务（developer 装机 ↔ tester 截图/起页/`adb root`）**必须用 `blocked_by` 串行**并发会互相污染：
 装机换版本打断取证、`force-stop` 关掉被测页、`adb root` 清掉 CDP 的 forward。
 判据：任务描述里凡出现 `adb install` / `am start` / `force-stop` / `adb root` 的，先问"另一端是否也在用这台模拟器"。
@@ -170,7 +187,7 @@ vm1 `gradle assembleDebug` → `scp` APK → 笔电 `adb install -r` + `dumpsys 
 **CDP 输入坑已澄清** ✓（`el.focus()` 不点击 + `Input.insertText`；合成点击会抢焦点）。
 
 **待下轮确认（不要拿旧数字对照）**：
-1. **A14 / A15 / P04 命中区基线在 360 宽下的新数值** —— 下一轮 QA 首跑必须重打。
+1. ~~A14 / A15 / P04 命中区基线在 360 宽下的新数值~~ → ✅ **已重打（2026-10-15 体验轮，commit `ac1ba31`）**：A14 仍 FAIL（P1，v1.32.7 FINDING-1 延续）、A15/P04 PASS。**A14 修复待立项**（App 侧 40px 命中区放大 + 上游紧凑布局叠加，见 `HANDOVER.md` §3.20.25）。
 2. 360 宽下**长页面滚动/遮挡**类行为（旧轮次是在 411 宽下结论的）。
 3. ~~swiftshader 下的截图耗时基线~~ → **已作废**：禁止 CPU 软渲染，只需真 GPU 基线（**已重打：1.0–1.25s，n=3**，见 §0.1）。
 4. `claimForeground` 两种设置下的**用户可感差异**（产品取舍，等用户拍）。

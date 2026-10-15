@@ -38,7 +38,7 @@ class PushService : Service() {
         const val NOTIF_SERVICE_ID = 2
         // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
         const val EXTRA_SHOW_HOSTS = "showHosts"
-        const val APP_VER = "1.32.14"
+        const val APP_VER = "1.32.15"
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"

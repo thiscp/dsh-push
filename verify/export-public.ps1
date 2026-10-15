@@ -47,6 +47,12 @@ $map = [ordered]@{
   '$EmuUser = "user"'     = '$EmuUser = "user"'
   'tk_REPLACE_READ'  = 'tk_REPLACE_READ'
   'tk_REPLACE_WRITE' = 'tk_REPLACE_WRITE'
+  # 2026-10-15: bare username in PROSE leaked the secret gate (3 lines:
+  # verify/CONSOLE-WINDOW-FIX-2026-10-15.md 'console=<user>' and two comments in
+  # verify/laptop-emu-selfheal.hardened.ps1 "lands on <user>'s desktop"). Every entry above only
+  # covers quoted/path forms (user@ / 'user' / Users\<user>), so a bare mention slipped through.
+  # MUST stay LAST: the map is ordered, so the specific forms are already replaced by then.
+  'user'                 = '<user>'
 }
 # 3a. Which files to scrub/gate: **EVERY text file**, i.e. a BINARY DENYLIST - never an
 #     extension allowlist. Hard fact (v1.32.14): an allowlist silently skips any extension
@@ -93,7 +99,7 @@ if ($DryRun) {
 #    Scans the SAME file set as the scrub (binary denylist) - a gate narrower than the scrub
 #    is how `.sh` slipped through before.
 $bad = Select-String -Path $textFiles.FullName `
-      -Pattern 'tk_[a-z0-9]{15,}|G-A-Fb3[n]|100\.(94|101|75|115)\.\d|192\.168\.(1\.20|1\.6|12\.18|149\.128)|\bcnop\b'
+      -Pattern 'tk_[a-z0-9]{15,}|G-A-Fb3[n]|100\.(94|101|75|115)\.\d|192\.168\.(1\.20|1\.6|12\.18|149\.128)|\b<user>\b'
 if ($bad) {
   $bad | ForEach-Object { Write-Host "LEAK: $($_.Path):$($_.LineNumber): $($_.Line.Trim().Substring(0,[Math]::Min(80,$_.Line.Trim().Length)))" }
   throw "secret gate failed - add new values to the scrub map and rerun"
