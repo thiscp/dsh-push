@@ -1323,6 +1323,52 @@ $exts = "*.md","*.ps1","*.py","*.mjs","*.json","*.conf","*.service","*.txt","*.k
 
 **⇒ 本轮（用户「修吧」⇒ 聊天大代码块透明）已闭环：需求修复 + 上线前抓到的 P2 一并修掉 + 发布 9/9 + 开源同步（并顺带修掉一个存在多个版本的真实 IP 泄漏）。**
 
+### 3.20.23 🔴 事故（2026-10-15 08:2x）：**`odys` 网关 413 ⇒ 成员反复失败**（**非** App 侧问题）
+
+**报告**：[INCIDENT-2026-10-15-odys-413-request-too-large.md](F:\work\work_dsh\dsh-push\verify\INCIDENT-2026-10-15-odys-413-request-too-large.md)（14,713 B）
+
+**触发**：用户看成员面板觉得"状态不太对"，真机截图显示本轮失败 + **`413 INVALID_REQUEST`**、
+错误页正文 **`nginx/1.18.0 (Ubuntu)`**。
+
+**结论：成员没坏。**
+
+1. **根因**：请求路由到 **`odys`（`https://api.odys.work`）**，**该网关 nginx 有 ≈8 MiB 请求体上限** ⇒ 413。
+   **三条互相印证的铁证**：
+   - **413 页正文含 `/odys-cockpit/user-display.js?v=20261014a`** —— **odys 自己的前端资源路径**（上游自报名）；
+     且 `nginx/1.18.0 (Ubuntu)` 在**本机全部路由里唯一命中 odys**
+     （`aiaaa`=`nginx/1.22.1`、`goopencode`/`dpclub`=`cloudflare`、`strata-local`=`BaseHTTP/Python`）；
+   - **主动阈值扫描**：`6MB/7MB → 401`（已穿过 nginx）、**`8MB → 413`**；
+   - **失败子会话 `a086a3d5` 的 provider 计数**：`"provider":"odys"` **1123** vs `strata-local` **1**。
+   **跨会话扫描 25 个转写**：`413 Request Entity Too Large` **全库只出现在 3 个会话**，全是**重度 odys** 会话
+   （odys 计数 1123–3002）；但 **odys 计数高 ≠ 必然 413**（`a0d88e51` odys=1463 而 413=0）
+   ⇒ **触发条件是"body 越过 8 MiB"，不是"用了 odys"**。
+2. **成员"状态不对" = 宿主重启后成员被重建 + 无在飞回合** ⇒ 面板 `inactive`、模型回落本地模型。
+   **设计行为**（成员模型 spawn 时定死、之后无工具可改），**不是故障**；**任务板不受影响**（task-12…15 仍 `completed`）。
+
+**⇒ 处置**：**P0 长上下文会话/子智能体避开 `odys`**；P1 若留 `odys` 只用于短请求 ＋ **加出站 body 预检**
+（超 ~7.5 MiB 直接拒绝并提示换路由，**别让 413 只表现为"本轮失败"**）；P2 复核 `allowedModels` 是否保留 `odys`。
+
+**★ 两次事故的共性教训（本文件 §3.20.23 与 `INCIDENT-2026-10-14-…`）**：
+**"谁被钉在哪个路由上"决定了他会不会中招** ——
+10-14 是**成员钉在本地引擎**（引擎 OOM ⇒ 300s 超时）、10-15 是**成员钉在 `odys`**（网关拒大 body ⇒ 413），
+**两次 Lead 都在另一个路由上所以不受影响**。
+**⇒ 成员报 "failed before it finished" 时的判据顺序**：**先看该成员钉在哪个 provider**
+（`list_agents` 的 `model` 字段 ＋ 会话转写里的 `provider` 计数），**再判是"引擎挂了"还是"上游网关拒了"**
+—— **两者症状文本完全不同（超时 vs 413），别一律归因到引擎。**
+
+**★ 两条方法论更正（**已写进报告 §7/§3 头**，值得进 skill）**：
+1. **裸数字串搜日志会大量假阳性**：我用 `-match '413'` 得到的"命中"绝大多数是
+   **V8 栈地址 `00007FF60A413BAD`**、**token 计数 `4137`**、**`seq: 413`**、**时间戳毫秒 `.413Z`**；
+   ⇒ 判据必须是**带上下文的模式**（`413 Request Entity Too Large` / `INVALID_REQUEST`）。
+2. **DSH 会话转写是 concatenated-frame zstd**：`Select-String` 与**整块** `zstdDecompressSync`
+   **只能解出第一帧（273 字节）** ⇒ **会得出"没有 413"的假阴性**；
+   必须**按 zstd magic（`28 B5 2F FD`）切帧逐帧解压再拼接**（脚本 `tmp/zdump2-413.mjs`、`zallsess.mjs`）。
+
+**边界（不得当已验）**：**未测量** 413 那次请求的**真实 `Content-Length`**
+（纯文本估算 ≈2.15 MiB < 8 MiB；差额**推断**来自 JSON 转义 / 工具 schema / base64 图片，**未直接测量**）；
+未验证 8 MiB 是精确值；未验证每轮失败是否**全部**来自 `odys`。
+**本次只诊断，未改配置、未重启服务、未动成员。**
+
 ## 4. 跨轮未决（在下轮开工前处理或显式推迟）
 
 1. **DSH 上游两条补丁**（源码仓，非本仓）：`tool-ask-user` 默认值 `legacy`→`timed`；`UserQuestionService.ask()` 加完成作用域 AbortController。做掉后连 legacy 会话都不再僵卡，新用户零配置。
