@@ -698,10 +698,12 @@ class WebActivity : Activity() {
                         "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
                         "getComputedStyle(document.body).color)||[];" +
                         "var blum=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
-                        // 0.96 而非 0.92：0.92 下实测仍能隐约看到底层聊天正文叠印（8% 透光），
-                        // 而用户投诉的正是"太透"。0.96 只留 4% 透光，肉眼不再有可辨识的叠印。
-                        "var ovFallback=blum>0.5?'rgba(18,24,40,0.96)':" +
-                        "'rgba(255,255,255,0.96)';" +
+                        // v1.32.20：0.96 也不行（用户真机 13:39 截图实测）。0.96 压在**亮壁纸/白正文**上，
+                        // 4% 透光仍能看到底层内容淡影；再叠加浮层自带的 0.5px 白描边，整块读成"底色没涂到
+                        // 边、内沿一圈颜色不一样"。浮层是短暂覆盖物、不需要空间线索，与阅读面板同理
+                        // （v1.32.12 那里实测 0.96 仍留淡影才定成 1）=> alpha=1。
+                        "var ovFallback=blum>0.5?'rgb(18,24,40)':" +
+                        "'rgb(255,255,255)';" +
                         "var all=document.querySelectorAll('div,main,section," +
                         "header,aside,nav,button,textarea,input,ul,li');" +
                         // ★ v1.32.15-C 实现细节：候选**每轮收集成一批**，循环外只排**一对** rAF 复核
@@ -1001,11 +1003,35 @@ class WebActivity : Activity() {
                         // 修法：浮层判定提到大容器之前，两者**互斥**；且 role 命中的浮层
                         // （真菜单正是 role=listbox）**豁免全部几何判定**（含大容器分支），
                         // 因为面积阈值会把真实菜单判成"大容器"而废掉它。
-                        "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5))){" +
+                        // ★ v1.32.19（用户真机反馈「上传文件窗口背景没铺全」）：v1.32.11 把浮层判定提到
+                        //   大容器之前时，几何豁免只给了 **role 命中**的浮层（当时假定「真菜单正是
+                        //   role=listbox」）。实测 composer 的「+」菜单（_surface_ri079_1 Z9Jnlq_menu）
+                        //   **role 属性为空**，只能走几何臂命中 isOv（absolute + z=100 + 8 个可交互子项，
+                        //   逐条件实测全过），而它 265x343 = 73.6%vw x 51.1%vh 恰好越过 50% 阈值 ⇒
+                        //   `ovRole||!(>50%)` 整体为假 ⇒ 浮层分支被跳过 ⇒ 落到大容器分支写
+                        //   `transparent !important`（实测内联如此且 __dshGlass=1）。再手动触发变异让
+                        //   apply() 重跑，底色仍是 transparent ⇒ 不是时机问题，是这条豁免漏了几何臂浮层。
+                        //   修法：几何臂浮层同样豁免，但**只豁免非近全屏**（>90%x90% 除外）——近全屏定位
+                        //   面板继续走 isPanel 的「取原生色相」（v1.32.12 文档预览面板红线；实测该面板
+                        //   360x671=100%x100%，不受本改动影响）。壁纸通道是 static/relative，永远进不了
+                        //   isOv ⇒ v1.32.6「壁纸整层消失」红线不受影响。
+                        //   ⚠ 阈值上下两种几何都要测（v1.32.11 就是只测了矮菜单 257x172 才误判修好）：矮菜单
+                        //   走 !(>50%) 那条臂，高菜单走这条新臂，两条都要模拟器截图为证。
+                        "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5)||!(w>vw*0.9&&h>vh*0.9))){" +
                         "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
                         "e.style.setProperty('background-color'," +
-                        "(oa<1?ovFallback:'rgba('+m[1]+','+m[2]+','+m[3]+',0.96)')," +
-                        "'important');e.__dshGlass=0;}" +
+                        "(oa<1?ovFallback:'rgb('+m[1]+','+m[2]+','+m[3]+')')," +
+                        "'important');e.__dshGlass=0;" +
+                        // ★ v1.32.20：浮层自带的 0.5px 白 0.16 发丝描边（box-shadow 第一段）是配它**原生底色**
+                        //   调的；底色被我们换成 ovFallback 后，这条浅线读成"内沿一圈颜色不一样、底色没涂到边"
+                        //   （真机实测：内沿 2 物理 px 的 rgb(38,45,58) 环 vs 内部 rgb(18,25,41)）。只丢白色系
+                        //   那一段，两段黑色投影保留，浮起感不丢。
+                        "var bs=getComputedStyle(e).boxShadow;" +
+                        "if(bs&&bs!=='none'){" +
+                        "var kp=bs.split(/,(?![^(]*\\))/).filter(function(s){" +
+                        "return !/^\\s*rgba?\\(255,\\s*255,\\s*255/.test(s);});" +
+                        "if(kp.length&&kp.join(',')!==bs)e.style.setProperty(" +
+                        "'box-shadow',kp.join(','),'important');}}" +
                         // ★ v1.32.15-B 布局/滚动链（壁纸唯一通道）：**只允许 transparent**。
                         // 排在浮层之后、isPanel/isCB 之前且与它们互斥：命中布局链的元素
                         // 永远触碰不到"取原生色相回写"，因此即使过渡态测量失真，最坏也
@@ -1080,8 +1106,61 @@ class WebActivity : Activity() {
                         "pointer-events:none;background:'+(lum>0.5?" +
                         "'rgba(18,24,40,0.45)':'rgba(255,255,255,0.45)');}" +
                         "apply();setTimeout(apply,1500);setTimeout(apply,4000);" +
-                        "var t=null;new MutationObserver(function(){clearTimeout(t);" +
-                        "t=setTimeout(apply,400);}).observe(document.body," +
+                        // ★ v1.32.20：400ms 防抖让刚弹出的浮层**先透 ~0.4s 再变实**（实测：菜单 t=621ms 已出现、
+                        //   t=1058ms 才被写上底色），真机看到就是"刚点开是透的"。只对**插入里含定位浮层**的变异
+                        //   走当帧（0ms），其余仍 400ms，避免聊天流式更新时反复全量重算。
+                        // ★ v1.32.20 快速通道：新插入的浮层**当场补实心底**，不等全量 apply()。页内 rAF 实测
+                        //   （16ms 精度）：点击后 112ms 菜单已存在（absolute / z=100 / 265x103 动画中），底色
+                        //   却要 784ms 后才写上 —— 瓶颈是**全量一轮本身要 ~780ms**，防抖跳不跳过都救不了。
+                        //   判据与主循环同源（定位 + z>=10 + 尺寸区间 + 至少 3 个可交互后代），近全屏仍豁免
+                        //   （v1.32.12 阅读面板红线）。主循环随后照跑，用它自己的结论覆盖这里的写入。
+                        //   菜单刚插入时**子项还是 0 个**（实测条目在 t=442ms 才补进来），故 150/400ms 各重试
+                        //   一次，等条目落地就当场补色，不再等全量轮。
+                        "function hasOv(n){" +
+                        "if(n.nodeType!==1)return null;var q=[n],i,c;" +
+                        "for(i=0;i<q.length&&i<120;i++){c=q[i];" +
+                        "var st=getComputedStyle(c);var z=parseInt(st.zIndex,10);" +
+                        "if((st.position==='fixed'||st.position==='absolute')" +
+                        // 尺寸闸必须与 fastOv **完全一致**：BFS 先命中先返回，外层定位壳（overlayAnchor）
+                        // 插入时是 265x0，若这里放 60x40 就会把壳当成命中返回，fastOv 随即因
+                        // 高度不足退出，快速通道整轮空转（实测上色仍要等全量轮的 266ms）。
+                        "&&z>=10&&c.offsetWidth>100&&c.offsetHeight>80)return c;" +
+                        "if(i<40)for(var k=0;k<c.children.length;k++)" +
+                        "q.push(c.children[k]);}return null;}" +
+                        "function fastOv(e){" +
+                        "if(!e.isConnected)return;" +
+                        "var r=e.getBoundingClientRect();" +
+                        "if(!(r.width>100&&r.height>80))return;" +
+                        "if(r.width>innerWidth*0.9&&r.height>innerHeight*0.9)return;" +
+                        // 判据两选一：子项数（主循环同源）或**类名线索**。菜单刚插入时子项还是 0 个（实测条目
+                        // t=442ms 才落地），只靠子项数就只能等 400ms 重试；而类名在插入瞬间就已就位（实测
+                        // _surface_ri079_1 Z9Jnlq_menu），命中即当帧上色。
+                        "var ic=e.querySelectorAll('button,a,li,[role=menuitem]," +
+                        "[role=option],[tabindex]').length;" +
+                        "var cn=(String(e.className)+' '+String(e.id)).toLowerCase();" +
+                        "if(ic<3&&!/menu|surface|overlay|dialog|popover|dropdown|" +
+                        "popup|sheet|listbox/.test(cn))return;" +
+                        "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
+                        "getComputedStyle(document.body).color)||[];" +
+                        "var bl=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
+                        "e.style.setProperty('background-color',bl>0.5?" +
+                        "'rgb(18,24,40)':'rgb(255,255,255)','important');" +
+                        "e.__dshGlass=0;" +
+                        "var bs=getComputedStyle(e).boxShadow;" +
+                        "if(bs&&bs!=='none'){var kp=bs.split(/,(?![^(]*\\))/).filter(" +
+                        "function(s){return !/^\\s*rgba?\\(255,\\s*255,\\s*255/.test(s);});" +
+                        "if(kp.length&&kp.join(',')!==bs)e.style.setProperty(" +
+                        "'box-shadow',kp.join(','),'important');}}" +
+                        "var t=null;new MutationObserver(function(ms){" +
+                        "var hit=null;" +
+                        "for(var i=0;i<ms.length&&!hit;i++){" +
+                        "var an=ms[i].addedNodes;" +
+                        "for(var k=0;k<an.length;k++){" +
+                        "hit=hasOv(an[k]);if(hit)break;}}" +
+                        "if(hit){fastOv(hit);[150,400].forEach(function(d){" +
+                        "setTimeout(function(){fastOv(hit);},d);});}" +
+                        "clearTimeout(t);t=setTimeout(apply,hit?0:400);" +
+                        "}).observe(document.body," +
                         "{childList:true,subtree:true});})();", null)
                 }
             }
