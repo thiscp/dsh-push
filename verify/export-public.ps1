@@ -128,11 +128,25 @@ git add -A
 $s = git status --porcelain
 if (-not $s) { Write-Host "public already up to date"; Pop-Location; exit 0 }
 git commit -m $Msg | Out-Null
-# --porcelain: machine output on stdout (PS 5.1 treats native stderr as errors)
-git push --porcelain origin master | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "push github failed" }
-git push --porcelain gitee master | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "push gitee failed" }
-git log --oneline -1
-Write-Host "exported to GitHub + Gitee public"
+# Push EVERY configured remote, then verify each ref really moved. Hard-won 2026-10-16
+# (caught twice): this public clone has origin AND gitee both pointing at Gitee while
+# GitHub is a third remote named "github". Pushing only origin+gitee left GitHub one
+# whole release behind while the script still printed "exported to GitHub + Gitee".
+$remotes = @()
+foreach ($r in (git remote)) { $n = "$r".Trim(); if ($n) { $remotes += $n } }
+if ($remotes.Count -eq 0) { throw "public workdir has no remotes" }
+foreach ($r in $remotes) {
+  git push --porcelain $r master | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "push $r failed" }
+}
+# Verify refs, not the banner: --porcelain keeps machine output on stdout (PS 5.1 turns
+# native stderr into error records). A remote that silently lagged must fail loudly.
+$local = (git rev-parse HEAD).Trim()
+foreach ($r in $remotes) {
+  $remote = ""
+  foreach ($x in (git ls-remote $r master)) { $remote += "$x" }
+  if ($remote -notmatch [regex]::Escape($local)) { throw "$r master != local HEAD $local" }
+  Write-Host "verified $r = $($local.Substring(0, 7))"
+}
+Write-Host "exported to all public remotes ("$($remotes -join ',')")"
 Pop-Location

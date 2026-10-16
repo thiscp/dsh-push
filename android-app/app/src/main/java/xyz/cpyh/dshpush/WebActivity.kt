@@ -698,14 +698,19 @@ class WebActivity : Activity() {
                         "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
                         "getComputedStyle(document.body).color)||[];" +
                         "var blum=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
-                        // （v1.32.21 起 ovFallback / bm / blum 已是**备用代码**：浮层不再补底色，见下方isOv 分支；
-                        //   保留是为了要回滚时不必重新推导档位。）
+                        // （v1.32.21 曾整段停用，v1.32.22 又启用为**半透明遮罩**；bm / blum 就是给它选深浅的,
+                        //   浅色主题给白遮罩、深色主题给深遮罩，别写死。）
                         // v1.32.20：0.96 也不行（用户真机 13:39 截图实测）。0.96 压在**亮壁纸/白正文**上，
                         // 4% 透光仍能看到底层内容淡影；再叠加浮层自带的 0.5px 白描边，整块读成"底色没涂到
                         // 边、内沿一圈颜色不一样"。浮层是短暂覆盖物、不需要空间线索，与阅读面板同理
                         // （v1.32.12 那里实测 0.96 仍留淡影才定成 1）=> alpha=1。
-                        "var ovFallback=blum>0.5?'rgb(18,24,40)':" +
-                        "'rgb(255,255,255)';" +
+                        // ★ v1.32.22：浮层要的是**深色遮罩**，不是实色也不是全透。四档真合成实测（模拟器浅灰壁纸=
+                        //   最坏情形）：原生 0 遮罩时背后正文的边缘能量 26.90，0.45→18.15（−32%）、0.60→16.36
+                        //   （−39%）、0.72→15.45（−43%）——拐点在 0.45~0.60，再往上只是把壁纸压成暗块。取 **0.60**：
+                        //   自己的条目读得清、背后只剩淡影、壁纸仍是可辨的色块。alpha 也别到 1：v1.32.20 实测
+                        //   实色会把原生发丝线顶成一条硬色差。
+                        "var ovFallback=blum>0.5?'rgba(18,24,40,0.60)':" +
+                        "'rgba(255,255,255,0.60)';" +
                         "var all=document.querySelectorAll('div,main,section," +
                         "header,aside,nav,button,textarea,input,ul,li');" +
                         // ★ v1.32.15-C 实现细节：候选**每轮收集成一批**，循环外只排**一对** rAF 复核
@@ -1028,7 +1033,15 @@ class WebActivity : Activity() {
                         //   分支本身**必须保留**：它把浮层从 isLayout/isPanel/isCB 三条通道里摘出去（互斥），
                         //   否则那三条会给菜单写 transparent 或原生色相，反而更糟。只留 __dshGlass=0 认领。
                         //   回滚点：v1.32.20（commit 18a768d）里有完整补色实现（alpha=1 + 去发丝线 + 快速通道）。
+                        // ★ v1.32.22：分支保留（它把浮层从 isLayout/isPanel/isCB 三条通道摘出去，删了更糟），
+                        //   分支体只补一层**深色遮罩**：原生底色本来就透明（实测 rgba(0,0,0,0)），透明页 + 壁纸
+                        //   之下菜单自己挡不住背后正文（用户真机 14:24 截图：「深度求索中」「已压缩59条历史」整排透
+                        //   上来）。原生那层只有约 18% 减光，挡壁纸够、挡字不够 ⇒ 补到 0.60。
+                        //   原生底色若不透明（oa>=1）就**不动它**：那是 DSH Web 自己已经铺好的浮层，别盖。
+                        //   发丝描边这次**保留**：0.60 的半透底与它是配套的（v1.32.20 的硬色差来自 alpha=1）。
                         "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5)||!(w>vw*0.9&&h>vh*0.9))){" +
+                        "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
+                        "if(oa<1)e.classList.add('dshOv');" +
                         "e.__dshGlass=0;}" +
                         // ★ v1.32.15-B 布局/滚动链（壁纸唯一通道）：**只允许 transparent**。
                         // 排在浮层之后、isPanel/isCB 之前且与它们互斥：命中布局链的元素
@@ -1097,18 +1110,67 @@ class WebActivity : Activity() {
                         "var v=document.getElementById('dsh-theme-veil');" +
                         "if(!v){v=document.createElement('div');v.id='dsh-theme-veil';" +
                         "document.body.appendChild(v);}" +
-                        "var mm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
+                        "var mm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/.exec(" +
                         "getComputedStyle(document.body).color)||[];" +
                         "var lum=mm[1]?(0.299*mm[1]+0.587*mm[2]+0.114*mm[3])/255:0;" +
                         "v.style.cssText='position:fixed;inset:0;z-index:-1;" +
                         "pointer-events:none;background:'+(lum>0.5?" +
                         "'rgba(18,24,40,0.45)':'rgba(255,255,255,0.45)');}" +
+                        // ★ v1.32.22 浮层遮罩改成**打标记 + CSS**，不在 JS 里写色：
+                        //   实测菜单插入时 addedNodes 里同时有外层定位壳(absolute z=100)与真正的
+                        //   _surface_…_menu，两者都会被判成浮层；各写一层 0.60 会叠成 0.84（比实测
+                        //   最好的 0.60 深一大截）。`:has()` 让 CSS 自己只给**最内层**上色，外层壳
+                        //   一旦有了带标记的后代就自动退让——快速通道先给壳上色、全量轮再收敛到内层，
+                        //   颜色始终一致，过渡也看不出来。深浅色交给 media，JS 不必再算亮度。
+                        "var os=document.getElementById('dsh-ov-style');" +
+                        "if(!os){os=document.createElement('style');os.id='dsh-ov-style';" +
+                        "document.head.appendChild(os);" +
+                        "os.textContent='.dshOv:not(.dshOv .dshOv){background-color:rgba(18,24,40,0.60)!important}@media (prefers-color-scheme:light){.dshOv:not(.dshOv .dshOv){background-color:rgba(255,255,255,0.60)!important}}';}" +
                         "apply();setTimeout(apply,1500);setTimeout(apply,4000);" +
-                        // ★ v1.32.21：浮层不再补底色 ⇒ 快速通道（hasOv/fastOv）失去意义，一并撤掉，观察器回到
-                        //   最初的 400ms 防抖（省下每次插入都跑一轮全量重算的开销）。v1.32.20 的实测数据留在
-                        //   commit 18a768d 与 HANDOVER：全量一轮 ~780ms、页内 rAF 点击到上色 173ms，需要时原样取回。
-                        "var t=null;new MutationObserver(function(){clearTimeout(t);" +
-                        "t=setTimeout(apply,400);}).observe(document.body," +
+// ★ v1.32.22 快速通道：遮罩要**当帧**上，否则又变成用户抱怨过的「等几百 ms 才填充好」。
+//   页内 rAF 实测（v1.32.20）：全量 apply() 一轮本身要 ~780ms，防抖跳不跳都救不了，必须在
+//   观察器回调里**同步**补。判据两选一：可交互子项数（与主循环同源）**或**类名线索——菜单
+//   刚插入时子项还是 0 个（实测条目 t=442ms 才落地），而类名在插入瞬间就已就位。
+//   hasOv 的尺寸闸必须与 fastOv **完全一致**，否则 BFS 先返回 265x0 的外层定位壳、整轮空转。
+                        "function hasOv(n){" +
+                        "if(n.nodeType!==1)return null;var q=[n],i,c;" +
+                        "for(i=0;i<q.length&&i<120;i++){c=q[i];" +
+                        "var st=getComputedStyle(c);var z=parseInt(st.zIndex,10);" +
+                        "if((st.position==='fixed'||st.position==='absolute')" +
+                        "&&z>=10&&c.offsetWidth>100&&c.offsetHeight>80)return c;" +
+                        "if(i<40)for(var k=0;k<c.children.length;k++)" +
+                        "q.push(c.children[k]);}return null;}" +
+                        "function fastOv(e){" +
+                        "if(!e.isConnected)return;" +
+                        "var r=e.getBoundingClientRect();" +
+                        "if(!(r.width>100&&r.height>80))return;" +
+                        "if(r.width>innerWidth*0.9&&r.height>innerHeight*0.9)return;" +
+                        "var ic=e.querySelectorAll('button,a,li,[role=menuitem]," +
+                        "[role=option],[tabindex]').length;" +
+                        "var cn=(String(e.className)+' '+String(e.id)).toLowerCase();" +
+                        "if(ic<3&&!/menu|surface|overlay|dialog|popover|dropdown|" +
+                        "popup|sheet|listbox/.test(cn))return;" +
+                        // 壁纸唯一通道与侧栏**必须跳过**（与主循环同一道类名闸）：侧栏是我们自己改成
+                        // position:fixed + z-index:60 的，尺寸与子项数全都过闸，不排就会被盖成实底
+                        // （实测 geom-matrix 报「侧栏 alpha 1 不在 [0.4,0.5]」就是这个）。
+                        "if(/byninw_|2h3hww_root|dc7zoa_root|dsh-theme-veil/.test(cn))return;" +
+                        // 原生底色已不透明就别盖（那是 DSH Web 自己铺好的浮层）。
+                        "var mm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/.exec(" +
+                        "getComputedStyle(e).backgroundColor)||[];" +
+                        "if(mm.length&&mm[4]!==undefined&&parseFloat(mm[4])>=1)return;" +
+                        "if(mm.length&&mm[4]===undefined)return;" +
+                        // 只打标记，颜色由 #dsh-ov-style 决定：当帧就能上到外层壳，全量轮再收敛到内层。
+                        "e.classList.add('dshOv');e.__dshGlass=0;}" +
+                        "var t=null;new MutationObserver(function(ms){" +
+                        "var hit=null;" +
+                        "for(var i=0;i<ms.length&&!hit;i++){" +
+                        "var an=ms[i].addedNodes;" +
+                        "for(var k=0;k<an.length;k++){" +
+                        "hit=hasOv(an[k]);if(hit)break;}}" +
+                        "if(hit){fastOv(hit);[150,400].forEach(function(d){" +
+                        "setTimeout(function(){fastOv(hit);},d);});}" +
+                        "clearTimeout(t);t=setTimeout(apply,hit?0:400);" +
+                        "}).observe(document.body," +
                         "{childList:true,subtree:true});})();", null)
                 }
             }
