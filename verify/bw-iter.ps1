@@ -204,5 +204,5 @@ $f2 = "$OutDir\bw-emu.ps1"
 Invoke-Watched "bw-drive" ("scp " + $SSH_OPTS + " `"$f2`" `"${EmuUser}@${EmuIp}:$EmuRootFwd/bw-emu.ps1`"") $SshTimeoutSec $null | Out-Null
 $dv = Invoke-Watched "bw-drive" ("ssh " + $SSH_OPTS + " " + $EmuUser + "@" + $EmuIp + " `"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File $EmuRoot\bw-emu.ps1 < NUL`"") ($EmuBootSec + 240) $null
 $dv.OutText -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | ForEach-Object { Write-Host $_ }
-Invoke-Watched "get-shot" ("scp " + $SSH_OPTS + " `"${EmuUser}@${EmuIp}:$EmuRootFwd/bw-shot.png`" `"F:\work\work_dsh\bw-shot.png`"") $SshTimeoutSec $null | Out-Null
-if (Test-Path "F:\work\work_dsh\bw-shot.png") { Write-Host "GOT SHOT" } else { Write-Host "NO SHOT"; exit 1 }
+Invoke-Watched "get-shot" ("scp " + $SSH_OPTS + " `"${EmuUser}@${EmuIp}:$EmuRootFwd/bw-shot.png`" `"$OutDir\bw-shot.png`"") $SshTimeoutSec $null | Out-Null
+if (Test-Path "$OutDir\bw-shot.png") { Write-Host "GOT SHOT" } else { Write-Host "NO SHOT"; exit 1 }

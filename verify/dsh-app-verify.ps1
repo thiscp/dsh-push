@@ -302,8 +302,30 @@ if (-not $serial) {
 $bt  = ((& $adb -s $serial shell getprop sys.boot_completed) 2>&1) -join ""
 $api = ((& $adb -s $serial shell getprop ro.build.version.sdk) 2>&1) -join ""
 "EMU_UP=SERIAL=" + $serial + " BOOT=" + $(if ($bt -match "1") { 1 } else { 0 }) + " API=" + $api
+# Gap found 2026-10-16 12:1x: the boot poll above only runs when NO device is attached at all. An
+# emulator that is ATTACHED but still booting (the self-heal ladder restarted it) skipped that wait,
+# so adb install died with "Error: device is still booting" and the 120s assert poll burned the whole
+# step (144s) before aborting. Wait for boot_completed here too - cap $bootSec, and print it.
+if ($bt -notmatch "1") {
+  "BOOT_WAIT=begin"
+  $rt = Get-Date
+  while (((Get-Date) - $rt).TotalSeconds -lt $bootSec) {
+    $b2 = ((& $adb -s $serial shell getprop sys.boot_completed) 2>&1) -join ""
+    if ($b2 -match "1") { $bt = $b2; break }
+    Start-Sleep -Milliseconds 2000
+  }
+  "BOOT_WAIT=end " + [int]((Get-Date) - $rt).TotalSeconds + "s BOOT=" + $bt.Trim()
+}
 & $adb root 2>&1 | Out-Null
-Start-Sleep 2
+# readiness (was blind Start-Sleep 2): poll until adbd answers as uid 0, cap 10s, then carry on
+$rt = Get-Date
+$u = ""
+while (((Get-Date) - $rt).TotalSeconds -lt 10) {
+  $u = (((& $adb wait-for-device shell id -u) 2>&1) -join "").Trim()
+  if ($u -eq "0") { break }
+  Start-Sleep -Milliseconds 400
+}
+"ROOT_UID=" + $u + " WAIT=" + [int]((Get-Date) - $rt).TotalSeconds
 & $adb wait-for-device 2>&1 | Out-Null
 $S = @("-s", $serial)
 
@@ -312,7 +334,13 @@ Stage "install"
 "INSTALL=" + (A ($S + @("install","-r","-g",$apk)))
 if ("__FRESH__" -eq "1") {
   A ($S + @("shell","pm","clear","xyz.cpyh.dshpush")) | Out-Null
-  Start-Sleep 2
+  # readiness (was blind Start-Sleep 2): wait for the app data dir to come back, cap 10s
+  $rt = Get-Date
+  while (((Get-Date) - $rt).TotalSeconds -lt 10) {
+    if ((A ($S + @("shell","stat","-c","%u","/data/data/xyz.cpyh.dshpush"))).Trim() -match "^[0-9]+$") { break }
+    Start-Sleep -Milliseconds 400
+  }
+  "CLEAR_WAIT=" + [int]((Get-Date) - $rt).TotalSeconds
   A ($S + @("push","G:\Android\dshpush.xml","/data/local/tmp/dshpush.xml")) | Out-Null
   A ($S + @("shell","mkdir","-p","/data/data/xyz.cpyh.dshpush/shared_prefs")) | Out-Null
   A ($S + @("shell","cp","/data/local/tmp/dshpush.xml","/data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml")) | Out-Null
@@ -324,7 +352,24 @@ A ($S + @("shell","pm","grant","xyz.cpyh.dshpush","android.permission.POST_NOTIF
 A ($S + @("shell","appops","set","xyz.cpyh.dshpush","REQUEST_INSTALL_PACKAGES","allow")) | Out-Null
 A ($S + @("shell","am","force-stop","xyz.cpyh.dshpush")) | Out-Null
 "START=" + (A ($S + @("shell","am","start","-n","xyz.cpyh.dshpush/.MainActivity")))
-Start-Sleep 8   # let the app WebSocket connect before the test push goes out
+# readiness (was blind Start-Sleep 8): the test push only lands if the app already holds its
+# WebSocket to the relay. Poll for an ESTABLISHED socket owned by the app uid (adb root gives us
+# uid= via ss -e), cap 10s, then publish ANYWAY - a miss is caught by the assert poll below,
+# so this wait is an optimisation, never a gate. Worst case = 10s (2s worse than the old blind 8s).
+$cn = "pending"
+$rt = Get-Date
+while (((Get-Date) - $rt).TotalSeconds -lt 10) {
+  $ss = A ($S + @("shell","ss","-tpe","state","established"))
+  # this Android ss build prints NO uid= even with -e, and truncates the process name to 15 chars
+  # (xyz.cpyh.dshpush -> yz.cpyh.dshpush), so match the tail of the name instead. Port 443/https is the
+  # relay WebSocket; the DSH Web link shows up as :3080 and must not count as "connected".
+  foreach ($ln in ($ss -split "`r?`n")) {
+    if ($ln -match "cpyh.dshpush" -and $ln -match ":https|:443") { $cn = "up"; break }
+  }
+  if ($cn -eq "up") { break }
+  Start-Sleep -Milliseconds 500
+}
+"CONN=" + $cn + " WAIT=" + [int]((Get-Date) - $rt).TotalSeconds
 
 # [3] publish the unique test push (from inside this session: no second ssh while the emulator lives)
 Stage "publish"
@@ -344,7 +389,7 @@ while (((Get-Date) - $t0).TotalSeconds -lt $assertSec) {
     $hits = $m.Count
     break
   }
-  Start-Sleep 4
+  Start-Sleep -Milliseconds 1000   # poll interval (was 4s blind): arrival typically lands in 1-2s
 }
 "HITS=" + $hits
 
@@ -352,7 +397,15 @@ while (((Get-Date) - $t0).TotalSeconds -lt $assertSec) {
 Stage "screenshot"
 cmd /c "`"$adb`" -s $serial shell input keyevent KEYCODE_BACK" 2>&1 | Out-Null
 & $adb -s $serial shell am start -n xyz.cpyh.dshpush/.MainActivity 2>&1 | Out-Null
-Start-Sleep 3
+# readiness (was blind Start-Sleep 3): wait until MainActivity actually holds focus, cap 8s
+$fc = "pending"
+$rt = Get-Date
+while (((Get-Date) - $rt).TotalSeconds -lt 8) {
+  $w = (((& $adb -s $serial shell dumpsys window) 2>&1) -join " ")
+  if ($w -match "mCurrentFocus=.*MainActivity") { $fc = "focused"; break }
+  Start-Sleep -Milliseconds 400
+}
+"FOCUS=" + $fc + " WAIT=" + [int]((Get-Date) - $rt).TotalSeconds
 cmd /c "`"$adb`" -s $serial exec-out screencap -p > G:\Android\verify-shot.png"
 $sl = 0
 if (Test-Path "G:\Android\verify-shot.png") { $sl = (Get-Item "G:\Android\verify-shot.png").Length }
