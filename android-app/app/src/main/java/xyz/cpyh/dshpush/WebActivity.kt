@@ -698,6 +698,8 @@ class WebActivity : Activity() {
                         "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
                         "getComputedStyle(document.body).color)||[];" +
                         "var blum=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
+                        // （v1.32.21 起 ovFallback / bm / blum 已是**备用代码**：浮层不再补底色，见下方isOv 分支；
+                        //   保留是为了要回滚时不必重新推导档位。）
                         // v1.32.20：0.96 也不行（用户真机 13:39 截图实测）。0.96 压在**亮壁纸/白正文**上，
                         // 4% 透光仍能看到底层内容淡影；再叠加浮层自带的 0.5px 白描边，整块读成"底色没涂到
                         // 边、内沿一圈颜色不一样"。浮层是短暂覆盖物、不需要空间线索，与阅读面板同理
@@ -1017,21 +1019,17 @@ class WebActivity : Activity() {
                         //   isOv ⇒ v1.32.6「壁纸整层消失」红线不受影响。
                         //   ⚠ 阈值上下两种几何都要测（v1.32.11 就是只测了矮菜单 257x172 才误判修好）：矮菜单
                         //   走 !(>50%) 那条臂，高菜单走这条新臂，两条都要模拟器截图为证。
+                        // ★ v1.32.21（用户真机反馈「还是边沿色差、等几百 ms 才填充好」，并指出「本来就不会把
+                        //   正文透上来」）：**浮层一律不再补底色**。色差与延迟两个毛病同源，都来自这次补色：
+                        //   ① 补的底色与浮层自带的 0.5px 白发丝线不配套 ⇒ 读成「内沿一圈颜色不一样」；
+                        //   ② 补色要等全量 apply() 一轮（真机更慢）⇒ 读成「等几百 ms 才填好」。
+                        //   浮层自身那层在 DSH Web 里是干净的：正文会不会透上来取决于背后壁纸亮度，而用户
+                        //   真机实测不读正文 ⇒ 补色是净负收益，撤掉。
+                        //   分支本身**必须保留**：它把浮层从 isLayout/isPanel/isCB 三条通道里摘出去（互斥），
+                        //   否则那三条会给菜单写 transparent 或原生色相，反而更糟。只留 __dshGlass=0 认领。
+                        //   回滚点：v1.32.20（commit 18a768d）里有完整补色实现（alpha=1 + 去发丝线 + 快速通道）。
                         "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5)||!(w>vw*0.9&&h>vh*0.9))){" +
-                        "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
-                        "e.style.setProperty('background-color'," +
-                        "(oa<1?ovFallback:'rgb('+m[1]+','+m[2]+','+m[3]+')')," +
-                        "'important');e.__dshGlass=0;" +
-                        // ★ v1.32.20：浮层自带的 0.5px 白 0.16 发丝描边（box-shadow 第一段）是配它**原生底色**
-                        //   调的；底色被我们换成 ovFallback 后，这条浅线读成"内沿一圈颜色不一样、底色没涂到边"
-                        //   （真机实测：内沿 2 物理 px 的 rgb(38,45,58) 环 vs 内部 rgb(18,25,41)）。只丢白色系
-                        //   那一段，两段黑色投影保留，浮起感不丢。
-                        "var bs=getComputedStyle(e).boxShadow;" +
-                        "if(bs&&bs!=='none'){" +
-                        "var kp=bs.split(/,(?![^(]*\\))/).filter(function(s){" +
-                        "return !/^\\s*rgba?\\(255,\\s*255,\\s*255/.test(s);});" +
-                        "if(kp.length&&kp.join(',')!==bs)e.style.setProperty(" +
-                        "'box-shadow',kp.join(','),'important');}}" +
+                        "e.__dshGlass=0;}" +
                         // ★ v1.32.15-B 布局/滚动链（壁纸唯一通道）：**只允许 transparent**。
                         // 排在浮层之后、isPanel/isCB 之前且与它们互斥：命中布局链的元素
                         // 永远触碰不到"取原生色相回写"，因此即使过渡态测量失真，最坏也
@@ -1106,61 +1104,11 @@ class WebActivity : Activity() {
                         "pointer-events:none;background:'+(lum>0.5?" +
                         "'rgba(18,24,40,0.45)':'rgba(255,255,255,0.45)');}" +
                         "apply();setTimeout(apply,1500);setTimeout(apply,4000);" +
-                        // ★ v1.32.20：400ms 防抖让刚弹出的浮层**先透 ~0.4s 再变实**（实测：菜单 t=621ms 已出现、
-                        //   t=1058ms 才被写上底色），真机看到就是"刚点开是透的"。只对**插入里含定位浮层**的变异
-                        //   走当帧（0ms），其余仍 400ms，避免聊天流式更新时反复全量重算。
-                        // ★ v1.32.20 快速通道：新插入的浮层**当场补实心底**，不等全量 apply()。页内 rAF 实测
-                        //   （16ms 精度）：点击后 112ms 菜单已存在（absolute / z=100 / 265x103 动画中），底色
-                        //   却要 784ms 后才写上 —— 瓶颈是**全量一轮本身要 ~780ms**，防抖跳不跳过都救不了。
-                        //   判据与主循环同源（定位 + z>=10 + 尺寸区间 + 至少 3 个可交互后代），近全屏仍豁免
-                        //   （v1.32.12 阅读面板红线）。主循环随后照跑，用它自己的结论覆盖这里的写入。
-                        //   菜单刚插入时**子项还是 0 个**（实测条目在 t=442ms 才补进来），故 150/400ms 各重试
-                        //   一次，等条目落地就当场补色，不再等全量轮。
-                        "function hasOv(n){" +
-                        "if(n.nodeType!==1)return null;var q=[n],i,c;" +
-                        "for(i=0;i<q.length&&i<120;i++){c=q[i];" +
-                        "var st=getComputedStyle(c);var z=parseInt(st.zIndex,10);" +
-                        "if((st.position==='fixed'||st.position==='absolute')" +
-                        // 尺寸闸必须与 fastOv **完全一致**：BFS 先命中先返回，外层定位壳（overlayAnchor）
-                        // 插入时是 265x0，若这里放 60x40 就会把壳当成命中返回，fastOv 随即因
-                        // 高度不足退出，快速通道整轮空转（实测上色仍要等全量轮的 266ms）。
-                        "&&z>=10&&c.offsetWidth>100&&c.offsetHeight>80)return c;" +
-                        "if(i<40)for(var k=0;k<c.children.length;k++)" +
-                        "q.push(c.children[k]);}return null;}" +
-                        "function fastOv(e){" +
-                        "if(!e.isConnected)return;" +
-                        "var r=e.getBoundingClientRect();" +
-                        "if(!(r.width>100&&r.height>80))return;" +
-                        "if(r.width>innerWidth*0.9&&r.height>innerHeight*0.9)return;" +
-                        // 判据两选一：子项数（主循环同源）或**类名线索**。菜单刚插入时子项还是 0 个（实测条目
-                        // t=442ms 才落地），只靠子项数就只能等 400ms 重试；而类名在插入瞬间就已就位（实测
-                        // _surface_ri079_1 Z9Jnlq_menu），命中即当帧上色。
-                        "var ic=e.querySelectorAll('button,a,li,[role=menuitem]," +
-                        "[role=option],[tabindex]').length;" +
-                        "var cn=(String(e.className)+' '+String(e.id)).toLowerCase();" +
-                        "if(ic<3&&!/menu|surface|overlay|dialog|popover|dropdown|" +
-                        "popup|sheet|listbox/.test(cn))return;" +
-                        "var bm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/.exec(" +
-                        "getComputedStyle(document.body).color)||[];" +
-                        "var bl=bm[1]?(0.299*bm[1]+0.587*bm[2]+0.114*bm[3])/255:0;" +
-                        "e.style.setProperty('background-color',bl>0.5?" +
-                        "'rgb(18,24,40)':'rgb(255,255,255)','important');" +
-                        "e.__dshGlass=0;" +
-                        "var bs=getComputedStyle(e).boxShadow;" +
-                        "if(bs&&bs!=='none'){var kp=bs.split(/,(?![^(]*\\))/).filter(" +
-                        "function(s){return !/^\\s*rgba?\\(255,\\s*255,\\s*255/.test(s);});" +
-                        "if(kp.length&&kp.join(',')!==bs)e.style.setProperty(" +
-                        "'box-shadow',kp.join(','),'important');}}" +
-                        "var t=null;new MutationObserver(function(ms){" +
-                        "var hit=null;" +
-                        "for(var i=0;i<ms.length&&!hit;i++){" +
-                        "var an=ms[i].addedNodes;" +
-                        "for(var k=0;k<an.length;k++){" +
-                        "hit=hasOv(an[k]);if(hit)break;}}" +
-                        "if(hit){fastOv(hit);[150,400].forEach(function(d){" +
-                        "setTimeout(function(){fastOv(hit);},d);});}" +
-                        "clearTimeout(t);t=setTimeout(apply,hit?0:400);" +
-                        "}).observe(document.body," +
+                        // ★ v1.32.21：浮层不再补底色 ⇒ 快速通道（hasOv/fastOv）失去意义，一并撤掉，观察器回到
+                        //   最初的 400ms 防抖（省下每次插入都跑一轮全量重算的开销）。v1.32.20 的实测数据留在
+                        //   commit 18a768d 与 HANDOVER：全量一轮 ~780ms、页内 rAF 点击到上色 173ms，需要时原样取回。
+                        "var t=null;new MutationObserver(function(){clearTimeout(t);" +
+                        "t=setTimeout(apply,400);}).observe(document.body," +
                         "{childList:true,subtree:true});})();", null)
                 }
             }
