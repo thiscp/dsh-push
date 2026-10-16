@@ -1,0 +1,309 @@
+{
+ "mode": "d10map",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "qa-d10-map",
+ "pid": "9928",
+ "shaBefore": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "openSession": true,
+ "startedAt": "2026-10-15T21:14:59.451Z",
+ "nav": {
+  "session": {
+   "found": false,
+   "why": "no collapse button (sidebar not expanded?)"
+  }
+ },
+ "reopen": {
+  "click": {
+   "found": true,
+   "x": 28,
+   "y": 36,
+   "aria": "Open sidebar",
+   "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+   "clickedAt": [
+    28,
+    36
+   ]
+  },
+  "fallback": {
+   "found": false
+  },
+  "state": {
+   "expanded": null,
+   "sidebar": null
+  }
+ },
+ "dismiss": {
+  "before": {
+   "sheets": 0
+  },
+  "after": {
+   "sheets": 0
+  }
+ },
+ "map": {
+  "vw": 360,
+  "vh": 671,
+  "frame": {
+   "cls": "pI_x6G_frame",
+   "w": 360,
+   "h": 671,
+   "gridInline": "",
+   "gridComputed": "360px",
+   "tallKids": 3,
+   "kids": [
+    {
+     "cls": "pI_x6G_sidebarCol",
+     "tag": "DIV",
+     "w": 360,
+     "h": 671,
+     "x": 0,
+     "y": 0,
+     "disp": "block",
+     "pos": "static",
+     "vis": "visible",
+     "inline": "background-color: transparent !important;"
+    },
+    {
+     "cls": "pI_x6G_centerCol",
+     "tag": "DIV",
+     "w": 360,
+     "h": 0,
+     "x": 0,
+     "y": 671,
+     "disp": "flex",
+     "pos": "static",
+     "vis": "visible",
+     "inline": ""
+    },
+    {
+     "cls": "pI_x6G_rightbarCol",
+     "tag": "DIV",
+     "w": 360,
+     "h": 0,
+     "x": 0,
+     "y": 671,
+     "disp": "block",
+     "pos": "relative",
+     "vis": "visible",
+     "inline": ""
+    },
+    {
+     "cls": "pI_x6G_overlayLayer",
+     "tag": "DIV",
+     "w": 360,
+     "h": 671,
+     "x": 0,
+     "y": 0,
+     "disp": "block",
+     "pos": "absolute",
+     "vis": "visible",
+     "inline": "background-color: transparent !important;"
+    },
+    {
+     "cls": "pI_x6G_handle",
+     "tag": "DIV",
+     "w": 8,
+     "h": 671,
+     "x": 276,
+     "y": 0,
+     "disp": "block",
+     "pos": "absolute",
+     "vis": "visible",
+     "inline": "left: 280px;"
+    }
+   ]
+  },
+  "chain": [
+   {
+    "cls": "_block_7gxqk_4 md-code-block _",
+    "tag": "DIV",
+    "w": 289,
+    "h": 201,
+    "disp": "block",
+    "pos": "relative",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "background-color: rgba(249, 250, 251, 0.45) !important; backdrop-filter: blur(12px) !important;"
+   },
+   {
+    "cls": "_markdown_1ypvv_5",
+    "tag": "DIV",
+    "w": 289,
+    "h": 2683,
+    "disp": "block",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "background-color: transparent !important;"
+   },
+   {
+    "cls": "hWmORq_body",
+    "tag": "DIV",
+    "w": 289,
+    "h": 2683,
+    "disp": "flex",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "background-color: transparent !important;"
+   },
+   {
+    "cls": "hWmORq_root",
+    "tag": "DIV",
+    "w": 289,
+    "h": 2683,
+    "disp": "flex",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "background-color: transparent !important;"
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 0,
+    "h": 0,
+    "disp": "contents",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "display: contents;"
+   },
+   {
+    "cls": "EvIC1a_flowItem",
+    "tag": "DIV",
+    "w": 289,
+    "h": 2683,
+    "disp": "block",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "EvIC1a_column",
+    "tag": "DIV",
+    "w": 289,
+    "h": 2890,
+    "disp": "flex",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "EvIC1a_scroll",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "disp": "block",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "EvIC1a_root",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "disp": "flex",
+    "pos": "relative",
+    "ovf": "visible clip",
+    "ovfY": "clip",
+    "inline": ""
+   },
+   {
+    "cls": "EvIC1a_frame",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "disp": "flex",
+    "pos": "relative",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 0,
+    "h": 0,
+    "disp": "contents",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "display: contents;"
+   },
+   {
+    "cls": "wSkVaW_viewArea",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "disp": "flex",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 0,
+    "h": 0,
+    "disp": "contents",
+    "pos": "static",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": "display: contents;"
+   },
+   {
+    "cls": "wSkVaW_scrollBody",
+    "tag": "DIV",
+    "w": 358,
+    "h": 0,
+    "disp": "flex",
+    "pos": "static",
+    "ovf": "auto",
+    "ovfY": "auto",
+    "inline": "--dsh-composer-height: 128px; --dsh-conversation-viewport-height: 0px;"
+   },
+   {
+    "cls": "wSkVaW_body",
+    "tag": "DIV",
+    "w": 360,
+    "h": 0,
+    "disp": "flex",
+    "pos": "relative",
+    "ovf": "visible",
+    "ovfY": "visible",
+    "inline": ""
+   },
+   {
+    "cls": "wSkVaW_root",
+    "tag": "DIV",
+    "w": 360,
+    "h": 0,
+    "disp": "flex",
+    "pos": "relative",
+    "ovf": "hidden",
+    "ovfY": "hidden",
+    "inline": "--dsh-conversation-column-width: 360px; background-color: rgba(255, 255, 255, 0.45) !important;"
+   }
+  ]
+ },
+ "shots": [
+  {
+   "name": "qa-qa-d10-map-d10map",
+   "bytes": 812943,
+   "ok": true,
+   "pidBefore": "9928",
+   "pidAfter": "9928",
+   "alive": true
+  }
+ ],
+ "shaAfter": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "pidAfter": "9928",
+ "elapsedMs": 79028,
+ "finishedAt": "2026-10-15T21:16:01.972Z"
+}

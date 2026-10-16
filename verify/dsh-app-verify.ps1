@@ -52,6 +52,8 @@ param(
   [int]$BuildTimeoutSec = 900,          # gradle assembleDebug on vm1
   [int]$EmuBootSec      = 300,          # emulator boot poll (cold start, swiftshader is slow)
   [int]$AssertSec       = 120,          # prefs assert poll inside the drive session
+  [string]$Node         = "",            # node.exe for the geometry matrix (config.local.ps1; else PATH)
+  [int]$GeomTimeoutSec  = 240,          # geometry matrix: 2 hosts x 2 states, cold start
   [switch]$WatchdogSelfTest             # diagnostic: prove a hung command is killed + non-zero exit
 )
 # Local infra overrides (hosts/tokens), see config.example.ps1 - not published
@@ -402,6 +404,49 @@ $shot = "$OutDir\verify-$stamp.png"
 Invoke-Watched "screenshot" ("scp " + $SSH_OPTS + " `"${EmuUser}@${EmuIp}:$EmuRootFwd/verify-shot.png`" `"$shot`"") $SshTimeoutSec $null | Out-Null
 $ok = (Test-Path $shot) -and ((Get-Item $shot).Length -gt 100000)
 Report "screenshot" $ok "$shot"
+
+# ---------- 5b. geometry matrix (column widths, both hosts, collapsed + expanded) ----------
+# Added 2026-10-16 right after the v1.32.17 real-device regression: the 9 checks above never
+# measured COLUMN WIDTH (only card backgrounds + the wallpaper red line), so a P1 that pinned the
+# chat column to 56px on the laptop host passed 9/9 and reached the user's phone. See GLASS-OVERLAY.md 11.14.
+# The harness exits 0=PASS / 1=FAIL / 2=ENV, so it must NOT go through Invoke-Watched (that aborts
+# the whole pipeline on any non-zero exit). Start/Wait-Watched keeps it a plain FAIL row.
+$gmScript = "$Repo\verify\geom-matrix.mjs"
+$gmNode = $Node
+if (-not $gmNode) { $gmGc = Get-Command node -ErrorAction SilentlyContinue; if ($gmGc) { $gmNode = $gmGc.Source } }
+if (-not $gmNode -or -not (Test-Path $gmScript)) {
+  Report "geom-matrix" $false ("cannot run: node='" + $gmNode + "' harness=" + $(if (Test-Path $gmScript) { "found" } else { "missing $gmScript" }))
+} else {
+  $gmJson = "$OutDir\geom-matrix.json"
+  if (Test-Path $gmJson) { Remove-Item $gmJson -Force }
+  # Deliberately NO quotes: cmd /c strips the outermost quote pair when a command line carries several
+  # quote pairs, which turned the watchdog's own "> out 2>&1" into node arguments and lost every byte of
+  # output (first run of this check reported ENV with out_bytes=0). All paths here are space-free.
+  $gmCmd = $gmNode + " " + $gmScript + " --json --json-out " + $gmJson + " --shots " + $OutDir
+  $gh = Start-Watched "geom-matrix" $gmCmd $GeomTimeoutSec $null
+  $gh = Wait-Watched $gh
+  if ($gh.TimedOut) {
+    Report "geom-matrix" $false ("timeout after " + $GeomTimeoutSec + "s - " + $gh.Why)
+  } else {
+    $gmTxt = ""
+    if (Test-Path $gmJson) { $gmTxt = [IO.File]::ReadAllText($gmJson, [Text.Encoding]::UTF8) }
+    if (-not $gmTxt) { $gmTxt = $gh.OutText }
+    $gmV = "ENV"; $gmD = ""
+    $gmM = [regex]::Match($gmTxt, '\{"mode":.*?\}\s*$')
+    if (-not $gmM.Success) { $gmM = [regex]::Match($gmTxt, '\{"mode":.*\}') }
+    if ($gmM.Success) {
+      try {
+        $gj = $gmM.Value | ConvertFrom-Json
+        $gmV = [string]$gj.verdict
+        $gmF = @($gj.fails)
+        $gmD = "states=" + $gj.states + " fails=" + $gmF.Count + $(if ($gmF.Count) { "; " + ($gmF -join " | ") } else { "" })
+      } catch { $gmV = "ENV"; $gmD = "json parse failed: " + $_.Exception.Message }
+    } else {
+      $gmD = "no json line; tail: " + (Flatten $gmTxt).Substring([Math]::Max(0, (Flatten $gmTxt).Length - 180))
+    }
+    Report "geom-matrix" ($gmV -eq "PASS") ("verdict=" + $gmV + "; " + $gmD)
+  }
+}
 
 # ---------- 6. optional deploy ----------
 if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {

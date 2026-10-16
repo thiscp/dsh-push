@@ -1,0 +1,377 @@
+{
+ "mode": "d10diag",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "qa-d10-diag",
+ "pid": "9718",
+ "shaBefore": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "openSession": true,
+ "startedAt": "2026-10-15T21:10:04.422Z",
+ "nav": {
+  "session": {
+   "found": false,
+   "why": "no collapse button (sidebar not expanded?)"
+  }
+ },
+ "reopen": {
+  "click": {
+   "found": true,
+   "x": 28,
+   "y": 36,
+   "aria": "Open sidebar",
+   "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+   "clickedAt": [
+    28,
+    36
+   ]
+  },
+  "fallback": {
+   "found": false
+  },
+  "state": {
+   "expanded": null,
+   "sidebar": null
+  }
+ },
+ "dismiss": {
+  "before": {
+   "sheets": 0
+  },
+  "after": {
+   "sheets": 0
+  }
+ },
+ "diag": {
+  "vw": 360,
+  "vh": 671,
+  "cands": [
+   {
+    "cls": "wSkVaW_viewArea",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_frame",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_root",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_scroll",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_frame",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "grid",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_sidebarCol",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "hHd-Xa_root",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_overlayLayer",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "absolute",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "fixed",
+    "inFindRange": false,
+    "over90": true
+   }
+  ],
+  "root": {
+   "cls": "",
+   "tag": "DIV",
+   "w": 360,
+   "h": 671,
+   "x": 0,
+   "y": 0,
+   "pos": "static",
+   "disp": "block",
+   "vis": "visible",
+   "bg": "rgba(0, 0, 0, 0)",
+   "inline": "",
+   "prio": "",
+   "widthInline": "",
+   "findRange96to90": false,
+   "bound90": 324
+  },
+  "after": null,
+  "bgEl": {
+   "cls": "hHd-Xa_root",
+   "w": 360,
+   "bg": "rgba(249, 250, 251, 0.45)",
+   "prio": "important"
+  },
+  "frame": {
+   "cls": "pI_x6G_frame",
+   "style": "background-color: transparent !important;",
+   "gridInline": "",
+   "gridComputed": "360px"
+  },
+  "codeblocks": [
+   "289x201",
+   "289x258"
+  ],
+  "err": null,
+  "state": {
+   "bwW": 0,
+   "railW": null,
+   "bwSbEl": 0,
+   "bwBgEl": 1,
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  }
+ },
+ "diag2": {
+  "vw": 360,
+  "vh": 671,
+  "cands": [
+   {
+    "cls": "wSkVaW_viewArea",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_frame",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_root",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "EvIC1a_scroll",
+    "tag": "DIV",
+    "w": 353,
+    "h": 2922,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_frame",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "grid",
+    "pos": "relative",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_sidebarCol",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "hHd-Xa_root",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "flex",
+    "pos": "static",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "pI_x6G_overlayLayer",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "absolute",
+    "inFindRange": false,
+    "over90": true
+   },
+   {
+    "cls": "",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "vis": "visible",
+    "disp": "block",
+    "pos": "fixed",
+    "inFindRange": false,
+    "over90": true
+   }
+  ],
+  "root": {
+   "cls": "",
+   "tag": "DIV",
+   "w": 360,
+   "h": 671,
+   "x": 0,
+   "y": 0,
+   "pos": "static",
+   "disp": "block",
+   "vis": "visible",
+   "bg": "rgba(0, 0, 0, 0)",
+   "inline": "",
+   "prio": "",
+   "widthInline": "",
+   "findRange96to90": false,
+   "bound90": 324
+  },
+  "after": null,
+  "bgEl": {
+   "cls": "hHd-Xa_root",
+   "w": 360,
+   "bg": "rgba(249, 250, 251, 0.45)",
+   "prio": "important"
+  },
+  "frame": {
+   "cls": "pI_x6G_frame",
+   "style": "background-color: transparent !important;",
+   "gridInline": "",
+   "gridComputed": "360px"
+  },
+  "codeblocks": [
+   "289x201",
+   "289x258"
+  ],
+  "err": null,
+  "state": {
+   "bwW": 0,
+   "railW": null,
+   "bwSbEl": 0,
+   "bwBgEl": 1,
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  }
+ },
+ "shots": [
+  {
+   "name": "qa-qa-d10-diag-d10diag",
+   "bytes": 811734,
+   "ok": true,
+   "pidBefore": "9718",
+   "pidAfter": "9718",
+   "alive": true
+  }
+ ],
+ "shaAfter": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "pidAfter": "9718",
+ "elapsedMs": 79710,
+ "finishedAt": "2026-10-15T21:11:07.738Z"
+}

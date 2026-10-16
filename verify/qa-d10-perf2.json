@@ -1,0 +1,491 @@
+{
+ "mode": "perf",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "qa-d10-perf2",
+ "pid": "10633",
+ "shaBefore": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "openSession": true,
+ "startedAt": "2026-10-15T21:38:09.694Z",
+ "nav": {
+  "sidebar": {
+   "click": {
+    "found": true,
+    "x": 28,
+    "y": 36,
+    "aria": "Open sidebar",
+    "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+    "clickedAt": [
+     28,
+     36
+    ]
+   },
+   "fallback": {
+    "found": false
+   },
+   "state": {
+    "expanded": null,
+    "sidebar": null
+   }
+  },
+  "session": {
+   "found": true,
+   "rowCount": 5,
+   "text": "你好1d",
+   "x": 180,
+   "y": 258,
+   "sbcls": "hHd-Xa_root",
+   "sbw": 360,
+   "all": [
+    {
+     "t": "你好1d",
+     "x": 180,
+     "y": 258,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "你能搜索网页吗。用的自带的1d",
+     "x": 180,
+     "y": 292,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "你好1d",
+     "x": 180,
+     "y": 326,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "我本地Ubuntu每次启动都是自动25d",
+     "x": 180,
+     "y": 360,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "我在本地安装了sunshine串流软25d",
+     "x": 180,
+     "y": 394,
+     "w": 336,
+     "h": 32
+    }
+   ],
+   "raw": [
+    {
+     "t": "你好1d",
+     "time": true,
+     "y": 242,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "你能搜索网页吗。用的自带的1d",
+     "time": true,
+     "y": 276,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "你好1d",
+     "time": true,
+     "y": 310,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "我本地Ubuntu每次启动都是自动25d",
+     "time": true,
+     "y": 344,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "我在本地安装了sunshine串流软25d",
+     "time": true,
+     "y": 378,
+     "w": 336,
+     "h": 32
+    },
+    {
+     "t": "Show 7 more sessions",
+     "time": false,
+     "y": 410,
+     "w": 336,
+     "h": 28
+    },
+    {
+     "t": "work",
+     "time": false,
+     "y": 442,
+     "w": 336,
+     "h": 34
+    },
+    {
+     "t": "work",
+     "time": false,
+     "y": 442,
+     "w": 336,
+     "h": 34
+    }
+   ],
+   "pickedIndex": 3,
+   "pickedText": "我本地Ubuntu每次启动都是自动25d",
+   "collapsed": {
+    "found": true,
+    "x": 334,
+    "y": 36,
+    "aria": "Collapse sidebar",
+    "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+    "clickedAt": [
+     334,
+     36
+    ]
+   },
+   "chatBody": {
+    "body": {
+     "cls": "hWmORq_body",
+     "w": 233,
+     "h": 3179
+    },
+    "biggestPre": {
+     "cls": "_plain_7gxqk_103",
+     "w": 233,
+     "h": 254,
+     "bg": "rgb(249, 250, 251)",
+     "inline": ""
+    },
+    "preCount": 2,
+    "vw": 360,
+    "vh": 671
+   }
+  }
+ },
+ "reopen": {
+  "click": {
+   "found": true,
+   "x": 28,
+   "y": 36,
+   "aria": "Open sidebar",
+   "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+   "clickedAt": [
+    28,
+    36
+   ]
+  },
+  "fallback": {
+   "found": false
+  },
+  "state": {
+   "expanded": null,
+   "sidebar": null
+  }
+ },
+ "hook": {
+  "installed": 1
+ },
+ "perfSamples": [
+  {
+   "t": 1451,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 85,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 2905,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 172,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 4365,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 260,
+   "jankPct": 0,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 16.80000000000291,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 5815,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 341,
+   "jankPct": 100,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 116.59999999999127,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 7267,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 428,
+   "jankPct": 100,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 116.59999999999127,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 8716,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 515,
+   "jankPct": 100,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 116.59999999999127,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 10168,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 602,
+   "jankPct": 100,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 116.59999999999127,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  },
+  {
+   "t": 11630,
+   "set": 0,
+   "setImp": 0,
+   "attr": 0,
+   "byProp": {},
+   "frames": 690,
+   "jankPct": 100,
+   "med": 17,
+   "p90": 17,
+   "p95": 17,
+   "max": 116.59999999999127,
+   "bwW": 0,
+   "railW": null,
+   "sbEl": 0,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   }
+  }
+ ],
+ "perfFinal": {
+  "t": 11648,
+  "set": 0,
+  "setImp": 0,
+  "attr": 0,
+  "byProp": {},
+  "frames": 691,
+  "jankPct": 100,
+  "med": 17,
+  "p90": 17,
+  "p95": 17,
+  "max": 116.59999999999127,
+  "bwW": 0,
+  "railW": null,
+  "sbEl": 0,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  }
+ },
+ "d2": {
+  "vw": 360,
+  "vh": 671,
+  "bwRailW": null,
+  "bwW": null,
+  "bwSbEl": null,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  },
+  "bwFns": {
+   "panelBg": "function"
+  },
+  "grids": [
+   {
+    "cls": "pI_x6G_frame",
+    "tag": "DIV",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "relative",
+    "z": "auto",
+    "vis": "visible",
+    "disp": "grid",
+    "bg": "rgba(0, 0, 0, 0)",
+    "inline": "background-color: transparent !important;",
+    "grid": "",
+    "prio": "important"
+   }
+  ],
+  "blocks": [
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 258,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 216,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_block_7gxqk_4 md-code-block _card_7gxqk_107",
+    "tag": "DIV",
+    "w": 289,
+    "h": 201,
+    "x": 32,
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "inline": "rgba(249, 250, 251, 0.45)",
+    "overHalf": false,
+    "vis": "visible"
+   },
+   {
+    "cls": "_plain_7gxqk_103",
+    "tag": "PRE",
+    "w": 289,
+    "h": 159,
+    "x": 32,
+    "bg": "rgb(249, 250, 251)",
+    "inline": "",
+    "overHalf": false,
+    "vis": "visible"
+   }
+  ],
+  "blockCount": 4,
+  "centerCol": {
+   "cls": "pI_x6G_centerCol",
+   "tag": "DIV",
+   "w": 360,
+   "h": 0,
+   "x": 0,
+   "y": 671,
+   "pos": "static",
+   "z": "auto",
+   "vis": "visible",
+   "disp": "flex",
+   "bg": "rgba(0, 0, 0, 0)",
+   "inline": "",
+   "grid": "",
+   "prio": ""
+  },
+  "sbProbe": null,
+  "railProbe": null
+ },
+ "shots": [
+  {
+   "name": "qa-qa-d10-perf2-perf",
+   "bytes": 588332,
+   "ok": true,
+   "pidBefore": "10633",
+   "pidAfter": "10633",
+   "alive": true
+  }
+ ],
+ "shaAfter": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "pidAfter": "10633",
+ "elapsedMs": 86172,
+ "finishedAt": "2026-10-15T21:39:18.211Z"
+}

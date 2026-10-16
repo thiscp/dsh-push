@@ -1,0 +1,48 @@
+QA D10 (task-11) CONTROL-ARM READINGS - tester - pre-D10 apk on the emulator
+
+Installed control arm: verify/qa-v132-16-app-debug.apk 10995364 B sha f8b063f0..7cec (= commit efde4c2, versionCode 81 / versionName 1.32.15).
+Device apk path now /data/app/~~CZuNhwqlhnondvJZk9TC1Q==/xyz.cpyh.dshpush-BuNYoR0vaBYylG8PdJyt6w==/base.apk, sha verified equal to the file.
+Released apk that was on the device before this (from the release run, versionCode 82): sha 8adc6b874e8de3198aa0d4b99d49eb1721eba8377f490c563748a331b5700dd2.
+
+== pitfall 1: version downgrade (new situation after the release) ==
+adb install -r <control apk>  ->  INSTALL_FAILED_VERSION_DOWNGRADE: Update version code 81 is older than current 82.
+The control arm for section B is a versionCode-81 build while the device now runs 82, so a plain -r reinstall is refused.
+Working form: adb install -r -d <apk>  (downgrade allowed; data kept, no uninstall needed).
+The D10 build is versionCode 82 as well, so installing it over either arm is a normal -r reinstall, no -d needed.
+
+== pitfall 2: the probes old sidebar detector is stale on the current bundle ==
+sidebarState() selects [class*=_root_] (trailing underscore). The current bundle class is hHd-Xa_root (no trailing underscore),
+so it returns {expanded:null,sidebar:null} even though the sidebar is open and 280px wide. Not an app defect - a probe limitation.
+The D10STATE content probe (text New Session + Settings/Plugins, widest 100..92%vw box >=50%vh, plus elementFromPoint hit test)
+is the reliable detector and is what the d10 mode reports. Same for the old nav helper log line no collapse button, which only
+means the sidebar was already collapsed when the session row was clicked.
+
+== run 1: mode d2e -> verify/qa-d10-ab-base.json (section B control arm) ==
+sha gate before/after both f8b063f0 (match true), shot qa-qa-d10-abbase-d2e 690869 B alive=true, pid 8528 unchanged.
+frame pI_x6G_frame 360x671 pos relative disp grid, inline = background-color: transparent !important;  (grid field EMPTY =>
+  no grid-template-columns inline anywhere) ; computed tracks single 360px; centerCol pI_x6G_centerCol w=360.
+code blocks: 7 cards _block_7gxqk_4 md-code-block _card_7gxqk_107 all 289x296, inline rgba(249,250,251,0.45) + important,
+  native rgb(249,250,251), overHalf=false; d2.blocks 14 entries incl. inner PRE _plain_7gxqk_103 289x254 inline empty.
+sidebar (content probe) hHd-Xa_root 280x671 x=0 pos static, inline background-color rgba(249,250,251,0.45) !important +
+  backdrop-filter blur(12px) !important + width 280px ; elementFromPoint(20,60) lands inside it (selfOrDesc true).
+state: bwW=null  bwSbEl=null  bwRailW=null  bwFns.panelBg=function  obs{geom:true, panelBg:false, panelClose:true}.
+8x700ms on 20 targets: flips=0 on every one, incl. sidebarRoot and codeCard (0.45 stable), codeCardPre rgb(249,250,251),
+  tabHostAny/emptyTabHost rgb(255,255,255), veil rgba(255,255,255,0.45) inline WITHOUT priority (v1.32.6 red line intact).
+
+== run 2: mode d10 -> verify/qa-d10-ctl-d10.json (A/C control on pre-D10 code, 93.4 s) ==
+sha gate f8b063f0 match true. shots alive: qa-qa-d10-ctl-d10-expanded 691680 B, qa-qa-d10-ctl-d10-collapsed 888721 B, pid 8712 unchanged.
+EXPANDED, 8/8 samples identical: __bwSbEl = null, __bwBgEl = null (that global does not exist pre-D10), content probe finds
+  hHd-Xa_root 280x671 with inline rgba(249,250,251,0.45) + important and hit=true, bwW=null, railW=null, write counters
+  set=0 setImp=0 attr=0 on every sample, obs{geom:true,panelBg:false,panelClose:true}.
+  => this is D10 reproduced on the real device with the old build: the sidebar is found by geometry-independent probing but the
+     app never records it (__bwSbEl null) and its background stays 0.45.
+COLLAPSED, 8/8 samples identical: probe=null (the rail collapses to 56px, below the 100px floor of the probe, as designed),
+  __bwSbEl null, __bwBgEl null, write counters frozen at set=41 setImp=34 attr=0 for all 8 samples (i.e. every write happened
+  during the collapse transition, none in steady state).
+final counters: t=20434ms set=41 setImp=34 attr=0, byProp background-color=34, --dsh-composer-height=3,
+  --dsh-conversation-viewport-height=3, --dsh-conversation-column-width=1 (the last three are the page own CSS vars),
+  frames=881 med=17 p90=17 p95=17 max=1833 (that max is the cold-start frame), jankPct field=2600 means 26 janky frames x10.
+NOTE the 34 background-color writes on the collapse path come from the glassify apply() in the old build, not from bwAlpha
+(bwAlpha does not exist there). For section C the D10 arm must show the same shape: writes only during transitions, 0 in steady state.
+
+STATUS: both control arms captured and on disk. Still blocked on the L498 escape fix for the D10 apk (sections A/B/C/D new arm).

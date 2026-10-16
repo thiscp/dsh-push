@@ -1,0 +1,741 @@
+{
+ "mode": "d10",
+ "url": "http://<tailnet-vm1>:3080/?token=REDACTED",
+ "tag": "qa-d10-d10",
+ "pid": "9076",
+ "shaBefore": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "openSession": true,
+ "startedAt": "2026-10-15T20:56:24.660Z",
+ "nav": {
+  "session": {
+   "found": false,
+   "why": "no collapse button (sidebar not expanded?)"
+  }
+ },
+ "reopen": {
+  "click": {
+   "found": true,
+   "x": 28,
+   "y": 36,
+   "aria": "Open sidebar",
+   "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+   "clickedAt": [
+    28,
+    36
+   ]
+  },
+  "fallback": {
+   "found": false
+  },
+  "state": {
+   "expanded": null,
+   "sidebar": null
+  }
+ },
+ "dismiss": {
+  "before": {
+   "sheets": 0
+  },
+  "after": {
+   "sheets": 0
+  }
+ },
+ "hook": {
+  "installed": 1
+ },
+ "expandedSeries": [
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root",
+    "w": 360,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": "New Session Plugins Workspaces cp_le"
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 0,
+    "setImp": 0,
+    "attr": 0
+   }
+  }
+ ],
+ "expandedShot": {
+  "name": "qa-qa-d10-d10-d10-expanded",
+  "bytes": 588726,
+  "ok": true,
+  "pidBefore": "9076",
+  "pidAfter": "9076",
+  "alive": true
+ },
+ "collapse": {
+  "found": true,
+  "x": 334,
+  "y": 36,
+  "aria": "Collapse sidebar",
+  "cls": "hHd-Xa_iconButton hHd-Xa_toggle",
+  "clickedAt": [
+   334,
+   36
+  ]
+ },
+ "collapsedState": {
+  "expanded": null,
+  "sidebar": null
+ },
+ "collapsedSeries": [
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 45,
+    "setImp": 38,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  },
+  {
+   "vw": 360,
+   "vh": 671,
+   "dpr": 4,
+   "sbEl": null,
+   "bgEl": {
+    "tag": "DIV",
+    "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+    "w": 56,
+    "h": 671,
+    "x": 0,
+    "y": 0,
+    "pos": "static",
+    "vis": "visible",
+    "disp": "flex",
+    "z": "auto",
+    "bg": "rgba(249, 250, 251, 0.45)",
+    "bgInline": "rgba(249, 250, 251, 0.45)",
+    "bgPrio": "important",
+    "txt": ""
+   },
+   "probe": null,
+   "probeHit": null,
+   "bwW": null,
+   "railW": null,
+   "obs": {
+    "geom": true,
+    "panelBg": false,
+    "panelClose": true
+   },
+   "writes": {
+    "set": 46,
+    "setImp": 39,
+    "attr": 0
+   }
+  }
+ ],
+ "collapsedShot": {
+  "name": "qa-qa-d10-d10-d10-collapsed",
+  "bytes": 993341,
+  "ok": true,
+  "pidBefore": "9076",
+  "pidAfter": "9076",
+  "alive": true
+ },
+ "perfFinal": {
+  "t": 20308,
+  "set": 46,
+  "setImp": 39,
+  "attr": 0,
+  "byProp": {
+   "--dsh-composer-height": 3,
+   "--dsh-conversation-viewport-height": 3,
+   "--dsh-conversation-column-width": 1,
+   "background-color": 39
+  },
+  "frames": 933,
+  "jankPct": 3100,
+  "med": 17,
+  "p90": 17,
+  "p95": 17,
+  "max": 1266.699999999997,
+  "bwW": 0,
+  "railW": null,
+  "sbEl": 0,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  }
+ },
+ "d10": {
+  "vw": 360,
+  "vh": 671,
+  "dpr": 4,
+  "sbEl": null,
+  "bgEl": {
+   "tag": "DIV",
+   "cls": "hHd-Xa_root hHd-Xa_collapsed hHd-Xa_railIn hHd-Xa_quietBars",
+   "w": 56,
+   "h": 671,
+   "x": 0,
+   "y": 0,
+   "pos": "static",
+   "vis": "visible",
+   "disp": "flex",
+   "z": "auto",
+   "bg": "rgba(249, 250, 251, 0.45)",
+   "bgInline": "rgba(249, 250, 251, 0.45)",
+   "bgPrio": "important",
+   "txt": ""
+  },
+  "probe": null,
+  "probeHit": null,
+  "bwW": null,
+  "railW": null,
+  "obs": {
+   "geom": true,
+   "panelBg": false,
+   "panelClose": true
+  },
+  "writes": {
+   "set": 46,
+   "setImp": 39,
+   "attr": 0
+  }
+ },
+ "shots": [
+  {
+   "name": "qa-qa-d10-d10-d10-expanded",
+   "bytes": 588726,
+   "ok": true,
+   "pidBefore": "9076",
+   "pidAfter": "9076",
+   "alive": true
+  },
+  {
+   "name": "qa-qa-d10-d10-d10-collapsed",
+   "bytes": 993341,
+   "ok": true,
+   "pidBefore": "9076",
+   "pidAfter": "9076",
+   "alive": true
+  }
+ ],
+ "shaAfter": "489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4",
+ "pidAfter": "9076",
+ "elapsedMs": 98849,
+ "finishedAt": "2026-10-15T20:57:46.533Z"
+}

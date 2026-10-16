@@ -386,6 +386,112 @@ const D2STATE = [
   "})()"
 ].join("");
 // ---------------- in-page: D1 instrumentation (window.__qaCb / __qaN / node identity) ----------------
+// D10 (v1.32.17 / commit 3385166): read the three state globals + the element we actually wrote on,
+// plus an independent content-based sidebar probe (no class anchors) and the live write counters.
+const D10STATE = [
+  "(function(){function st(e){if(!e||!e.isConnected)return null;var r=e.getBoundingClientRect();",
+  "var cs=getComputedStyle(e);",
+  "return {tag:e.tagName,cls:String(e.className||'').slice(0,60),w:Math.round(r.width),h:Math.round(r.height),",
+  "x:Math.round(r.left),y:Math.round(r.top),pos:cs.position,vis:cs.visibility,disp:cs.display,z:cs.zIndex,",
+  "bg:cs.backgroundColor,bgInline:e.style.getPropertyValue('background-color'),",
+  "bgPrio:e.style.getPropertyPriority('background-color'),",
+  "txt:(e.innerText||'').replace(/\\s+/g,' ').slice(0,36)};}",
+  "var vw=window.innerWidth,vh=window.innerHeight,probe=null,pw=0;",
+  "var ns=document.querySelectorAll('div,section,aside,nav');",
+  "for(var i=0;i<ns.length;i++){var r=ns[i].getBoundingClientRect();",
+  "if(r.width<100||r.width>vw*0.92||r.height<vh*0.5)continue;",
+  "var t=ns[i].innerText||'';",
+  "if(!/New [Ss]ession|\\u65b0\\u4f1a\\u8bdd/.test(t))continue;",
+  "if(!/Settings|Plugins|\\u8bbe\\u7f6e|\\u63d2\\u4ef6/.test(t))continue;",
+  "if(!probe||r.width>pw){probe=ns[i];pw=r.width;}}",
+  "var hit=null;if(probe){var hr=probe.getBoundingClientRect();",
+  "var px=hr.left+Math.min(20,hr.width/2),py=hr.top+Math.min(60,hr.height/2);",
+  "var el=document.elementFromPoint(px,py),own=false,q=el;",
+  "while(q){if(q===probe){own=true;break;}q=q.parentElement;}",
+  "hit={px:Math.round(px),py:Math.round(py),selfOrDesc:own,",
+  "owner:el?(el.tagName+'.'+String(el.className||'').slice(0,28)):null};}",
+  "var P=window.__qaPerf||null,W=window.__bwW;",
+  "return JSON.stringify({vw:vw,vh:vh,dpr:window.devicePixelRatio,",
+  "sbEl:st(window.__bwSbEl),bgEl:st(window.__bwBgEl),probe:st(probe),probeHit:hit,",
+  "bwW:W?{f:!!W.f,col:!!W.col,panel:!!W.panel}:null,railW:window.__bwRailW||null,",
+  "obs:{geom:!!window.__bwGeomObs,panelBg:!!window.__bwPanelBgObs,panelClose:!!window.__bwPanelClose},",
+  "writes:P?{set:P.set,setImp:P.setImp,attr:P.attr}:null});})()"
+].join("");
+
+// D10 diagnostic: why does bwFind() not see the sidebar on vm1? Replicate its candidate bounds,
+// locate the sidebar root by TEXT (no width bound), then call window.__bwPanelBg() and re-read the state.
+// D10 structure map: the grid frame's own children + the ancestor chain from a code block to body,
+// so the developer can see which bwFind() rule (2) shell / (3) tall sibling fails on the real device.
+const D10MAP = [
+  "(function(){var vw=window.innerWidth,vh=window.innerHeight,out={vw:vw,vh:vh,frame:null,chain:null};",
+  "var ds=document.querySelectorAll('div'),i,n,r,cs,fm=null;",
+  "for(i=0;i<ds.length;i++){n=ds[i];r=n.getBoundingClientRect();cs=getComputedStyle(n);",
+  "if((cs.display==='grid'||cs.display==='inline-grid')&&r.width>=vw*0.9&&r.height>=vh*0.5){fm=n;break;}}",
+  "if(fm){var fr=fm.getBoundingClientRect();var kids=[];var tc=0;",
+  "for(i=0;i<fm.children.length;i++){var k=fm.children[i],kr=k.getBoundingClientRect(),kc=getComputedStyle(k);",
+  "if(kr.height>=vh*0.6&&kr.width>0)tc++;",
+  "kids.push({cls:String(k.className||'').slice(0,30),tag:k.tagName,w:Math.round(kr.width),",
+  "h:Math.round(kr.height),x:Math.round(kr.left),y:Math.round(kr.top),disp:kc.display,pos:kc.position,",
+  "vis:kc.visibility,inline:(k.getAttribute('style')||'').slice(0,120)});}",
+  "out.frame={cls:String(fm.className||'').slice(0,30),w:Math.round(fr.width),h:Math.round(fr.height),",
+  "gridInline:fm.style.getPropertyValue('grid-template-columns'),",
+  "gridComputed:getComputedStyle(fm).gridTemplateColumns,tallKids:tc,kids:kids};}",
+  "var cb=document.querySelector('[class*=md-code-block]');var q=cb,ch=[];",
+  "while(q&&q!==document.documentElement){var rr=q.getBoundingClientRect(),qc=getComputedStyle(q);",
+  "ch.push({cls:String(q.className||'').slice(0,30),tag:q.tagName,w:Math.round(rr.width),",
+  "h:Math.round(rr.height),disp:qc.display,pos:qc.position,ovf:qc.overflow,ovfY:qc.overflowY,",
+  "inline:(q.getAttribute('style')||'').slice(0,110)});q=q.parentElement;}",
+  "out.chain=ch.slice(0,16);return JSON.stringify(out);})()"
+].join("");
+
+const D10DIAG = [
+  "(function(){var vw=window.innerWidth,vh=window.innerHeight;",
+  "var out={vw:vw,vh:vh,cands:[],root:null,after:null,bgEl:null,frame:null,codeblocks:[],err:null};",
+  "var ns=document.querySelectorAll('div,section,main'),i,n,r,cs,t;",
+  "for(i=0;i<ns.length;i++){n=ns[i];r=n.getBoundingClientRect();",
+  "if(r.left>2||r.height<vh*0.6||r.width<=0)continue;cs=getComputedStyle(n);",
+  "out.cands.push({cls:String(n.className||'').slice(0,34),tag:n.tagName,w:Math.round(r.width),",
+  "h:Math.round(r.height),vis:cs.visibility,disp:cs.display,pos:cs.position,",
+  "inFindRange:(r.width>=96&&r.width<=vw*0.9),over90:(r.width>vw*0.9)});}",
+  "out.cands.sort(function(a,b){return a.w-b.w;});out.cands=out.cands.slice(0,14);",
+  "var sb=null,sbw=0;",
+  "for(i=0;i<ns.length;i++){n=ns[i];r=n.getBoundingClientRect();",
+  "if(r.width<40||r.width>vw*1.05||r.height<vh*0.5)continue;t=n.innerText||'';",
+  "if(!/New [Ss]ession|\\u65b0\\u4f1a\\u8bdd/.test(t))continue;",
+  "if(!/Settings|Plugins|\\u8bbe\\u7f6e|\\u63d2\\u4ef6/.test(t))continue;",
+  "if(!sb||r.width>sbw){sb=n;sbw=r.width;}}",
+  "if(sb){var sr=sb.getBoundingClientRect(),scs=getComputedStyle(sb);",
+  "out.root={cls:String(sb.className||'').slice(0,40),tag:sb.tagName,w:Math.round(sr.width),",
+  "h:Math.round(sr.height),x:Math.round(sr.left),y:Math.round(sr.top),pos:scs.position,",
+  "disp:scs.display,vis:scs.visibility,bg:scs.backgroundColor,",
+  "inline:sb.style.getPropertyValue('background-color'),prio:sb.style.getPropertyPriority('background-color'),",
+  "widthInline:sb.style.getPropertyValue('width'),",
+  "findRange96to90:(sr.width>=96&&sr.width<=vw*0.9),bound90:Math.round(vw*0.9)};}",
+  "try{if(window.__bwPanelBg)window.__bwPanelBg();else out.err='no __bwPanelBg';}catch(e){out.err=String(e);}",
+  "var S=window.__bwSbEl;",
+  "if(S){var rr=S.getBoundingClientRect();",
+  "out.after={cls:String(S.className||'').slice(0,40),w:Math.round(rr.width),h:Math.round(rr.height),",
+  "pos:getComputedStyle(S).position,bg:S.style.getPropertyValue('background-color'),",
+  "prio:S.style.getPropertyPriority('background-color')};}else{out.after=null;}",
+  "var G=window.__bwBgEl;",
+  "if(G){var gr=G.getBoundingClientRect();",
+  "out.bgEl={cls:String(G.className||'').slice(0,40),w:Math.round(gr.width),",
+  "bg:G.style.getPropertyValue('background-color'),prio:G.style.getPropertyPriority('background-color')};}",
+  "var fr=document.querySelectorAll('div');var fm=null;",
+  "for(i=0;i<fr.length;i++){var fq=getComputedStyle(fr[i]);var frr=fr[i].getBoundingClientRect();",
+  "if((fq.display==='grid'||fq.display==='inline-grid')&&frr.width>=vw*0.9&&frr.height>=vh*0.5){fm=fr[i];break;}}",
+  "if(fm){out.frame={cls:String(fm.className||'').slice(0,34),style:(fm.getAttribute('style')||'').slice(0,220),",
+  "gridInline:fm.style.getPropertyValue('grid-template-columns'),",
+  "gridComputed:getComputedStyle(fm).gridTemplateColumns};}",
+  "var cbx=document.querySelectorAll('[class*=md-code-block]');",
+  "for(i=0;i<cbx.length&&i<8;i++){var cr=cbx[i].getBoundingClientRect();",
+  "out.codeblocks.push(Math.round(cr.width)+'x'+Math.round(cr.height));}",
+  "out.state={bwW:window.__bwW?1:0,railW:window.__bwRailW||null,bwSbEl:window.__bwSbEl?1:0,",
+  "bwBgEl:window.__bwBgEl?1:0,geom:!!window.__bwGeomObs,panelBg:!!window.__bwPanelBgObs,",
+  "panelClose:!!window.__bwPanelClose};",
+  "return JSON.stringify(out);})()"
+].join("");
+
 const CBSTATE = function (nat) {
   return [
     "(function(){",
@@ -1042,6 +1148,54 @@ async function main() {
     res.closeClick = close;
     await sleep(2000);
     res.afterClose = await sidebarState();
+  } else if (MODE === "d10map") {
+    res.nav = { session: await openFirstSession() };
+    res.reopen = await openSidebar();
+    res.dismiss = await dismissSheets();
+    res.map = await evJ(D10MAP);
+    res.shots = [shotAlive("qa-" + TAG + "-d10map")];
+  } else if (MODE === "d10diag") {
+    res.nav = { session: await openFirstSession() };
+    res.reopen = await openSidebar();
+    res.dismiss = await dismissSheets();
+    res.diag = await evJ(D10DIAG);
+    res.diag2 = await evJ(D10DIAG);
+    res.shots = [shotAlive("qa-" + TAG + "-d10diag")];
+  } else if (MODE === "d10") {
+    res.nav = { session: await openFirstSession() };
+    log("NAV " + JSON.stringify(res.nav).slice(0, 220));
+    res.reopen = await openSidebar();
+    log("REOPEN " + JSON.stringify(res.reopen).slice(0, 220));
+    res.dismiss = await dismissSheets();
+    res.hook = await evJ(PERF_HOOK);
+    const line = (k, s) => log("D10 " + k + " sbEl=" + (s.sbEl ? s.sbEl.cls.slice(0, 16) + " " + s.sbEl.w + "x" + s.sbEl.h + " " + s.sbEl.bgInline + "/" + s.sbEl.bgPrio : "null") +
+      " bgEl=" + (s.bgEl ? s.bgEl.cls.slice(0, 16) + " " + s.bgEl.w + "x" + s.bgEl.h + " " + s.bgEl.bgInline + "/" + s.bgEl.bgPrio : "null") +
+      " probe=" + (s.probe ? s.probe.cls.slice(0, 16) + " " + s.probe.w + "x" + s.probe.h + " " + s.probe.bgInline + "/" + s.probe.bgPrio + " hit=" + (s.probeHit ? s.probeHit.selfOrDesc : "?") : "null") +
+      " bwW=" + (s.bwW ? "SET" : "null") + " rail=" + s.railW + " obs=" + JSON.stringify(s.obs) + " w=" + JSON.stringify(s.writes));
+    res.expandedSeries = [];
+    for (let k = 0; k < 8; k++) {
+      const s = await evJ(D10STATE);
+      res.expandedSeries.push(s);
+      line("EXP" + k, s);
+      await sleep(700);
+    }
+    res.expandedShot = shotAlive("qa-" + TAG + "-d10-expanded");
+    res.collapse = await clickByText("Collapse sidebar");
+    if (!res.collapse.found) res.collapse = await clickByText("\u6536\u8d77\u4fa7\u8fb9\u680f");
+    log("COLLAPSE " + JSON.stringify(res.collapse).slice(0, 200));
+    await sleep(2500);
+    res.collapsedState = await sidebarState();
+    res.collapsedSeries = [];
+    for (let k = 0; k < 8; k++) {
+      const s = await evJ(D10STATE);
+      res.collapsedSeries.push(s);
+      line("COL" + k, s);
+      await sleep(700);
+    }
+    res.collapsedShot = shotAlive("qa-" + TAG + "-d10-collapsed");
+    res.perfFinal = await evJ(PERF_READ);
+    res.d10 = await evJ(D10STATE);
+    res.shots = [res.expandedShot, res.collapsedShot];
   } else {
     throw new Error("unknown mode " + MODE);
   }

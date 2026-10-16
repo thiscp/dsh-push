@@ -30,7 +30,7 @@ $EmuIp = "127.0.0.1"; $EmuUser = "user"; $EmuRoot = "G:\Android"
 $Vm1 = "user@build-host"; $DshWebUrl = "http://127.0.0.1:3080/"
 if (Test-Path "$PSScriptRoot\config.local.ps1") { . "$PSScriptRoot\config.local.ps1" }
 $EmuRootFwd = $EmuRoot.Replace('\','/')
-$Repo = "F:\work\work_dsh\dsh-push"
+$Repo = "$PSScriptRoot\.."   # was hardcoded F: - stale since the 2026-10-15 move to E:
 $OutDir = "$env:TEMP\dsh-verify"
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 

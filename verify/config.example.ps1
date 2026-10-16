@@ -15,3 +15,7 @@ $ReadToken   = "tk_REPLACE_READ"
 $WriteToken  = "tk_REPLACE_WRITE"
 # DSH Web link used by bw-iter.ps1 browser smoke test (token rotates on DSH restart)
 $DshWebUrl   = "http://<tailnet-windows>:3080/?token=REPLACE_WITH_CURRENT_WEB_TOKEN"
+
+# node.exe for verify/geom-matrix.mjs (10th check: column widths, both hosts, both states).
+# Leave unset to use node from PATH. DSH also ships a runtime node.exe.
+$Node       = "C:\path\to\node.exe"

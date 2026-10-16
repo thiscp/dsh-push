@@ -1,0 +1,49 @@
+QA D11 (task-11 addendum, commit 23a3169) SECTIONS A AND B ON THE NEW ARM - tester - real device emulator-5554 (CSS 360 / dpr 4 / vh 671)
+
+NEW ARM apk: verify/qa-d10-app-debug.apk 10996620 B sha 3104fcaa0060a0b144bd6aa52dd2ae2eac9c9a902e76144f75a7eac07ff15303
+  built on vm1 from worktree de9a9bd8 (= commit 23a3169, worktree clean), gate WEB de9a9bd8...882f + PUSH 0ee98aab...cc49 -> HASH_GATE_OK,
+  BUILD SUCCESSFUL, DEX literals present: __bwSbEl=2 __bwBgEl=1 __bwW=1 __bwRailW=1 bwFind=1 bwGeomFix=1 bwAlpha=1 bwPanelBg=1
+  bwHandle=1 bwFpSb=1 bwFpPlace=1 bwFpExp=1 grid-template-columns=1 contents=2 0.92=9.
+  installed with plain adb install -r (82 -> 82); device sha verified equal; dumpsys versionCode=82 versionName=1.32.16.
+GPU gate this round: PASS (guest GLES translator -> NVIDIA GeForce RTX 4060), qemu -gpu host, pm path alive.
+OLD ARM for contrast (previous section of this round): verify/qa-d10-489765b0-app-debug.apk (= 9924d59 = 3385166 + L498 escape fix), sha 489765b0...92e4.
+Control arm (pre-D10): verify/qa-v132-16-app-debug.apk f8b063f0 (81 / 1.32.15).
+
+== SECTION A on the NEW ARM (3104fcaa) - qa-d11-d10.json + qa-qa-d11-d10-d10-{expanded,collapsed}.png (360607 / 477730 B, alive, pid 13997) ==
+A3 __bwSbEl non-null in expanded steady state  ->  **PASS**. 8/8 expanded samples: __bwSbEl = hHd-Xa_root 360x671 (was null in 8/8 on the
+   old arm). NOTE the acceptance wording "null after collapse" is superseded by D11: after collapse __bwSbEl is **also non-null**
+   (same node, resized to the 56x671 rail with hHd-Xa_collapsed hHd-Xa_railIn) because the new fingerprint arm keeps the element
+   identified in both states. The functional requirement (collapse pulls the alpha back to 0.45) is met, and it no longer depends on
+   the __bwBgEl fallback. perfFinal confirms sbEl=1 at the end of the run.
+A1 expanded sidebar inline bg = host native hue + 0.92 !important  ->  **PASS**. 8/8 expanded samples inline
+   "rgba(249, 250, 251, 0.92)" priority important on the sidebar root (360x671). Hue 249/250/251 = this host native (NOT the laptop
+   255 family, NOT transparent). Same reading independently in the B run (qa-d11-ab-new.json analysis.sidebarRoot: 0.92/important).
+A2 collapse back to 0.45, exactly one flip, then stable  ->  **PASS**. collapsed 8/8 inline rgba(249,250,251,0.45) important;
+   write counters: every expanded sample 0/0/0; collapsed C0 already 92/85/0 and **frozen for all 8 samples** => the single
+   0.92 -> 0.45 write happened once in the collapse round, nothing after.
+Visual: qa-qa-d11-d10-d10-expanded.png shows the sidebar (New Session / Plugins / Workspaces / session rows / Settings) on a
+   near-opaque light panel; the wallpaper figure is only faintly visible at the bottom edge - the intended 0.92 look. On the old arm
+   the same screenshot showed the wallpaper bleeding through the entries (0.45).
+
+== SECTION B on the NEW ARM (D2 non-regression) - qa-d11-ab-new.json + qa-qa-d11-abnew-d2e.png (471506 B, alive, pid 14204) - **PASS** ==
+frame pI_x6G_frame 360x671, inline ONLY "background-color: transparent !important;", gridInline EMPTY, computed tracks "360px";
+centerCol 360 wide; code blocks **289x258 and 289x201** (third entry 360x0 is a zero-height card); inner PRE 289;
+8x700ms on 20 targets: **0 flips on every one**; #dsh-theme-veil still rgba(255,255,255,0.45) inline WITHOUT priority (red line intact);
+bwW=null and bwRailW=null (the squeeze path stays a no-op in this form, exactly as in the control arm), obs unchanged
+{geom:true, panelBg:false, panelClose:true}; the real Review tab is present in this run (_tabHost_6nhg2_162 _pane_6nhg2_209).
+What D11 changed and what it did not: the structure arm (bwFind 1-4, the only one allowed to touch tracks) still cannot pin this form
+(bwW stays null); the 0.92 comes from the new fingerprint arm (bwFpSb + bwFpPlace veto + bwFpExp with the handle boundary).
+From outside the page one cannot tell whether bwFind() returned null or returned sb without col - both leave __bwW null - so the
+reportable fact is: __bwSbEl is published, points at the right element, and the alpha is right in both states.
+
+== SECTION C first half on the NEW ARM (steady-state writes) - **PASS** ==
+Expanded steady state 8 samples: setProperty 0 / with-priority 0 / setAttribute(style) 0 on every sample.
+Collapsed steady state 8 samples: counters frozen at 92/85/0 on every sample (no growth).
+Total for the run: set=92 setImp=85 attr=0, byProp background-color=85 plus the page own CSS vars (3/3/1).
+All of it lands in the two transition windows (page load + glassify apply + the expand/collapse rounds); steady state is 0.
+OBSERVATION for the developer, not a defect: the total grew from 46/39 on the old arm to 92/85 on the new arm (background-color 39 -> 85).
+Both are transition-only, and the new arm writes more because the sidebar is now actually recognized (0.92 write + the fingerprint arm
+re-runs on every observer tick + the glassify isSb/skipBg arms now act on more elements since __bwSbEl is non-null).
+gfxinfo half of section C on this arm still to run (qa-d11-perf.txt).
+
+VERDICT SO FAR for the new arm: **A 3/3 PASS, B PASS, C steady-state PASS** - the goal of 3385166 is now met on the real device.

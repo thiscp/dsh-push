@@ -1,0 +1,61 @@
+QA D10 (task-11) BUILD GATE EVIDENCE - tester - commit 3385166
+
+== step 1: emulator gate (run before anything else) ==
+VERDICT: PASS - real GPU confirmed (host NVIDIA adapter renders the guest)
+qemu processes 1, qemu started 10/16/2026 02:02:27, argv -avd dsh-p16 -no-window -no-audio -no-boot-anim -gpu host -cores 4 -memory 4096
+selector file G:\Android\emu-ladder.gpu = host ; boot_completed=1 ; wm size/density 1440x3168 / 640
+RENDERER (auth) GLES: Google (NVIDIA Corporation), Android Emulator OpenGL ES Translator (NVIDIA GeForce RTX 4060 Laptop GPU/PCIe/SSE2), OpenGL ES 3.1 (4.5.0 NVIDIA 616.92)
+PM_PATH probe (system_server alive): package:\data\app\~~5DczUrH6EKxFHcztj22s2Q==\xyz.cpyh.dshpush-DgKGfbm_uun6E0JYfzJ_EQ\base.apk
+WHOAMI root ; DEVICES emulator-5554 device
+NOTE: that device apk path differs from last round (~~SAAeKRB4RA.. and ~~9oPlOpv_..), so the device now carries the
+      released v1.32.16 (versionCode 82) apk reinstalled by the release run, not my f8b063f0 build. Section B control arm
+      is still verify/qa-v132-16-app-debug.apk (f8b063f0..7cec), which I install myself when the A/B runs.
+
+== step 2: sync + src hash gate on vm1 ==
+WEB  13422362855bb208fcd632c07fab92a16f5ed41c125b4cc2858944842e40589f  (= laptop worktree HEAD 3385166)
+PUSH 0ee98aabcfb9f21d998b3d108c5a0e416e0342a6179bd51ef2f5ac15cb59cc49  (unchanged)
+HASH_GATE_OK
+
+== step 3: gradle clean assembleDebug on vm1 ==
+BUILD FAILED in 15s (29 actionable tasks: 13 executed, 15 from cache, 1 up-to-date)
+stat: cannot stat app\build\outputs\apk\debug\app-debug.apk: No such file or directory (os error 2)
+
+== step 4: error detail (second gradle run) ==
+e: WebActivity.kt:498:50 Expecting an expression
+e: WebActivity.kt:498:50 Expecting ")"
+e: WebActivity.kt:498:71 Unexpected tokens (use ";" to separate expressions on the same line)
+e: WebActivity.kt:542:32 Unexpected tokens (use ";" to separate expressions on the same line)
+e: WebActivity.kt:498:55 Unresolved reference, receiver type mismatch (BigDecimal.times / BigInteger.times)
+e: WebActivity.kt:498:57 Too many characters in a character literal (the text _2H3hWW_root in single quotes)
+FAILURE: Build failed with an exception.
+Execution failed for task :app:compileDebugKotlin (GradleKotlinCompilerWorkAction)
+BUILD FAILED in 9s (28 actionable tasks: 2 executed, 26 up-to-date)
+vm1 file present: -rw-rw-r-- 1 <user> <user> 99826 Oct 16 04:26 app\src\main\java\xyz\cpyh\dshpush\WebActivity.kt
+
+== root cause (read-only inspection; tester never touches android-app) ==
+L498, new in 3385166, inside the bwPanelBg JS string, reads:
+                "var sb=document.querySelector("[class*="_2H3hWW_root"];" +
+  the two inner double quotes are NOT escaped, so the Kotlin string literal ends right after querySelector( and the rest
+  of the concatenation chain is misparsed - that is also where the follow-on error at L542 comes from (L542 is where the
+  evaluateJavascript call closes, so the parser reports the unbalanced expression there).
+The same construct already exists twice in the same file, written correctly (pre-existing code, L510 and L531):
+L510 / L531 use querySelector(\"[class*=...\");  i.e. both inner quotes escaped.
+grep tally: unescaped form = 1 hit (L498 only); escaped form = L510 and L531.
+Fix, developer scope, one line: escape the two quotes on L498 exactly like L510 and L531.
+
+== staged and ready the moment an apk exists ==
+verify/qa-d10-build.sh (hash gate pinned to 13422362..589f; DEX literal check adds __bwSbEl __bwBgEl bwFind bwGeomFix
+  bwAlpha bwPanelBg 0.92 1.32.16 on top of the usual set)
+verify/qa-d10-chain.ps1 (sync / build / fetch into verify/qa-d10-app-debug.apk), pure ASCII, Start-Process redirect +
+  hard timeouts, no PowerShell pipe on ssh output
+verify/qa-d10-errdetail.sh (remote gradle error extractor)
+verify/qa-v132-15-probe.mjs extended: new D10STATE block + new mode d10 (node --check RC=0, and the generated page-side
+  JS parses standalone). d10 = open session row, reopen sidebar, dismissSheets, install setProperty/setAttribute
+  counters, 8x700ms expanded samples, screenshot, Collapse sidebar, 8x700ms collapsed samples, screenshot, final
+  counters. Every sample reports __bwSbEl and __bwBgEl (cls, w, h, pos, computed bg, inline bg, prio), an independent
+  content-based sidebar probe with an elementFromPoint hit test, __bwW and __bwRailW, the three observer flags, and the
+  live write counters - i.e. acceptance A1-A4 and C can be read out of one run.
+Section B control arm already on disk: verify/qa-v132-16-app-debug.apk 10995364 B sha f8b063f0..7cec.
+
+STATUS: QA blocked at the build gate. No apk, so sections A/B/C/D cannot run. Device untouched this step.
+BUILD_GATE_FAIL

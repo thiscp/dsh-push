@@ -1,0 +1,73 @@
+QA D10 (task-11) SECTIONS A AND B - tester - real device (emulator dsh-p16, CSS 360/dpr4)
+
+D10 apk under test: verify/qa-d10-app-debug.apk 10995652 B sha 489765b0a55348ae41d3781d33409b0ab0811e3ad9e4db9b71e993cdc4df92e4
+  built on vm1 from worktree bac07314 (= 3385166 + the one-line L498 quote-escape fix), HASH_GATE_OK, BUILD SUCCESSFUL in 12s / 19 executed.
+  installed on emulator-5554, device sha verified equal, dumpsys: versionCode=82 versionName=1.32.16.
+DEX literals present: __bwSbEl=2 __bwBgEl=1 __bwW=1 __bwRailW=1 bwFind=1 bwGeomFix=1 bwAlpha=1 bwPanelBg=1 0.92=9 grid-template-columns=1.
+Control arm: verify/qa-v132-16-app-debug.apk f8b063f0 (81/1.32.15) - see verify/qa-d10-control-notes.txt.
+Evidence files: qa-d10-d10.json (A + C counters), qa-d10-ab-new.json (B new arm), qa-d10-ab-base.json (B control),
+  qa-d10-diag.json (bwFind candidate bounds + manual __bwPanelBg call), qa-d10-map.json (frame children + ancestor chain),
+  screenshots qa-qa-d10-d10-d10-expanded.png 588726 B / qa-qa-d10-d10-d10-collapsed.png 993341 B / qa-qa-d10-abnew-d2e.png 813146 B
+  / qa-qa-d10-diag-d10diag.png / qa-qa-d10-map-d10map.png, all alive=true, pid unchanged.
+
+== SECTION A: D10 acceptance on vm1 - 3 of 4 criteria FAIL ==
+A1 expanded sidebar inline bg must be host native hue + 0.92  ->  **FAIL**. 8/8 expanded samples: the element the app wrote on
+   (__bwBgEl, class hHd-Xa_root = the sidebar root, text "New Session Plugins Workspaces ...") carries inline
+   rgba(249, 250, 251, 0.45) with priority important. Never 0.92 in any sample. Hue is right (249/250/251), alpha is wrong.
+A2 collapse back to 0.45, exactly one flip in the collapse round, then stable  ->  **PASS in shape** (but the value never left
+   0.45 to begin with): collapsed 8/8 samples inline rgba(249,250,251,0.45) important, write counters 45/38 at COL0 then
+   46/39 from COL1 on and frozen for the remaining 7 samples => exactly one extra background-color write in the collapse round,
+   then 0 writes. Same shape as the control arm (41/34 then frozen).
+A3 __bwSbEl must be non-null in vm1 expanded steady state  ->  **FAIL**. __bwSbEl = null in 8/8 expanded samples and in the
+   final state; a manual window.__bwPanelBg() call from CDP (twice, qa-d10-diag.json) still leaves it null. So the D10
+   fingerprint is absent on the real device: bwFind() returns null, exactly the pre-D10 situation.
+A4 __bwBgEl pulls the last written element back to 0.45 on the collapse path  ->  **PASS**. After collapse __bwBgEl still
+   points at the same DOM node (hHd-Xa_root, now with hHd-Xa_collapsed hHd-Xa_railIn, 56x671) and its inline is
+   rgba(249,250,251,0.45) important. Note the element identity drifted with the layout (280/360 wide expanded -> 56 wide rail)
+   because it is the same node resized by the page, which is what makes the width-based discovery fragile.
+
+== ROOT CAUSE (measured, not inferred) ==
+bwFind() rule (1) accepts a sidebar candidate only when  left<=2 AND height>=60%vh AND 96px <= width <= vw*0.9.
+At vw=360 that upper bound is 324px. On this host the expanded narrow-screen sidebar is **full viewport width**:
+  hHd-Xa_root (sidebar root)          360x671  pos static  x=0   -> 360 > 324, rejected
+  pI_x6G_sidebarCol (its column)      360x671  pos static
+  pI_x6G_frame (grid shell)           360x671, gridInline empty, computed tracks "360px" (a SINGLE track)
+qa-d10-diag.json lists every element with left<=2 and height>=60%vh: 10 of them, ALL over90 (widths 353..360).
+**There is no element anywhere in the document inside the [96px, 324px] band**, so bwFind() can never find a sidebar here.
+That is self-reinforcing: the old build only ever had a 280px-wide sidebar because its own geometry path pinned width:280px
+(the control arm still shows that leftover inline width: 280px). The new build never pins, because it never discovers.
+Everything downstream of rule (1) would actually work if the width bound were relaxed:
+  rule (2) shell: hHd-Xa_root -> pI_x6G_sidebarCol (block, 1 child) -> pI_x6G_frame (grid, 3 tall children) = shell, col = sidebarCol, flush left  OK
+  rule (3) tall sibling: pI_x6G_handle 8x671 at x=276 (inline left: 280px) is <35%vw and >=50%vh => ok=true, starved=true  OK
+  expanded flag for a geometry host is g.sbExpanded = (sidebar width >= rail+40) = (360 >= 96) = true => bwAlpha would write 0.92.
+CAUTION for whoever relaxes the bound: the conversation subtree is 353 wide and 2922 tall (4.35 x vh) and also sits at left<=2
+(wSkVaW_viewArea / EvIC1a_frame / EvIC1a_root / EvIC1a_scroll, all 353x2922). Rule (1) keeps the NARROWEST candidate, so a
+bound of vw*1.0 or more would pick the conversation subtree instead of the sidebar and write 0.92 on the chat root -
+that is the v1.32.6 wallpaper red line (the synthetic suite S1/S2/S4/S6/S8 guards exactly this).
+Suggested discriminator (developer decides): keep the width relaxation but add a height ceiling, e.g. candidate height
+<= vh*1.25, which keeps the sidebar (671 = 1.00 x vh) and rejects the conversation subtree (2922 = 4.35 x vh).
+A class-free structural anchor is also available: pI_x6G_handle with inline left: 280px is the page own drag handle that
+marks the sidebar column boundary (the page itself thinks the sidebar is 280 wide even though the column is 360).
+
+== SECTION B: D2 non-regression, same bundle A/B - **PASS** ==
+new arm (D10 apk, qa-d10-ab-new.json): frame pI_x6G_frame 360x671, inline ONLY background-color: transparent !important,
+  gridInline EMPTY, computed tracks "360px"; centerCol 360 wide; code blocks 289x258 and 289x201, inner PRE 289x216 / 289x159;
+  8x700ms on 19 targets: 0 flips on every one; veil rgba(255,255,255,0.45) inline WITHOUT priority (red line intact);
+  shot alive 813146 B; sha gate before/after both 489765b0.
+control arm (f8b063f0, qa-d10-ab-base.json): frame inline also only transparent, code blocks 7x289x296, PRE 289x254, 0 flips.
+NOTE the sample sizes differ (2 code blocks visible in the new run vs 7 in the control) because the conversation scroll
+position differs between runs; the acceptance number is the width (289 in both), not the count.
+Sidebar overlay still visible and clickable in both arms (elementFromPoint inside it in the control; in the new arm the
+sidebar covers the whole 360px width, which is the pages own narrow-screen design once we stop pinning it to 280px).
+
+== SECTION C (first half): steady-state writes - **PASS** ==
+Expanded steady state, 8 samples, every one: setProperty=0, setProperty-with-priority=0, setAttribute(style)=0.
+Total after the whole run: set=46 setImp=39 attr=0, byProp background-color=39 plus the pages own CSS vars
+(--dsh-composer-height 3, --dsh-conversation-viewport-height 3, --dsh-conversation-column-width 1).
+All 46 writes sit in the two transition windows (page load / glassify apply, and the collapse round); none in steady state.
+Control arm for comparison: set=41 setImp=34 attr=0, same shape. So the new bwAlpha write path does not self-excite.
+gfxinfo part of section C still to run (qa-d10-perf.txt).
+
+VERDICT SO FAR: D2 fix holds (B PASS), the new write path is quiet (C first half PASS), but **D10 itself does not take
+effect on the real device** (A1/A3 FAIL, A2 only vacuously true) because of the 90%vw candidate ceiling. Not a regression
+against v1.32.16 - vm1 expanded sidebar stays at 0.45 exactly as before - but the stated goal of 3385166 is not met.

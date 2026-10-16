@@ -81,8 +81,10 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
    都要在 delta 里出现，否则 `openspec archive` 直接拒绝并点名漏了哪个。
 2. **发布一条命令**：`verify/dsh-app-verify.ps1 -Deploy -DeployNote "更新说明"` —— 自动构建、
    装机验收、上架 aliyun 下载链接、**并推更新通知**（带 App 内下载按钮 + 点通知直达下载）。
-   只想静默上架加 `-NoNotify`。版本号两处一起 bump（`build.gradle.kts` 的 versionCode/Name
-   与 `PushService.APP_VER`），否则 APP 顶部版本显示会对不上。
+   只想静默上架加 `-NoNotify`。版本号**只有一处真值**：`android-app/app/build.gradle.kts` 的
+   `versionCode` + `versionName` 两个字段一起 bump。App 内显示的版本自 v1.32.17 起**运行时**从
+   `PackageInfo.versionName` 派生（`PushService.APP_VER` 那个编译期常量已删——它曾让状态卡片
+   显示旧版本号），所以不存在「第三处要同步」，也不会再对不上。
 3. **ntfy 推送格式**：要带 title/优先级/click 的 **JSON body 必须 POST 到根路径**
    `https://ntfy.cpyh.xyz` 并把 `topic` 写进 body；POST 到 `/dsh` 会把整坨 JSON 当正文存
    （阿里云边缘 nginx 的解析差异，实测）。纯文本 + `X-Title`/`X-Priority` 头则照常走 `/dsh`。

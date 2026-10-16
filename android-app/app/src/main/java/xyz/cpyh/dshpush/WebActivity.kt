@@ -332,9 +332,9 @@ class WebActivity : Activity() {
                 //     · 侧栏列 = 框架子节点里贴左缘（left ≤ 框架左缘+2）、高 ≥60% 视口、
                 //       宽 ∈ [96px, 90%vw]、且 position 为 static/relative —— **在流内**才叫
                 //       挤压；已是 fixed 浮层（笔电样式表生效的样子）不算；
-                //     · 饥饥 = 同一框架里存在宽 <35% 视口、高 ≥50% 视口的兄弟列
+                //     · 饥饿 = 同一框架里存在宽 <35% 视口、高 ≥50% 视口的兄弟列
                 //       （= 正文列被吃掉，即 lead 说的「检测有个兄弟块在吃宽度」）；
-                //     · 展开态 = 侧栏列宽 ≥ 轨道宽+40 **且** 有饥饥兄弟；否则按收起态处理
+                //     · 展开态 = 侧栏列宽 ≥ 轨道宽+40 **且** 有饥饿兄弟；否则按收起态处理
                 //       ⇒ **撤销**我们写过的内联（样式表那条靠
                 //       :not([class*='_2H3hWW_collapsed']) 做同一件事，几何段没有类名可用，
                 //       只能「每轮重判 + 撤销」，否则收起侧栏会被我们的 width 钉成 280px）。
@@ -347,38 +347,113 @@ class WebActivity : Activity() {
                 //   定位，**没碰任何 background 通道**；笔电那条 0.92 路径（类名命中时）
                 //   一行没改（合成 DOM S13b 实测：侧栏根仍 rgba(255,255,255,0.92)、卡片仍
                 //   rgb(249,250,251)、正文列仍 transparent）。
-                "function bwRailW(){var w=window.__bwRailW;" +
-                "return (w>0&&w<160)?w:56;}" +
-                "function bwGeom(){var vw=window.innerWidth,vh=window.innerHeight;" +
+                // ★ v1.32.17 D10：把「**发现侧栏**」和「**修挤压**」拆开。bwFind() 只量盒模型、
+                //   一个属性都不写，返回**一次扫描**的结果给三个消费者共用：修挤压的 bwGeomFix、
+                //   调底色的 bwPanelBg、以及玻璃化注入里读 window.__bwSbEl 的 isSb / skipBg 两条臂
+                //   ——全程只扫一遍 DOM，不再出现「几何段跑完又撤销々顺扊把发现结果也撤掉」。
+                //   为什么必须拆开（真机 verify/QA-ROUND-v1.32.16.md §2.2）：挤压的来源是**页面自己**
+                //   写在 frame 上的内联 grid-template-columns；撤销时 removeProperty 摘掉的正是那一条
+                //   （内联只有一个命名空间），摘掉后落回页面样式表的「单列 360px + 侧栏覆盖
+                //   层」⇒ 挤压已解除，但旧的 bwGeom() 那时因「轨道 <2 条」直接 return null
+                //   ⇒ __bwSbEl 永远是 null ⇒ 底色那条整个不跑 ⇒ vm1 展开态侧栏停在
+                //   rgba(249,250,251,0.45)，拿不到笔电那侧的 0.92（D10）。
+                //   判据**只有盒模型/几何 + DOM 结构**，不读任何类名（§11.7 那张 18 处
+                //   [class*='…'] 前缀表就是腐烂现场，D2 的教训已在 §11.11）：
+                //   ① 候选：贴左缘(left≤2)、高 ≥60% 视口、宽 ∈[96px,90%vw]、computed visibility
+                //      非 hidden，取**最窄**的那个（同宽取文档序更靠后的，即列里面的侧栏根、
+                //      不是列本身）；收起态轨道 56px 落在 96px 下限之外 ⇒ 天然发现不到，
+                //      正好用来判「没有侧栏可调」并把上次写过的那个元素拉回 0.45；
+                //   ② 从候选往上找**外壳**：第一个 display 为 grid/flex 且有 ≥2 个高子元素的祖先；
+                //      候选到外壳之间的那一跳 = 它所在的**列**；
+                //   ③ 这一列必须贴左缘，且必须有**兄弟列**高 ≥60% 视口、比侧栏更宽（正文在右）
+                //      或窄到 <35% 视口（正文被吃掉）。这条是合成套件逼出来的：去掉它之前
+                //      S1 / S2 / S4 / S6 / S8 里的聊天根（整页只有正文这一列，根旁边没兄弟）会被
+                //      当成侧栏写上 0.92 ——壁纸直接消失（v1.32.6 红线）；
+                //   ④ 修挤压要的 col / starved 直接复用②③的结果（col 还得是①里那个 ≥2 轨道
+                //      的 grid 外壳 f 的亲儿子才有意义），不再单独扫一遍 frame 的子节点。
+                "function bwRailW(){var w=window.__bwRailW;return (w>0&&w<160)?w:56;}" +
+                //   闸 A（v1.32.18，笔电宿主回归）：① 的候选必须**真有侧栏内容**。
+                //   真机读数（emulator-5554 打开笔电宿主，同一前端 bundle，只差 apk）：
+                //   D11 把①的上限放宽到 vw+2 后，页面自己那层**全屏空覆盖层** BynINW_overlayLayer
+                //   （360x671，只有一个 0x0 的 display:contents 子节点）通过了①，被认成侧栏；
+                //   ② 又把 col 取成它自己，③ 里 56px 的收起轨道过了新的 40px 下限被当成饥饿兄弟，
+                //   于是 expanded=true，把**聊天列那一轨**钉成 56px（frame 内联 56px 56px minmax(0,1fr)，
+                //   计算值 56/56/248，centerCol 56x671，正文一字一行）。对照臂（D11 之前 efde4c2）
+                //   __bwW=null、页面自己的 56px minmax(0,1fr) minmax(0,0) 计算 56/304/0、centerCol 304x671。
+                //   判据用内容而不是类名/宽度：空覆盖层没有可见文字，真侧栏必有会话列表文字。
+                "function bwSbContent(el){if(!el)return false;" +
+                "var t=el.innerText||'';if(t.trim().length>=8)return true;" +
+                "var k=el.querySelectorAll('*'),c=0;" +
+                "for(var y=0;y<k.length&&c<2;y++){var q=k[y];" +
+                "if(q.innerText&&q.innerText.trim().length>1){var rr=q.getBoundingClientRect();" +
+                "if(rr.width>0&&rr.height>0)c++;}}return c>=2;}" +
+                "function bwFind(){var vw=window.innerWidth,vh=window.innerHeight;" +
                 "if(vw>1023||vw<=0||vh<=0)return null;" +
                 "var nodes=document.querySelectorAll('div,section,main');" +
-                "for(var i=0;i<nodes.length;i++){var f=nodes[i];" +
-                "var rf=f.getBoundingClientRect();" +
-                "if(rf.width<vw*0.9||rf.height<vh*0.5)continue;" +
-                "var cs=getComputedStyle(f);" +
-                "if(cs.display!=='grid'&&cs.display!=='inline-grid')continue;" +
-                "var tp=(cs.gridTemplateColumns||'').split(' '),tr=[],j,v;" +
-                "for(j=0;j<tp.length;j++){v=parseFloat(tp[j]);tr.push(v>0?v:0);}" +
-                "if(tr.length<2)continue;" +
-                "var col=null,starved=false,ch=f.children,rc;" +
-                "for(var c=0;ch&&c<ch.length;c++){rc=ch[c].getBoundingClientRect();" +
-                "if(rc.left<=rf.left+2&&rc.height>=vh*0.6&&rc.width>=96&&" +
-                "rc.width<=vw*0.9){" +
-                "var pcs=getComputedStyle(ch[c]);" +
-                "if(pcs.position==='static'||pcs.position==='relative')" +
-                "col=ch[c];}" +
-                "if(rc.width>0&&rc.width<vw*0.35&&rc.height>=vh*0.5)" +
-                "starved=true;}" +
-                "if(!col)continue;" +
-                "var colW=Math.round(col.getBoundingClientRect().width);" +
+                "var f=null,tr=null,sb=null,sbW=1e9;" +
+                "var i,n,r,cs,j,tp,vv,q,c,col=null,shell=null,p,pp,d=0,kids,tc,kr,rc2;" +
+                "for(i=0;i<nodes.length;i++){n=nodes[i];r=n.getBoundingClientRect();" +
+                "if(r.width<=0||r.height<=0)continue;" +
+                //   外壳 f：宽 ≥90% 视口、高 ≥50% 视口、display 为 grid、used 轨道 ≥2 条
+                //   （文档序第一个）——只有这种外壳才能靠改轨道宽度解除挤压。
+                "if(!f&&r.width>=vw*0.9&&r.height>=vh*0.5){cs=getComputedStyle(n);" +
+                "if(cs.display==='grid'||cs.display==='inline-grid'){" +
+                "tp=(cs.gridTemplateColumns||'').split(' ');vv=[];" +
+                "for(j=0;j<tp.length;j++){q=parseFloat(tp[j]);vv.push(q>0?q:0);}" +
+                "if(vv.length>=2){f=n;tr=vv;}}}" +
+                // ① 侧栏候选（可见性只看它自己的 computed——visibility 可继承也
+                //   可覆盖，D3）。★ v1.32.17 D11：宽度带上限从 90%vw 放宽到 vw+2，并加
+                //   **高度天花板 1.25vh**。真机 vm1 撤销挤压后侧栏是**页面自己的满屏宽覆盖层**
+                //   （hHd-Xa_root 360x671 = 1.00vh），而正文子树 wSkVaW_viewArea / EvIC1a_frame /
+                //   EvIC1a_root / EvIC1a_scroll 是 353x2922 = **4.35vh**（verify/qa-d10-diag.json 的
+                //   diag.cands 全量实测，10 个候选一个不落。只放宽上限的话「取最窄」会先撞上 353
+                //   的正文 ⇒ 0.92 写到聊天根 = v1.32.6 壁纸红线；加上 1.25vh 天花板正好把 4.35vh
+                //   的正文挡在外面、把 1.00vh 的侧栏放进来。
+                "if(r.left<=2&&r.height>=vh*0.6&&r.height<=vh*1.25&&r.width>=96&&" +
+                "r.width<=vw+2&&r.width<=sbW){" +
+                "cs=getComputedStyle(n);" +
+                "if(cs.visibility!=='hidden'&&bwSbContent(n)){sb=n;sbW=r.width;}}}" +
+                "if(!sb)return null;" +
+                //   ② 往上找外壳（grid/flex + ≥2 个高子元素），顺扊拿到它所在的列
+                "p=sb;pp=sb.parentElement;" +
+                "while(pp&&d++<12){cs=getComputedStyle(pp);" +
+                "if(cs.display==='grid'||cs.display==='inline-grid'||cs.display==='flex'||" +
+                "cs.display==='inline-flex'){" +
+                "kids=pp.children;tc=0;" +
+                "for(c=0;kids&&c<kids.length;c++){kr=kids[c].getBoundingClientRect();" +
+                "if(kr.height>=vh*0.6&&kr.width>0)tc++;}" +
+                "if(tc>=2){shell=pp;col=p;break;}}" +
+                "p=pp;pp=pp.parentElement;}" +
+                "if(!shell)return null;" +
+                //   ③ 列贴左缘 + 必须有「正文」兄弟列（更宽或饥饿）
+                "var fr=col.getBoundingClientRect();" +
+                "if(fr.left>shell.getBoundingClientRect().left+2)return null;" +
+                "var sib=shell.children,ok=false,starved=false;" +
+                "for(c=0;sib&&c<sib.length;c++){if(sib[c]===col)continue;" +
+                "rc2=sib[c].getBoundingClientRect();" +
+                "if(rc2.height<vh*0.6)continue;" +
+                "if(rc2.width>sbW||rc2.width<vw*0.35)ok=true;" +
+                //   「饥饿兄弟列」必须有真实的盒子（宽 ≥40px）。真机两个数字：被挤的正文列
+                //     pI_x6G_centerCol 是 **80x671 @x=280**（verify/qa-v132-16-d2-ab-baseline.json 的
+                //     d2.centerCol，≥ 40 ✓ 修挤压那条照旧生效）；而新形态下唯一能凑进「饥饿」的是
+                //     那根 8px 宽的拖拽把手（pI_x6G_handle 8x671 @x=276）——它不是列。没这条下限时
+                //     放宽后的①会把满屏宽的 pI_x6G_overlayLayer 选成侧栏、把把手当成饥饿兄弟
+                //     列，接着就会把一层透明覆盖层钉成浮层。只加在「饥饿」分支：另一个
+                //     分支是兄弟列比侧栏更宽（侧栏本身 ≥96，更宽就肯定 ≥96），加下限是恒真。
+                "if(rc2.width>=40&&rc2.width<vw*0.35&&rc2.height>=vh*0.5)starved=true;}" +
+                "if(!ok)return null;" +
+                //   ④ col 只有在「外壳正是那个 ≥2 轨道的 grid」时才用得上（改轨道宽度）
+                "var col2=(shell===f)?col:null;" +
+                "var colW=col2?Math.round(fr.width):0;" +
                 "var rail=bwRailW();" +
                 "if(colW<rail&&colW>=40)window.__bwRailW=colW;" +
-                "var panel=col,cc=col.children,q;" +
-                "for(q=0;cc&&q<cc.length;q++){rc=cc[q].getBoundingClientRect();" +
-                "if(rc.width>=rail+40&&rc.height>=vh*0.6){panel=cc[q];break;}}" +
-                "return {f:f,col:col,panel:panel,colW:colW,rail:rail," +
-                "starved:starved,expanded:(colW>=rail+40&&starved)};}" +
-                "return null;}" +
+                "var sbW2=Math.round(sb.getBoundingClientRect().width);" +
+                "return {f:f,tr:tr,col:col2,starved:starved,colW:colW,rail:rail,sb:sb," +
+                "expanded:(colW>=rail+40&&starved),sbExpanded:(sbW2>=rail+40)};}" +
+                // 写入项与撤销项成对：BWK=钉成浮层要写的定位属性，BWC=侧栏列上必须中和的包含块属性
+                //   （backdrop-filter / transform / contain / will-change 会把 fixed 后代变成「困在列里」的
+                //   包含块，样式表那条早就踩过）。bwSet 一律**先比后写**——观察器 attributeFilter 含 style，
+                //   重写同一个值就会「写→变异→再写」空转（真机 §4 稳态 setProperty=0 就是靠这个）。
                 "var BWK=['position','left','top','bottom','width','max-width'," +
                 "'z-index','overflow-y','overflow-x','box-shadow'];" +
                 "var BWC=['overflow','backdrop-filter','-webkit-backdrop-filter'," +
@@ -387,79 +462,181 @@ class WebActivity : Activity() {
                 "if(el.style.getPropertyValue(k)===v&&" +
                 "el.style.getPropertyPriority(k)==='important')return;" +
                 "el.style.setProperty(k,v,'important');}" +
-                "function bwUndo(){var w=window.__bwW;if(!w)return;" +
-                "window.__bwW=null;window.__bwSbEl=null;" +
+                // bwUndo 只撤销**布局**写入。★ v1.32.17 D10：不再清 __bwSbEl——它现在归发现段
+                //   （bwFind）所有，是「这个宿主上哪个元素是侧栏」的答案，与有没有钉成浮层无关；
+                //   底色也不在这里改：收起时 bwPanelBg 每轮都会把它拉回 0.45（见 bwAlpha 的 reset 分支）。
+                "function bwUndo(){var w=window.__bwW;if(!w)return;window.__bwW=null;" +
                 "try{if(w.f&&w.f.isConnected)" +
                 "w.f.style.removeProperty('grid-template-columns');" +
                 "if(w.col&&w.col.isConnected){for(var j=0;j<BWC.length;j++)" +
                 "w.col.style.removeProperty(BWC[j]);}}catch(e1){}" +
-                // 收起侧栏时顺手把底色从 0.92 拉回 0.45（与笔电类名那条
-                //   `var a=(narrow&&expanded)?0.92:0.45` 同一取值）：几何段撤销定位后
-                //   __bwSbEl 已被清掉、bwPanelBg 找不到对象，否则会把展开态的 0.92
-                //   留在收起态的 56px 导航条上。这里继承的是**同一个色相**——bwPanelBg
-                //   写的时候就是保留原生色相只改 alpha，所以此刻读到的仍是页面自己的色相。
                 "try{if(w.panel&&w.panel.isConnected){for(var k=0;k<BWK.length;k++)" +
-                "w.panel.style.removeProperty(BWK[k]);}}catch(e2){}" +
-                "try{if(w.panel&&w.panel.isConnected){var pb=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/" +
-                ".exec(getComputedStyle(w.panel).backgroundColor);" +
-                "if(pb)w.panel.style.setProperty('background-color','rgba('+pb[1]+','+pb[2]+','" +
-                "+pb[3]+',0.45)','important');}}catch(e3){}}" +
-                "function bwGeomFix(){var g=bwGeom();" +
-                "if(!g||!g.expanded){bwUndo();return;}" +
-                "if(window.__bwW&&(window.__bwW.f!==g.f||" +
-                "window.__bwW.panel!==g.panel))bwUndo();" +
-                "var f=g.f,col=g.col,panel=g.panel,rail=g.rail;" +
-                "var vw=window.innerWidth;" +
-                "var tp=(getComputedStyle(f).gridTemplateColumns||'').split(' ')," +
-                "tr=[],j,v;" +
-                "for(j=0;j<tp.length;j++){v=parseFloat(tp[j]);tr.push(v>0?v:0);}" +
-                "var at=-1;" +
-                "for(j=0;j<tr.length;j++){if(Math.abs(tr[j]-g.colW)<=2){at=j;break;}}" +
-                "if(at>=0){var nw=[];" +
-                "for(j=0;j<tr.length;j++){if(j===at)nw.push(rail+'px');" +
-                "else if(j===at+1)nw.push('minmax(0,1fr)');" +
-                "else nw.push(tr[j]+'px');}" +
+                "w.panel.style.removeProperty(BWK[k]);}}catch(e2){}}" +
+                // ★ v1.32.17 D10：底色单独成函数，**只认元素、不认写入**。expanded 由调用方给
+                //   （类名宿主用 collapsed 类名判，几何宿主用「侧栏宽 ≥ 轨道宽+40」判）；认不出侧栏
+                //   时（收起成 56px 轨道就落在 96px 下限之外）对**上次写过的那个元素**回写 0.45，
+                //   与笔电 `var a=(narrow&&expanded)?0.92:0.45` 同一取值。色相一律沿用元素自己的
+                //   （此刻读到的仍是页面原生色相或我们上一轮写的同一个色相），只改 alpha。
+                "function bwAlpha(el,expanded){" +
+                "if(!el||!el.isConnected)return;" +
+                "var r=el.getBoundingClientRect();" +
+                "if(r.width<=0||r.height<window.innerHeight*0.5)return;" +
+                //   玻璃化注入可能先把它写成 transparent（值 transparent + 优先级 important 是我们的
+                //   指纹）：摘掉自己那一条，把页面原生色相露出来，否则读到 rgba(0,0,0,0) 会被调成近黑。
+                "if(el.style.getPropertyValue('background-color')==='transparent'&&" +
+                "el.style.getPropertyPriority('background-color')==='important')" +
+                "el.style.removeProperty('background-color');" +
+                "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/" +
+                ".exec(getComputedStyle(el).backgroundColor);if(!m)return;" +
+                //   色相不可用（computed 全透明）就不写：没有可保留的色相，硬写会变成 rgba(0,0,0,.92)。
+                "if(m[4]!==undefined&&parseFloat(m[4])===0)return;" +
+                "var v='rgba('+m[1]+','+m[2]+','+m[3]+','+(expanded?0.92:0.45)+')';" +
+                "window.__bwBgEl=el;" +
+                "if(el.style.getPropertyValue('background-color')===v&&" +
+                "el.style.getPropertyPriority('background-color')==='important')return;" +
+                "el.style.setProperty('background-color',v,'important');}" +
+                // ★ v1.32.17 D11 第二条臂：**指纹臂**。真机证明「按宽度认侧栏」在新形态上
+                //   不成立——撤销挤压后侧栏与正文列**都是 360 宽**（侧栏是盖在正文列上的
+                //   覆盖层），判据②③也认不出它：frame 的直接子是 display:contents 的包装
+                //   （盒子 0x0，真机 sbAncestry 实测），②那条「外壳 ≥2 个高子元素」数出来是 0；
+                //   侧栏列的兄弟列 centerCol 与它**等宽**，既不更宽也不饥饿，③也不成立（两条
+                //   都在合成场景 S16 里逐条证过，不是假设）。但玻璃化注入早就把侧栏认出了——
+                //   它给侧栏根写的是**我们自己的指纹对**：background-color: rgba(r,g,b,0.45) !important
+                //   且 backdrop-filter: blur(...) !important（真机 qa-d10-d10.json 的 d10.bgEl：
+                //   hHd-Xa_root 360x671 x=0 static flex，bgInline=rgba(249,250,251,0.45) important）。
+                //   QA 原话「色对、alpha 不对」——元素早就选对了，只差把 alpha 抬上去。这条臂就
+                //   按这个指纹找元素：贴左缘、高 ≥60%vh、宽 ∈[40px,vw]、可见、且**内联**同时
+                //   带那两条 important。只读内联（不读 computed）⇒ 只可能是我们自己写的，不是
+                //   页面样式表；alpha 只认 0.45 / 0.92 两个取值（我们自己的两档），别的都不算。
+                //   零类名。
+                "function bwFpSb(vw,vh){" +
+                "var nodes=document.querySelectorAll('div,section,main');" +
+                "var best=null,bw=1e9,i,n,r,st,bg,q,parts,a;" +
+                "for(i=0;i<nodes.length;i++){n=nodes[i];r=n.getBoundingClientRect();" +
+                "if(r.left>2||r.width<40||r.width>vw||r.height<vh*0.6)continue;" +
+                "st=n.style;" +
+                "if(st.getPropertyPriority('background-color')!=='important')continue;" +
+                "if(st.getPropertyPriority('backdrop-filter')!=='important'&&" +
+                "st.getPropertyPriority('-webkit-backdrop-filter')!=='important')continue;" +
+                "bg=st.getPropertyValue('background-color');" +
+                "if(bg.indexOf('rgba(')!==0&&bg.indexOf('rgb(')!==0)continue;" +
+                "if(st.getPropertyValue('backdrop-filter').indexOf('blur')<0&&" +
+                "st.getPropertyValue('-webkit-backdrop-filter').indexOf('blur')<0)continue;" +
+                "q=bg.indexOf(')');if(q<0)continue;" +
+                "parts=bg.substring(bg.indexOf('(')+1,q).split(',');" +
+                "if(parts.length<3)continue;a=parts.length>3?parseFloat(parts[3]):1;" +
+                "if(a!==0.45&&a!==0.92)continue;" +
+                "if(getComputedStyle(n).visibility==='hidden')continue;" +
+                //   再要它自己的 display 是 flex/grid 容器：侧栏根在两台宿主上都是
+                //   flex（真机 d10.bgEl.disp=flex、笔电 _2H3hWW_root 同构），而正文里那些会搭
+                //   到指纹的大代码块是 block ——S11 里 chatBigPRE 就是被这条挡下来的
+                //   （它 r1-r2 瞬间搭了 0.45 指纹，r3 起才被归成代码块写回原生不透明）。
+                "var cds=getComputedStyle(n).display;" +
+                "if(cds!=='flex'&&cds!=='inline-flex'&&cds!=='grid'&&cds!=='inline-grid'){continue;}" +
+                "if(r.width<bw){best=n;bw=r.width;}}" +
+                "return best;}" +
+                //   页面自己认的侧栏边界：那根拖拽把手（真机 pI_x6G_handle 8x671 @x=276，内联
+                //   left:280px）。判据：细（宽 ≤24）、高（≥50%vh）、绝对/固定定位、left 落在
+                //   [40px, 92%vw]。它只用来**否决**「看起来展开但其实没到页面自己声明的边界」，
+                //   从不单独用来**认定**侧栏 ⇒ 判不准的方向是漏修（停在 0.45），不是错修。
+                "function bwHandle(vw,vh){" +
+                "var nodes=document.querySelectorAll('div,button,span');" +
+                "var i,n,r,cs;" +
+                "for(i=0;i<nodes.length;i++){n=nodes[i];r=n.getBoundingClientRect();" +
+                "if(r.width>0&&r.width<=24&&r.height>=vh*0.5&&r.left>=40&&r.left<=vw*0.92){" +
+                "cs=getComputedStyle(n);" +
+                "if(cs.position==='absolute'||cs.position==='fixed')return n;}}" +
+                "return null;}" +
+                //   指纹臂还必须落在侧栏的**结构位置**上，否则只凭一对内联样式
+                //   就会把正文里搭错的元素抬成 0.92（S11 的 chatBigPRE 就是例子）。
+                //   位置判据：往上找到一个 grid/flex 外壳，它的**有效列**（把
+                //   display:contents 的包装展平——那种包装盒子是 0x0，真机 frame 的直接子
+                //   元素全是它们，不展平就永远数不到子列）里，一个含着候选、一个不含
+                //   且高 ≥60%vh，且含候选那列贴左缘。展平只在这条臂里做，结构臂
+                //   （bwFind，修挤压唯一能用的那条）一行未改 ⇒ D2 真机 PASS 的路径不变。
+                "function bwHas(root,n){var ch=root.children,i,c;" +
+                "if(!ch)return false;" +
+                "for(i=0;i<ch.length;i++){c=ch[i];if(c===n)return true;if(bwHas(c,n))return true;}" +
+                "return false;}" +
+                "function bwCols(sh,depth){var res=[],ch=sh.children,i,c,sub,j;" +
+                "if(!ch)return res;" +
+                "for(i=0;i<ch.length;i++){c=ch[i];" +
+                "if(depth<3&&getComputedStyle(c).display==='contents'){" +
+                "sub=bwCols(c,depth+1);for(j=0;j<sub.length;j++)res.push(sub[j]);continue;}" +
+                "res.push(c);}return res;}" +
+                "function bwFpPlace(el,vw,vh){var p=el,d=0,pp,cs,cols,i,mine=null,other=null,r,sl;" +
+                "while(p.parentElement&&d++<12){pp=p.parentElement;cs=getComputedStyle(pp);" +
+                "if(cs.display==='grid'||cs.display==='inline-grid'||cs.display==='flex'||" +
+                "cs.display==='inline-flex'){" +
+                "cols=bwCols(pp,0);mine=null;other=null;" +
+                "for(i=0;i<cols.length;i++){if(cols[i]===el){mine=cols[i];continue;}" +
+                "if(bwHas(cols[i],el)){mine=cols[i];continue;}" +
+                "r=cols[i].getBoundingClientRect();" +
+                "if(r.height>=vh*0.6&&r.width>0)other=cols[i];}" +
+                "if(mine&&other){r=mine.getBoundingClientRect();" +
+                "sl=pp.getBoundingClientRect().left;if(r.left<=sl+2)return true;}}" +
+                "p=pp;}return false;}" +
+                //   指纹臂的展开判据：宽 ≥ 收起轨道+40（纯几何，同 D10 那条）；若页面上有那根
+                //   把手，还要求侧栏**盖到**它（宽 ≥ 把手 left-8）。收起态把手 left 会跟着缩到
+                //   轨道宽，所以这条只在判成展开时兜底，不会把收起态误判成展开。
+                "function bwFpExp(el){" +
+                "var rail=bwRailW();" +
+                "var w=Math.round(el.getBoundingClientRect().width);" +
+                "if(w<rail+40)return false;" +
+                "var h=bwHandle(window.innerWidth,window.innerHeight);" +
+                "if(h){var hl=Math.round(h.getBoundingClientRect().left);" +
+                "if(w<hl-8)return false;}" +
+                "return true;}" +
+                // 修挤压：只在「外壳是 grid + 有在流内的贴左缘侧栏列 + 有饥饿兄弟列 + 列宽 ≥ 轨道+40」
+                //   四条同时成立时才动列宽，其余一律撤销（撤销会把**页面自己**写的内联 grid-template-
+                //   columns 一起摘掉——内联只有一个命名空间，这正是真机上解除挤压的机制，见 §11.11）。
+                "function bwGeomFix(g){" +
+                "if(!g||!g.f||!g.col||!g.expanded){bwUndo();return;}" +
+                "if(window.__bwW&&(window.__bwW.f!==g.f||window.__bwW.panel!==g.sb))bwUndo();" +
+                "var f=g.f,col=g.col,panel=g.sb,rail=g.rail,tr=g.tr||[],vw=window.innerWidth;" +
+                "var j,at=-1,nw;" +
+                //   闸 B（v1.32.18）：轨道下标**按侧栏在外壳里的元素子节点序号**定，不按宽度猜。
+                //   按宽度猜在两条轨道同宽时会钉错列；笔电宿主上被钉成 56px 的是 centerCol 那一轨，
+                //   而侧栏（覆盖层）是外壳的第 4 个元素子节点、外壳只有 3 条轨道 ⇒ 序号越界，
+                //   直接撤销不钉（宁可不修，不可错修）。只有侧栏不是外壳直接子元素时才退回按宽度找。
+                "var nd2=f.firstChild,ci=0,ix=-1;" +
+                "while(nd2){if(nd2===panel){ix=ci;break;}if(nd2.nodeType===1)ci++;nd2=nd2.nextSibling;}" +
+                "if(ix>=0){if(ix>=tr.length){bwUndo();return;}at=ix;}" +
+                "else{for(j=0;j<tr.length;j++){if(Math.abs(tr[j]-g.colW)<=2){at=j;break;}}}" +
+                "if(at>=0){nw=[];for(j=0;j<tr.length;j++){if(j===at)nw.push(rail+'px');" +
+                "else if(j===at+1)nw.push('minmax(0,1fr)');else nw.push(tr[j]+'px');}" +
                 "bwSet(f,'grid-template-columns',nw.join(' '));}" +
-                "for(j=0;j<BWC.length;j++)col.style.setProperty(BWC[j]," +
-                "(BWC[j]==='overflow'?'visible':(BWC[j]==='will-change'?" +
-                "'auto':'none')),'important');" +
+                "for(j=0;j<BWC.length;j++)bwSet(col,BWC[j],(BWC[j]==='overflow'?'visible':" +
+                "(BWC[j]==='will-change'?'auto':'none')));" +
                 "var pw=Math.round(panel.getBoundingClientRect().width);" +
                 "if(pw<rail+40)pw=280;if(pw>vw*0.9)pw=Math.round(vw*0.85);" +
-                "bwSet(panel,'position','fixed');" +
-                "bwSet(panel,'left','0px');bwSet(panel,'top','0px');" +
-                "bwSet(panel,'bottom','0px');" +
-                "bwSet(panel,'width',pw+'px');" +
-                "bwSet(panel,'max-width',pw+'px');" +
-                "bwSet(panel,'z-index','60');" +
-                "bwSet(panel,'overflow-y','auto');" +
+                "bwSet(panel,'position','fixed');bwSet(panel,'left','0px');" +
+                "bwSet(panel,'top','0px');bwSet(panel,'bottom','0px');" +
+                "bwSet(panel,'width',pw+'px');bwSet(panel,'max-width',pw+'px');" +
+                "bwSet(panel,'z-index','60');bwSet(panel,'overflow-y','auto');" +
                 "bwSet(panel,'overflow-x','hidden');" +
                 "bwSet(panel,'box-shadow','0 8px 32px rgba(0,0,0,.35)');" +
-                // 玻璃化注入可能已把侧栏根写成 transparent（类名 skipBg 在 vm1 失效）。
-                // 这里只摘**我们自己写的那一条**（值 transparent + 优先级 important 是它的
-                // 指纹），把页面原生色相露出来给下面的 bwPanelBg 调色相用；否则
-                // getComputedStyle 读到 rgba(0,0,0,0) 会被判成「黑色 92%」⇒ 侧栏变黑。
-                "if(panel.style.getPropertyValue('background-color')===" +
-                "'transparent'&&panel.style.getPropertyPriority(" +
-                "'background-color')==='important')" +
-                "panel.style.removeProperty('background-color');" +
-                "window.__bwW={f:f,col:col,panel:panel};" +
-                "window.__bwSbEl=panel;}" +
-                "function bwPanelBg(){bwGeomFix();" +
+                "window.__bwW={f:f,col:col,panel:panel};}" +
+                // 入口：一次 bwFind() 喂两个消费者（修挤压、底色），再加指纹臂兜底；
+                //   结果发布到 window.__bwSbEl 给玻璃化注入的 isSb / skipBg 两条臂用。
+                //   优先级：**类名锚点最优**（笔电样式表生效的宿主一行未变）→ 其次结构臂
+                //   （bwFind ①②③④，覆盖「侧栏在流内吃宽度」那类形态，也是修挤压唯一能用的
+                //   形态）→ 最后**指纹臂**（D11，覆盖「侧栏是满屏宽覆盖层」那类形态）。
+                //   __bwSbEl 每轮都发布，与有没有钉浮层、有没有撤销无关。
+                "function bwPanelBg(){var g=bwFind();bwGeomFix(g);" +
                 "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
-                "if(!sb){sb=window.__bwSbEl;}" +
-                "if(!sb)return;" +
-                "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?\\)/" +
-                ".exec(getComputedStyle(sb).backgroundColor);if(!m)return;" +
-                // 色相不可用（computed 全透明）就不写：没有可保留的色相，硬写会把
-                // 它变成近黑。类名命中的宿主由 skipBg 保住原生色相，走不到这条。
-                "if(m[4]!==undefined&&parseFloat(m[4])===0)return;" +
-                "var narrow=window.innerWidth<=1023;" +
-                "var expanded=sb.className.indexOf('_2H3hWW_collapsed')<0;" +
-                "if(!document.querySelector(\"[class*='_2H3hWW_root']\"))" +
-                "expanded=(getComputedStyle(sb).position==='fixed');" +
-                "var a=(narrow&&expanded)?0.92:0.45;" +
-                "sb.style.setProperty('background-color'," +
-                "'rgba('+m[1]+','+m[2]+','+m[3]+','+a+')','important');}" +
+                "var exp;" +
+                "if(sb){exp=sb.className.indexOf('_2H3hWW_collapsed')<0;}" +
+                "else{sb=g?g.sb:null;exp=!!g&&g.sbExpanded;" +
+                "if(!sb){sb=bwFpSb(window.innerWidth,window.innerHeight);" +
+                "if(sb&&!bwFpPlace(sb,window.innerWidth,window.innerHeight))sb=null;" +
+                "exp=!!sb&&bwFpExp(sb);}}" +
+                "window.__bwSbEl=sb||null;" +
+                "if(!sb){bwAlpha(window.__bwBgEl,false);return;}" +
+                //   展开/收起：类名宿主沿用原来的 collapsed 类名判据；几何宿主读「侧栏宽 ≥
+                //   轨道宽+40」（真机撤销定位后侧栏 position 仍是 static，既不能用 position 判、
+                //   也没有 collapsed 类名可读）；指纹臂用同一条宽度判据 + 把手边界兜底。
+                "bwAlpha(sb,exp&&window.innerWidth<=1023);}" +
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
                 "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
@@ -653,12 +830,15 @@ class WebActivity : Activity() {
                         //   transparent 不再构成锁（我们没写过它 ⇒ 无标记 ⇒ 闸门关）；它仍会被大容器
                         //   兜底分支写 transparent（可见结果不变、壁纸通道优先），但之后若命中 isCode /
                         //   isCB 就能拿到原生底 ⇒ 比原先的「永久锁透明」更合理。
-                        // ★ v1.32.16 D2 同款**几何臂**：窄屏补丁的几何段认出的展开态侧栏
-                        //   浮层（window.__bwSbEl）在 vm1 这类换了哈希命名的宿主上拿不到
-                        //   _2H3hWW_root 这个类名，会被当成布局链写成 transparent，原生色相随后
-                        //   再也拿不回来（侧栏一直全透）。这里用同一个对象引用做排除，
-                        //   不引入任何类名；收起侧栏时 bwUndo 会把 __bwSbEl 清掉，自然回到原来的
-                        //   处理。笔电上类名命中，走的仍是原来那条，行为一行未变。
+                        // ★ v1.32.16 D2 同款**几何臂**：窄屏补丁认出的侧栏元素
+                        //   （window.__bwSbEl）在 vm1 这类换了哈希命名的宿主上拿不到
+                        //   _2H3hWW_root 这个类名，会被当成布局链写成 transparent，原生色相
+                        //   随后再也拿不回来（侧栏一直全透）。这里用同一个对象引用做排除，
+                        //   不引入任何类名。
+                        //   ★ v1.32.17 D10 改了它的**来源**：__bwSbEl 现在由 bwFind() 的**纯几何
+                        //   发现**每轮都写（与有没有钉成浮层、有没有撤销挤压无关）；收起成
+                        //   56px 轨道时落在 96px 下限之外 ⇒ 发现不到 ⇒ 自动置 null，本臂随之
+                        //   失效。笔电上类名命中，走的仍是原来那条，行为一行未变。
                         "var isSb=cn.indexOf('_2H3hWW_root')>=0||window.__bwSbEl===e;" +
                         "var ancBigPos=false;" +
                         "var pa=e.parentElement,ph=0;" +
@@ -804,12 +984,14 @@ class WebActivity : Activity() {
                         "var skipBg=(cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0||window.__bwSbEl===e)&&" +
                         "vw<=1023;" +
-                        // ★ v1.32.16 D2 补一条**几何臂**：窄屏补丁的几何段认出的展开态侧栏
-                        //   浮层（window.__bwSbEl，见上方 v1.32.5 那段）也归 bwPanelBg 管，不得被本
-                        //   注入写成 transparent——否则它的原生色相丢失，bwPanelBg 只能读到
-                        //   rgba(0,0,0,0)（色相不可用 ⇒ 不写，侧栏就一直全透）。笔电上类名命中，
-                        //   走的仍是原来那条；__bwSbEl 只在 vw≤1023 且展开时存在，收起或变宽后
-                        //   被 bwUndo 清掉，所以这条臂自己会随状态消失，不需要任何类名。
+                        //   ★ v1.32.16 D2 补一条**几何臂**：窄屏补丁认出的侧栏元素（window.__bwSbEl，
+                        //   见上方 v1.32.5 那段）归 bwPanelBg 管，不得被本注入写成 transparent——
+                        //   否则它的原生色相丢失，bwPanelBg 只能读到 rgba(0,0,0,0)（色相不可用 ⇒
+                        //   不写，侧栏就一直全透）。
+                        //   ★ v1.32.17 D10：__bwSbEl 的来源换成 bwFind() 的纯几何发现（贴左缘、
+                        //   高 ≥60% 视口、宽 ∈[96px,90%vw]、可见、且所在列有「正文」兄弟列），
+                        //   每轮都写、不再由 bwUndo 清空；收起成 56px 轨道时自动置 null，本臂
+                        //   随状态消失，不需要任何类名。笔电上类名命中，走的仍是原来那条。
                         // ★ v1.32.11 复修（QA P1）：分支顺序反了。原先无条件先判
                         // `if(w>vw*0.5&&h>vh*0.5) -> transparent`，浮层分支排在它后面 ⇒
                         // 菜单一旦变高（实测 257x392，vw=360/vh=671 ⇒ 392>335.5）就落进大容器分支

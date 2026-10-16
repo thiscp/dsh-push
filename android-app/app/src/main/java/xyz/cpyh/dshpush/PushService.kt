@@ -38,7 +38,22 @@ class PushService : Service() {
         const val NOTIF_SERVICE_ID = 2
         // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
         const val EXTRA_SHOW_HOSTS = "showHosts"
-        const val APP_VER = "1.32.15"
+        // 版本号**唯一真值** = app/build.gradle.kts 的 versionName。显示处必须运行时派生，禁止再写死
+        // （§6.4：v1.32.15 与 v1.32.16 两版都因为写死而把状态卡片显示成旧版本号——设备装的是
+        // 82/1.32.16，卡片写 v1.32.15，用户看得见）。取不到一律兜底 "?"，不得显示空、不得崩。
+        // 不走 BuildConfig.VERSION_NAME：AGP 8 要 buildFeatures { buildConfig = true }，那得动
+        // build.gradle.kts（发版才碰的文件）。发布脚本原先"三处同步"里的 APP_VER 一处就此消失，
+        // 只剩 build.gradle.kts 两处 —— 脚本在 verify/**（不在本次写域），发版前要同步改。
+        @Volatile private var appVerCache: String? = null
+        fun appVer(ctx: android.content.Context): String {
+            appVerCache?.let { return it }
+            val v = try {
+                ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName ?: ""
+            } catch (e: Exception) { "" }
+            if (v.isEmpty()) return "?"
+            appVerCache = v
+            return v
+        }
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"

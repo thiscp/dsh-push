@@ -307,7 +307,7 @@ OriginOS 定制层行为：图标陈旧不刷新、后台被杀策略、深链�
 
 ## 版本发布纪律
 
-改代码 → 版本号双跳齐（`PushService.APP_VER` + `build.gradle.kts versionCode/versionName`）→ 验证全绿 → `-Deploy`（链接 `?v=` 必须用 versionCode，缓存击穿）→ 真机验收 → openspec 归档 + git push。
+改代码 → 版本号**只在 `build.gradle.kts` 两处**一起 bump（`versionCode` / `versionName`；App 内显示的版本自 v1.32.17 起运行时从 `PackageInfo.versionName` 派生，`PushService.APP_VER` 已删，没有第三处）→ 验证全绿 → `-Deploy`（链接 `?v=` 必须用 versionCode，缓存击穿）→ 真机验收 → openspec 归档 + git push。
 
 发布前先自证脱敏（不推远端）：`powershell -File verify\export-public.ps1 -DryRun` —— 只跑 scrub 映射 + 密钥闸门，
 逐条打印「哪个个人值被替换成了什么占位符」（IP 显示原值，token/用户名只显示计数），命中泄漏就非 0 退出、绝不静默放行。

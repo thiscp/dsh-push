@@ -3,7 +3,9 @@
 # It does NOT re-implement the publish chain: the deploy itself is verify\dsh-app-verify.ps1
 # -Deploy (vm1 build -> install -> assertions -> upload -> update notification, expect 9/9).
 # This script only wraps the parts around it:
-#   1. idempotent version sync in the three places (build.gradle.kts x2 + PushService.APP_VER):
+#   1. idempotent version sync in the two places of build.gradle.kts (versionCode + versionName).
+#      Since v1.32.17 the version shown inside the app is derived at runtime from
+#      PackageInfo.versionName (PushService.APP_VER is gone), so there is no third place.
 #      a place that already holds the target value is left untouched;
 #   2. the deploy call (the existing single command, with -DeployNote);
 #   3. online confirmation of ?v=<versionCode> (size comparison when the local APK is known);
@@ -26,7 +28,6 @@ if (-not (Test-Path (Join-Path $repo "android-app\app\build.gradle.kts"))) {
     $repo = "F:\work\work_dsh\dsh-push"
 }
 $gradlePath = Join-Path $repo "android-app\app\build.gradle.kts"
-$pushPath = Join-Path $repo "android-app\app\src\main\java\xyz\cpyh\dshpush\PushService.kt"
 $verifyDir = Join-Path $repo "verify"
 $stage = Join-Path $env:TEMP "dsh-release"
 New-Item -ItemType Directory -Force $stage | Out-Null
@@ -40,44 +41,29 @@ function Write-Text([string]$p, [string]$t) { [IO.File]::WriteAllText($p, $t, (N
 # ---------- 0. resolve target version ----------
 Step "0" "resolve the target version"
 $gradle = Read-Text $gradlePath
-$push = Read-Text $pushPath
 $curName = ([regex]::Match($gradle, 'versionName\s*=\s*"([^"]+)"')).Groups[1].Value
 $curCode = ([regex]::Match($gradle, 'versionCode\s*=\s*(\d+)')).Groups[1].Value
-$curAppVer = ([regex]::Match($push, 'APP_VER\s*=\s*"([^"]+)"')).Groups[1].Value
-Say ("current: versionCode={0} versionName={1} PushService.APP_VER={2}" -f $curCode, $curName, $curAppVer)
+Say ("current: versionCode={0} versionName={1}" -f $curCode, $curName)
 if (-not $Version) { $Version = $curName }
 if ($VersionCode -le 0) { $VersionCode = [int]$curCode }
-Say ("target : versionCode={0} versionName={1} PushService.APP_VER={2}" -f $VersionCode, $Version, $Version)
-if ($Version -eq $curName -and $VersionCode.ToString() -eq $curCode -and $Version -eq $curAppVer) {
-    Say "=> version sync: ALREADY SYNCED (all three places already hold the target) - will skip the edit"
-} else {
-    Say ("=> version sync: NEEDS EDIT  build.gradle.kts ({0}/{1} -> {2}/{3})  PushService.APP_VER ({4} -> {5})" -f `
-        $curCode, $curName, $VersionCode, $Version, $curAppVer, $Version)
-}
+Say ("target : versionCode={0} versionName={1}" -f $VersionCode, $Version)
 
 # ---------- 1. idempotent version sync ----------
-Step "1" "idempotent version sync (three places)"
+Step "1" "idempotent version sync (two places in build.gradle.kts)"
 $g2 = $gradle
 if ($curName -ne $Version) { $g2 = $g2 -replace ('versionName\s*=\s*"' + [regex]::Escape($curName) + '"'), ('versionName = "' + $Version + '"') }
 if ($curCode -ne $VersionCode.ToString()) { $g2 = $g2 -replace ('versionCode\s*=\s*' + [regex]::Escape($curCode)), ('versionCode = ' + $VersionCode) }
-$p2 = $push
-if ($curAppVer -ne $Version) { $p2 = $p2 -replace ('APP_VER\s*=\s*"' + [regex]::Escape($curAppVer) + '"'), ('APP_VER = "' + $Version + '"') }
 $needGradle = ($g2 -ne $gradle)
-$needPush = ($p2 -ne $push)
-if (-not $needGradle -and -not $needPush) {
+if (-not $needGradle) {
     Say "  nothing to write (idempotent skip)"
 } elseif ($DryRun) {
-    Say ("  WOULD WRITE {0} (build.gradle.kts) and {1} (PushService.kt)" -f ($(if ($needGradle) { "yes" } else { "no" })), ($(if ($needPush) { "yes" } else { "no" })))
-    if ($needGradle) { Say ("  diff: versionCode {0} -> {1} ; versionName {2} -> {3}" -f $curCode, $VersionCode, $curName, $Version) }
-    if ($needPush) { Say ("  diff: APP_VER {0} -> {1}" -f $curAppVer, $Version) }
+    Say ("  WOULD WRITE build.gradle.kts: versionCode {0} -> {1} ; versionName {2} -> {3}" -f $curCode, $VersionCode, $curName, $Version)
 } else {
-    if ($needGradle) { Write-Text $gradlePath $g2; Say "  wrote build.gradle.kts" }
-    if ($needPush) { Write-Text $pushPath $p2; Say "  wrote PushService.kt" }
+    Write-Text $gradlePath $g2; Say "  wrote build.gradle.kts"
     $g3 = Read-Text $gradlePath
-    Say ("  verify: versionCode={0} versionName={1} APP_VER={2}" -f `
+    Say ("  verify: versionCode={0} versionName={1}" -f `
         ([regex]::Match($g3, 'versionCode\s*=\s*(\d+)')).Groups[1].Value, `
-        ([regex]::Match($g3, 'versionName\s*=\s*"([^"]+)"')).Groups[1].Value, `
-        ([regex]::Match((Read-Text $pushPath), 'APP_VER\s*=\s*"([^"]+)"')).Groups[1].Value)
+        ([regex]::Match($g3, 'versionName\s*=\s*"([^"]+)"')).Groups[1].Value)
 }
 
 # ---------- 2. deploy (the existing chain, not a new one) ----------

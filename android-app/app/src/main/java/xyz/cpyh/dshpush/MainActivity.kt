@@ -905,7 +905,7 @@ class MainActivity : Activity() {
         statusText.text = buildString {
             if (unread > 0) append("● ${unread} 条未读\n")
             append("""
-                状态：${PushService.state}（v${PushService.APP_VER}）
+                状态：${PushService.state}（v${PushService.appVer(this@MainActivity)}）
                 服务器：${PushService.BASE}（topic dsh）
                 通行证：${if (hasToken()) "已配置 ✔（长按头像可更换）" else "未配置 ✘（下面填一张）"}
                 电池优化白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 上服务容易被杀，务必点下面按钮）"}
