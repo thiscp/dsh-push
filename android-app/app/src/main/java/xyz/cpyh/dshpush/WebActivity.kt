@@ -599,6 +599,11 @@ class WebActivity : Activity() {
                 "function bwGeomFix(g){" +
                 "if(!g||!g.f||!g.col||!g.expanded){bwUndo();return;}" +
                 "if(window.__bwW&&(window.__bwW.f!==g.f||window.__bwW.panel!==g.sb))bwUndo();" +
+                "var colEl0=document.querySelector(\"[class*='_sidebarCol']\");" +
+                "var colW0=colEl0?Math.round(colEl0.getBoundingClientRect().width):0;" +
+                //   钉过一次之后列就永久塌成 rail（56），之后每拍量到的都是窄值 ⇒ 必须把见过的
+                //   最宽列宽缓存起来（≥96 才记、取最大可躲开展开动画的中间帧）。
+                "if(colW0>=96&&(!window.__bwColW||colW0>window.__bwColW))window.__bwColW=colW0;" +
                 "var f=g.f,col=g.col,panel=g.sb,rail=g.rail,tr=g.tr||[],vw=window.innerWidth;" +
                 "var j,at=-1,nw;" +
                 //   闸 B（v1.32.18）：轨道下标**按侧栏在外壳里的元素子节点序号**定，不按宽度猜。
@@ -614,19 +619,15 @@ class WebActivity : Activity() {
                 "bwSet(f,'grid-template-columns',nw.join(' '));}" +
                 "for(j=0;j<BWC.length;j++)bwSet(col,BWC[j],(BWC[j]==='overflow'?'visible':" +
                 "(BWC[j]==='will-change'?'auto':'none')));" +
-                // ★ v1.33.1 护栏（与哈希无关）：侧栏若是**在流内的网格轨道**（position 是 static、
-                //   且宽度正好等于外壳某条轨道），就不要把它改成 fixed 覆盖层——只保留钉轨道
-                //   （解除挤压的目的达到），宽度交回页面自己。真机实测：笔电走的是写死哈希的
-                //   CSS 规则（宽度沿用页面自己的 280px ≈ 78%），而 VM1/工作机哈希不同、落到这条
-                //   JS 臂，被钉成 0.85vw=306px ≈ 85% 的满屏覆盖层 = 用户报的「侧栏铺满屏幕」。
-                "var pw0=Math.round(panel.getBoundingClientRect().width),inflow=0;" +
-                "if(getComputedStyle(panel).position==='static'&&getComputedStyle(f).display.indexOf('grid')>=0){" +
-                "for(j=0;j<tr.length;j++){if(Math.abs(tr[j]-pw0)<=6){inflow=1;break;}}}" +
-                "if(inflow){var w0=window.__bwW;" +
-                "if(w0&&w0.panel&&w0.panel===panel){try{for(var kk=0;kk<BWK.length;kk++)" +
-                "panel.style.removeProperty(BWK[kk]);}catch(e3){}}" +
-                "window.__bwW={f:f,col:col,panel:null};return;}" +
+                // ★ v1.33.2：覆盖层宽度取「侧栏列」的宽度，不取被量到的那个覆盖层根的宽度。
+                //   真机对照：笔电走写死哈希的 CSS 规则，宽度沿用页面自己的 280px ≈ 78%；VM1/
+                //   工作机哈希不同落到这条 JS 臂，量到的是满屏覆盖层根（336 CSS）被夹成
+                //   0.85vw=306px ≈ 85% ⇒ 用户看到的「铺满屏幕」。v1.33.1 曾改成「在流内就不做
+                //   覆盖层」，真机反而坏了：360 CSS 上页面自己的轨道是 280+80，正文只剩 80px，
+                //   于是正文先透出来再整块消失（用户 19:55 两张图）。覆盖层本身是对的，
+                //   错的是宽度来源。*_sidebarCol 这个后缀跨构建稳定（BynINW_ / pI_x6G_ 都一样）。
                 "var pw=Math.round(panel.getBoundingClientRect().width);" +
+                "var cwC=window.__bwColW||colW0;if(cwC>=96&&cwC<=vw*0.88)pw=cwC;" +
                 "if(pw<rail+40)pw=280;if(pw>vw*0.9)pw=Math.round(vw*0.85);" +
                 "bwSet(panel,'position','fixed');bwSet(panel,'left','0px');" +
                 "bwSet(panel,'top','0px');bwSet(panel,'bottom','0px');" +
