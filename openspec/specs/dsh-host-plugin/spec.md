@@ -369,23 +369,41 @@ timed 时切换：先备份 patch、再经 `configEditor.edit` 热改 `tool-ask-
 
 ### Requirement: 推送网页直达来源会话
 
-插件的浏览器半（`dsh.client` 模块）SHALL 读取 `#web` 链接携带的来源会话片段，并在当前主视图不是该
-会话时把主视图切到该会话（v0.2.2）。定位 SHALL 只用语义化锚点（当前会话
-`[data-conversation-session]`、侧栏行 `[data-row-key="session:<id>"]`、展开侧栏
-`button[aria-label="Open sidebar"]`、被折叠列表的 `Show N more sessions` 与 `aria-expanded="false"`
-的工作区分组），MUST NOT 依赖哈希化的 CSS 类名。切换成功或目标已是当前会话时 SHALL 抹掉地址中的
-片段（`history.replaceState`），以免用户随后手动切走、刷新时又被拽回。任何一步做不到时 SHALL 静默
-放弃并在有界时间（≤20s）内停止，MUST NOT 影响页面其余部分，行为等同本能力之前。
+插件的浏览器半（`dsh.client` 模块）SHALL 读取 `#web` 链接携带的来源会话片段，并在当前主视图不是该会话时
+把主视图切到该会话（v0.2.2）。切换 SHALL **优先使用网页客户端自己的服务**：经 `ctx.inject(["uiWorkspace"], …)`
+声明依赖取得 `uiWorkspace` 后调用 `openSession(<id>)`（v0.2.5）；仅当该服务取不到、或在有界等待内调用后
+主视图仍未变化时，才降级到语义化锚点定位（侧栏行 `[data-row-key="session:<id>"]`、展开侧栏、被折叠列表的
+`Show N more sessions` / 「展开其余 N 个会话」、`aria-expanded="false"` 的工作区分组）。降级路径 MUST NOT 依赖
+哈希化的 CSS 类名；因文案本地化（网页端只有 zh、en 两套字典）按标签匹配时 SHALL 同时覆盖中英两种文案，
+并 SHALL 优先使用与语言无关的锚点。直达过程 MUST NOT 为了定位而展开侧栏抽屉（窄屏下侧栏是抽屉，会盖住
+对话）：走服务路径时 MUST NOT 触碰侧栏；仅降级时才允许展开，且到位后 SHALL 把**由本能力自己展开的**侧栏
+收回（用户原本展开的一律不动）。片段变化 SHALL 在页面已加载的情况下同样触发切换（监听 `hashchange`，
+v0.2.3），且每次 SHALL 现读片段。切换成功或目标已是当前会话时 SHALL 抹掉地址中的片段
+（`history.replaceState`），以免用户随后手动切走、刷新时又被拽回。任何一步做不到时 SHALL 静默放弃并在
+有界时间（≤20s）内停止，MUST NOT 影响页面其余部分，行为等同本能力之前。
 
 #### Scenario: 点开推送落到来源对话
 
 - **WHEN** 用户点开一条带 `#session-<uuid>` 片段的 `#web` 链接，而网页端主视图当前是另一个会话
-- **THEN** 浏览器半展开侧栏（必要时放出被折叠的会话与分组）并选中该会话行，主视图切到该对话，地址片段被抹掉
+- **THEN** 调用 `uiWorkspace.openSession` 把主视图切到该对话，**侧栏全程未被展开**（全程每 250ms 采样侧栏
+  会话行数，最大值为 0），地址片段被抹掉
+
+#### Scenario: 网页已开着时点另一条推送
+
+- **WHEN** 网页已加载并停在会话 A，用户点开另一条指向会话 B 的推送链接——新链接与当前页仅差片段，
+  WebView 因此只做同文档跳转、不重载页面
+- **THEN** `hashchange` 触发切换，主视图落到 B，片段被抹掉
 
 #### Scenario: 已经在目标对话上
 
 - **WHEN** 打开的链接片段所指会话恰是当前主视图会话
 - **THEN** 不发生任何点击或跳转，仅抹掉片段
+
+#### Scenario: 客户端服务不可用时降级
+
+- **WHEN** `uiWorkspace` 服务取不到，或调用后主视图在有界等待内仍未变化
+- **THEN** 降级为语义锚点定位：展开侧栏、必要时放出被折叠的会话与分组并选中该行；到位后把由本能力
+  展开的侧栏收回，且收起 SHALL 按标签（`Collapse sidebar` / 「收起侧边栏」）定位而非按位置
 
 #### Scenario: 目标会话不在已加载列表里
 
