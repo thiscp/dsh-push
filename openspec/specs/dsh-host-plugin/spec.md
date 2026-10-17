@@ -27,7 +27,10 @@
 topic 发布 priority 4 的通知，并 SHALL 向 answer-relay 以 `callId` + `hostId` 注册该问题；随后 SHALL
 调用 `next()` 把前台作答权交还下游（DSH Web UI）。推送正文 SHALL 沿用 App 既有语法：
 `📱 作答: <answerBase>/answer/<callId>`、`\n#qid <首问id>`、单问题 2–3 选项时追加
-`\n#opts <qid>=<a|b|c>`、配置了基址时追加 `\n#web <url>`、配置了实例名时追加 `\n#name <名>`。
+`\n#opts <qid>=<a|b|c>`、追加 `\n#web <url>`——配置了 `webBase` 时 SHALL 用 web.log 里最后一个
+`?token=` 拼到该基址上，未配置 `webBase` 时 SHALL 回退为 web.log 里 DSH 自己打印的最后一条完整
+URL（v0.1.1，开箱即有网页入口；可达性等同 DSH 实际绑定地址的可达性），web.log 读不到或无
+token 行时 SHALL NOT 追加 `#web`；配置了实例名时追加 `\n#name <名>`。
 同一 `callId` SHALL 至多推送并注册一次。
 
 #### Scenario: 选择题提问
@@ -49,6 +52,11 @@ topic 发布 priority 4 的通知，并 SHALL 向 answer-relay 以 `callId` + `h
 
 - **WHEN** 问题缺少文本或选项
 - **THEN** 正文回落 `DSH 正在等你选择` 且仍带作答链接与 `#qid`，推送照常发出
+
+#### Scenario: 未配 webBase 也带网页入口（v0.1.1）
+
+- **WHEN** 主机未配置 `webBase`，web.log 里存在 DSH 打印的 `dsh web: http://<addr>:<port>/?token=…` 行
+- **THEN** 推送正文仍追加 `#web`，值为 web.log 里**最后一条**完整 URL（手机能否打开取决于该地址可达性）；web.log 缺失或无 token 行时才不带 `#web`
 
 ### Requirement: 前台作答权归属
 
@@ -117,7 +125,8 @@ SHALL NOT 影响宿主或插件其余功能。
 ### Requirement: 轮次结束推送（宿主插件路径）
 
 插件 SHALL 在 `agent/turn-stopping` 时向该主机 topic 发布 priority 3 的通知，标题 SHALL 含会话标识尾部，
-正文 SHALL 含 `目录: <cwd>`，配置了基址/实例名时 SHALL 追加 `#web` 与 `#name`；同一 `session:turn`
+正文 SHALL 含 `目录: <cwd>`，并 SHALL 按与提问推送相同的 `#web` 规则（配置基址则拼基址，未配置则
+回退 web.log 最后一条 URL，读不到则不带）与实例名规则追加 `#web` 与 `#name`；同一 `session:turn`
 SHALL 至多推送一次；推送 SHALL 以 fire-and-forget 方式发出，失败 SHALL NOT 阻塞轮次结束。
 
 #### Scenario: 一轮结束
@@ -277,3 +286,79 @@ SHALL 至多推送一次；推送 SHALL 以 fire-and-forget 方式发出，失�
 
 - **WHEN** 自检的凭据属于 host A
 - **THEN** 自检只访问 A 的队列与 A 的 topic，不读取其他 host 的队列、不写 relay 的注册表
+
+### Requirement: 手机作答模式开关
+插件 SHALL 在设置页 General 槽注册「手机作答模式」行，仅在插件已装载时出现。Config SHALL 新增
+volatile 字段 `askUserMode`（期望态，无默认=未表态）、`askUserStatus`、`askUserActual`；设置行
+展示 SHALL 读实际态（判据：工具定义是否声明 `timeout`），MUST NOT 拿期望态当展示值；状态与
+镜像 SHALL 只写内存、MUST NOT 经 configEditor 落盘。宿主 SHALL 仅在期望显式 `timed` 且实际非
+timed 时切换：先备份 patch、再经 `configEditor.edit` 热改 `tool-ask-user`，edit 前 SHALL 断言
+期望为 `timed`（永不降级）；未表态或 `legacy` SHALL 零写入；同进程 SHALL 至多成功写一次；
+触发 SHALL 延后到 HMR 事务外。缺 `configEditor`/`tools` 的宿主 SHALL 惰性。文案 SHALL 声明
+新会话立即生效、已开老会话保持旧行为。
+
+#### Scenario: 设置行随插件装载出现
+
+- **WHEN** 插件装入 profile 且用户在 DSH Web 打开设置页 General 区
+- **THEN** 出现「手机作答模式」行，显示实际态（已开启/未开启）与启用按钮；已是 timed 时按钮
+  禁用（本开关不降级）；插件未装载时该行不出现
+
+#### Scenario: 一键启用热生效
+
+- **WHEN** 用户点「启用」且 `tool-ask-user` 当前为 legacy
+- **THEN** patch 文件先被备份为 `<patchPath>.bak-<毫秒时间戳>`（撞名追加序号），`tool-ask-user` 的
+  config 被改写为 `mode: timed, timeout: 120`，timed 工具当场重注册（仅该插件 fiber 热重启，宿主
+  不重启），新会话的提问即走 timed 推送手机
+
+#### Scenario: 未表态与 legacy 期望永不降级
+
+- **WHEN** 期望态未表态（字段缺失）或显式为 `legacy`，而实际为 timed（生产 P0 场景）
+- **THEN** 不备份、不写 patch 文件、不产生任何 config 编辑；`configEditor.edit` 前的断言
+  保证任何路径都写不出 `mode: legacy`
+
+#### Scenario: 每进程最多一次成功写
+
+- **WHEN** 切换成功后外部把 patch 文件还原（reconcile / tools/change 再次触发 sync）
+- **THEN** 活进程不再执行第二次 edit（`done` 守卫），不把用户的修复当成待纠正状态反复覆盖
+
+#### Scenario: 触发延后到 HMR 事务外
+
+- **WHEN** volatile-update 在 settings RPC 的 HMR 事务内到达
+- **THEN** sync 经宏任务排队到事务边界外合并执行，不抛 `HMR transactions cannot be nested`，
+  且最终只写一次
+
+#### Scenario: 状态回写不落盘
+
+- **WHEN** 切换失败（如 home 层覆盖抛 "overridden by a home patch"）或宿主回写实际态镜像
+- **THEN** 原因/镜像只写内存 volatile ref（settings describe 读 live ref 供设置行显示），
+  用户 `cordis.patch.yml` 的哈希不变、不新增 `- id: push-host` 条目
+
+#### Scenario: 触发覆盖三条路径
+
+- **WHEN** 期望态经 settings RPC 变化（`loader/volatile-update`，仅 owning fiber 收到）、
+  `ask_user_question` 晚于插件注册（`tools/change`）、或插件装载时首次判定
+- **THEN** 三条路径都会触发一次判定；工具尚未注册时切换推迟，注册后照常完成
+
+#### Scenario: 无 configEditor 的宿主惰性退化
+
+- **WHEN** 宿主不提供 `configEditor` 或 `tools` 服务
+- **THEN** 开关不挂载不报错，推送/回灌等其余功能照常，宿主启动不受影响
+
+### Requirement: 配对载荷可携带网页入口字段
+
+`dsh-push-pair payload` SHALL 支持 `--web-base <url>` 与 `--web-name <名>`；两者已知时 SHALL 以
+`webBase`/`webName` 字段写入载荷 JSON（存成凭据文件后插件即按上述规则带 `#web`/`#name`）。
+两者未知时载荷 SHALL 与 `deploy/relay-user-add.sh` 的输出逐字同构（`v`=1、同样 7 个必填字段、
+同样字段顺序，MUST NOT 出现空占位），必填字段缺失判定与拒绝输出行为 SHALL 不变。
+`relay-user-add.sh` MUST NOT 输出这两个字段（它不知道用户的网络，只有跑配对命令的人知道手机
+该拨哪个地址）。
+
+#### Scenario: 带参数配对
+
+- **WHEN** 运行 `dsh-push-pair payload --web-base http://100.x.y.z:3080 --web-name 我的机器`
+- **THEN** 输出 JSON 在 7 个必填字段之外含 `webBase` 与 `webName`，其余字段与不带这两个参数时一致
+
+#### Scenario: 不带参数（老载荷不变）
+
+- **WHEN** 运行 `dsh-push-pair payload`（凭据文件里没有 webBase/webName）
+- **THEN** 输出 JSON 恰为 7 字段 + `v`，不含 `webBase`/`webName` 键
