@@ -295,11 +295,11 @@ class WebActivity : Activity() {
                         "s.textContent=\"@media (max-width:1023px){" +
                         "[class*='mAtvLq_header']{flex-wrap:wrap!important}" +
                         "[class*='mAtvLq_headingBlock']{flex:1 1 100%!important;min-width:0}" +
-                        "[class*='BynINW_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
-                        "[class*='BynINW_sidebarCol']{overflow:visible!important;backdrop-filter:none!important;" +
+                        "[class*='_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
+                        "[class*='_sidebarCol']{overflow:visible!important;backdrop-filter:none!important;" +
                         "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
-                        "[class*='_2H3hWW_root']:not([class*='_2H3hWW_collapsed']){position:fixed!important;" +
+                        "[class*='_sidebarCol']>*>[class*='_root']:not([class*='_collapsed']){position:fixed!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
                         "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
                         "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}" +
@@ -664,7 +664,7 @@ class WebActivity : Activity() {
                 //   侧栏列改成 fixed 覆盖层 0.78vw —— 这就是笔电那类宿主的形态（侧栏浮在正文上、
                 //   正文满宽、立绘透得出来）。幂等由判据本身保证：改完正文就 ≥0.8vw，下一拍返回 0。
                 //   撤销只在**自己确实动过手**（prev 非空）时做，否则会把 bwGeomFix 写的轨道清掉。
-                "function bwNarrow(sb,vw){" +
+                "function bwNarrow(sb,exp,vw){" +
                 "var prev=window.__bwNarrowEl||[];" +
                 "function clr(e){try{e.style.removeProperty('grid-template-columns');" +
                 "e.style.removeProperty('position');e.style.removeProperty('left');" +
@@ -680,20 +680,26 @@ class WebActivity : Activity() {
                 "if(!col||!col.isConnected||!ctr||!ctr.isConnected)return skip();" +
                 "var frame=col.parentElement;if(!frame||!frame.isConnected)return skip();" +
                 "var fcs=getComputedStyle(frame);if(fcs.display.indexOf('grid')<0)return skip();" +
-                //   两种形态都要治（CDP 实测）：①**并排**——tracks="280px 80px 0px"，正文只有 80 ⇒
-                //   把侧栏轨道压成 0、正文轨道 minmax(0,1fr)；②**覆盖层**——展开时 frame 塌成单轨道
-                //   "360px"，侧栏占第一行满宽、正文在第二行被整个盖住（遮罩 0.92 看着不透明）⇒
-                //   只需把侧栏列摘出流（fixed），正文那一行就顶上来占满视口。两种最后都把列 fixed
-                //   成 0.78vw 覆盖层，形态与笔电一致（侧栏浮着、正文满宽、立绘透得出来）。
-                "var ctrW=ctr.getBoundingClientRect().width,sbW=col.getBoundingClientRect().width;" +
-                "if(ctrW>=vw*0.8&&sbW<vw*0.9)return skip();" +
-                "var tr=fcs.gridTemplateColumns.split(' ');" +
-                "var kids=[].slice.call(frame.children),at=-1,n;" +
-                "for(n=0;n<kids.length;n++){if(kids[n]===col){at=n;break;}}" +
+                //   ★ v1.33.10 修振荡：判据 MUST 只看**展开态**，不能看我刚写出来的宽度——
+                //   上一版「正文够宽且侧栏够窄就撤销」，而这个状态正是我上一步写出来的，
+                //   于是 应用→下一拍撤销→再应用，周期就是注入段重跑的节奏（用户报 ~500ms
+                //   来回闪）。现在：展开就一律维持（bwSet 值相同即空操作，天然幂等），
+                //   收起或超过 1023 宽才撤销。
+                //   两种形态仍分开治：并排（多轨道）压轨道 0px+minmax(0,1fr)；覆盖层（单轨道）
+                //   只把列 fixed 摘出流。两者最后都是 0.78vw 半透明覆盖层 = 笔电形态。
+                //   ★ v1.33.10 划清职责边界：**只在页面自己没把侧栏设成覆盖层时才动手**。笔电那类
+                //   宿主已被注入 CSS 规则（写死其哈希）把侧栏根设成 fixed，我再去改它的列就会和
+                //   那条规则打架（矩阵实测：笔电/expanded 聊天列 56 / 0）。判据用解析出的侧栏
+                //   根自己的 computed position —— 与哈希无关。
+                "if(!exp)return skip();" +
+                "var rp=sb?getComputedStyle(sb).position:'';" +
+                "if(rp==='fixed'||rp==='absolute')return skip();" +
+                //   ★ v1.33.10 再修：**不要按「子元素序号 = 轨道序号」去压轨道**——frame 有 5 个子
+                //   元素却只有 3 条轨道（overlayLayer/handle 是绝对定位不占轨道），索引错位会把
+                //   正文那条轨道压成 0（四态矩阵当场拦下：笔电/expanded 聊天列 0 < 0.8vw）。
+                //   VM 展开时 frame 本来就是单轨道、正文列已满宽，所以只需要把侧栏列摘出流；
+                //   轨道交给页面与 bwGeomFix，不去猜索引。
                 "var nw=Math.round(vw*0.78);" +
-                "if(ctrW<vw*0.8&&tr.length>=2&&at>=0&&at+1<tr.length){" +
-                "var t2=tr.slice();t2[at]='0px';t2[at+1]='minmax(0,1fr)';" +
-                "bwSet(frame,'grid-template-columns',t2.join(' '));}" +
                 "bwSet(col,'position','fixed');bwSet(col,'left','0px');bwSet(col,'top','0px');" +
                 "bwSet(col,'bottom','0px');bwSet(col,'width',nw+'px');bwSet(col,'max-width',nw+'px');" +
                 "bwSet(col,'z-index','60');" +
@@ -720,7 +726,7 @@ class WebActivity : Activity() {
                 "if(nw0>=96){bwSet(sb,'width',nw0+'px');bwSet(sb,'max-width',nw0+'px');window.__bwFpW=sb;}" +
                 "sb=null;}" +
                 "exp=!!sb&&bwFpExp(sb);}}" +
-                "window.__bwNarrow=bwNarrow(sb,window.innerWidth);" +
+                "window.__bwNarrow=0;" +
                 "window.__bwSbEl=sb||null;" +
                 "window.__bwDbg='pre='+(pre||'-')+' sb='+(sb?String(sb.className).slice(0,18)+'@'+" +
                 "Math.round(sb.getBoundingClientRect().width):'-')+' exp='+(exp?1:0)+' pinned='+(window.__bwW?1:0) +" +
