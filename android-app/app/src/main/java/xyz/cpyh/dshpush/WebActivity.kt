@@ -299,7 +299,7 @@ class WebActivity : Activity() {
                         "[class*='_sidebarCol']{overflow:visible!important;backdrop-filter:none!important;" +
                         "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
-                        "[class*='_sidebarCol']>*>[class*='_root']:not([class*='_collapsed']){position:fixed!important;" +
+                        "[class*='_sidebarCol']>*>[class*='_root']:not([class*='_collapsed']){position:fixed!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
                         "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
                         "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}" +
@@ -735,6 +735,11 @@ class WebActivity : Activity() {
                 //   展开/收起：类名宿主沿用原来的 collapsed 类名判据；几何宿主读「侧栏宽 ≥
                 //   轨道宽+40」（真机撤销定位后侧栏 position 仍是 static，既不能用 position 判、
                 //   也没有 collapsed 类名可读）；指纹臂用同一条宽度判据 + 把手边界兜底。
+                //   ★ v1.33.12：侧栏根上的毛玻璃压掉。实测 VM 宿主侧栏根有 backdrop-filter:blur(12px)
+                //   （内联样式，样式表的 !important 压不住），笔电那台是 none ⇒ 于是 VM 侧栏后面
+                //   的正文是清晰的、笔电是糊的（用户连拍可以看出）。用 bwSet 写内联 important 才压得住。
+                "if(sb&&exp&&window.innerWidth<=1023){bwSet(sb,'backdrop-filter','none');" +
+                "bwSet(sb,'-webkit-backdrop-filter','none');}" +
                 "bwAlpha(sb,exp&&window.innerWidth<=1023);}" +
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
