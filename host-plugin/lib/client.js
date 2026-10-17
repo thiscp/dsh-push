@@ -1,4 +1,5 @@
-// dsh-push-host 的浏览器半（v0.2.2）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话。
+// dsh-push-host 的浏览器半（v0.2.3）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话
+// （v0.2.3 补 hashchange 监听：网页已开着时点另一条推送只做片段跳转、不重载页面）。
 // 手写模块，格式照抄现成编译产物（window.__ModuleLoader__.load，见
 // dsh-client-ui-settings-subagent/lib/client.js）；宿主 client-modules 经
 // package.json 的 dsh.client{platform:"web"} + exports "./client" 挂载它。
@@ -17,7 +18,7 @@ window.__ModuleLoader__.load({
 
 		// 诊断（v0.2.2）：开机瞬间 URL 里到底有没有 hash、切会话走到哪一步，一页之内就能看出来，
 		// 不用去猜「是没跑还是没点到」。控制台里读 window.__DSHPUSH_CLIENT__ 即可。
-		const DIAG = { v: "0.2.2", hash: "", tries: 0, opened: false, rowSeen: false, clicks: 0, done: false };
+		const DIAG = { v: "0.2.3", hash: "", tries: 0, opened: false, rowSeen: false, clicks: 0, done: false };
 		try {
 			DIAG.hash = String(location.hash || "");
 		} catch {
@@ -151,88 +152,130 @@ window.__ModuleLoader__.load({
 		 * 目标找不到（会话未加载、分组没展开）就静默放弃，最多 20s，等于本功能之前的行为。
 		 * @param ctx - 浏览器插件上下文（用它的 effect 挂清理，HMR 不留定时器）。
 		 */
+		/**
+		 * v0.2.2：推送里的 `#web` 链接把来源会话放在 **URL hash 片段**（`…#session-<uuid>`，服务端
+		 * `lib/index.js:webUrl()` 拼），这里把它兑现成「主视图切到那个会话」。
+		 *
+		 * 用片段而不是查询参数，两条实测理由（VM1 的 DSH Web，2026-10-17）：`?token=` 入口回的是
+		 * `303 → Location: ./`，查询串在这一步被丢掉，而 fragment 跨跳转保留；网页客户端没有路由，
+		 * 路径与查询串都没人读。
+		 *
+		 * v0.2.3 关键修正（用户真机实遇）：**网页已经开着时再点另一条推送**，App 的 WebActivity 是
+		 * singleTask，`onNewIntent` 会 `loadUrl(新链接)`，但新链接与当前页只差一个片段 ⇒ WebView 做的是
+		 * **同文档跳转、不重载页面** ⇒ 只在模块加载时跑一次的旧实现根本不会再执行，于是停在用户上一个
+		 * 会话。所以这里同时挂 **`hashchange` 监听**：片段一变就重新切。之所以每次都能触发，是因为成功
+		 * 之后会把片段抹掉（`replaceState` 不产生 hashchange，不会自激），地址常态是无片段的。
+		 *
+		 * 抓手全是语义化选择器（不依赖哈希类名）：当前会话 `[data-conversation-session=…]`、侧栏行
+		 * `[data-row-key=session:<id>]`（实测点它就能切主视图）。侧栏收起时 0 个会话行、按钮标签是
+		 * Open sidebar；展开后按钮变 Collapse sidebar，且列表**截断**（Show N more sessions、
+		 * 工作区分组 aria-expanded=false）⇒ 每一拍按当前状态决定一个动作，而不是只点一次：插件 apply
+		 * 跑得很早，那一下点击会被尚未挂好 handler 的界面吞掉（实测 rowSeen 恒 false）。按标签判断方向
+		 * 也保证重复点安全——侧栏已开时 Open sidebar 这个按钮就不存在了。
+		 *
+		 * 目标找不到就静默放弃（≤20s），等于本功能之前的行为，MUST NOT 影响页面其余部分。
+		 * @param ctx - 浏览器插件上下文（用它的 effect 挂清理：定时器与监听都不留残留）。
+		 */
 		function revealFromHash(ctx) {
-			const target = String(location.hash || "").replace(/^#/, "").trim();
-			if (!/^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target)) return;
-			DIAG.hash = String(location.hash || "");
+			const SESSION_ID = /^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+			// 每次现读 hash：hashchange 之后要读新值，不能只在开头读一次。
+			const readTarget = () => {
+				const raw = String(location.hash || "").replace(/^#/, "").trim();
+				DIAG.hash = String(location.hash || "");
+				return SESSION_ID.test(raw) ? raw : "";
+			};
 			let timer = 0;
-			let tries = 0;
-			let done = false;
-			let moreClicked = false;
-			const groupsTried = new Set();
 			const stop = () => {
 				if (timer !== 0) {
 					clearInterval(timer);
 					timer = 0;
 				}
 			};
-			// 到位后把 hash 抹掉：否则用户之后手动切走、刷新又被拽回来。
-			const clearHash = () => {
-				try {
-					history.replaceState(null, "", location.pathname + location.search);
-				} catch {
-					// 某些 webview 限制 replaceState：抹不掉只是刷新会再切一次，不影响本次跳转。
-				}
-			};
-			const step = () => {
-				if (done) {
-					stop();
-					return;
-				}
-				tries += 1;
-				DIAG.tries = tries;
-				try {
-					if (document.querySelector('[data-conversation-session="' + target + '"]')) {
-						done = true;
-						DIAG.done = true;
-						stop();
-						clearHash();
-						return;
+			// 切到某个会话：轮询到「当前会话就是它」为止，到位后抹掉片段。
+			const reveal = (target) => {
+				stop();
+				let tries = 0;
+				let done = false;
+				let moreClicked = false;
+				const groupsTried = new Set();
+				const clearHash = () => {
+					try {
+						history.replaceState(null, "", location.pathname + location.search);
+					} catch {
+						// 某些 webview 限制 replaceState：抹不掉只是刷新会再切一次，不影响本次跳转。
 					}
-					if (tries > 40) {
+				};
+				const step = () => {
+					if (done) {
 						stop();
 						return;
 					}
-					const row = document.querySelector('[data-row-key="session:' + target + '"]');
-					if (row !== null) {
-						DIAG.rowSeen = true;
-						DIAG.clicks += 1;
-						row.click();
-						return;
-					}
-					// 行还没出现：先把侧栏展开。按标签选按钮 ⇒ 已展开时这个按钮不存在，重复点也安全。
-					const toggle = document.querySelector('button[aria-label="Open sidebar"]');
-					if (toggle !== null) {
-						DIAG.opened = true;
-						toggle.click();
-						return;
-					}
-					// 侧栏已开但列表截断：把被折叠的会话放出来（只点一次，避免来回折叠）。
-					if (!moreClicked) {
-						const more = [].slice.call(document.querySelectorAll('button,[role="button"]')).filter((b) => /show\s*\d+\s*more|更多/i.test(String(b.textContent)))[0];
-						if (more !== undefined) {
-							moreClicked = true;
-							more.click();
+					tries += 1;
+					DIAG.tries = tries;
+					try {
+						if (document.querySelector('[data-conversation-session="' + target + '"]')) {
+							done = true;
+							DIAG.done = true;
+							stop();
+							clearHash();
 							return;
 						}
+						if (tries > 40) {
+							stop();
+							return;
+						}
+						const row = document.querySelector('[data-row-key="session:' + target + '"]');
+						if (row !== null) {
+							DIAG.rowSeen = true;
+							DIAG.clicks += 1;
+							row.click();
+							return;
+						}
+						const toggle = document.querySelector('button[aria-label="Open sidebar"]');
+						if (toggle !== null) {
+							DIAG.opened = true;
+							toggle.click();
+							return;
+						}
+						if (!moreClicked) {
+							const more = [].slice.call(document.querySelectorAll('button,[role="button"]')).filter((b) => /show\s*\d+\s*more|更多/i.test(String(b.textContent)))[0];
+							if (more !== undefined) {
+								moreClicked = true;
+								more.click();
+								return;
+							}
+						}
+						const collapsed = [].slice.call(document.querySelectorAll('[data-row-key^="workspace:"]'))
+							.filter((g) => g.getAttribute("aria-expanded") === "false");
+						for (const group of collapsed) {
+							const key = group.getAttribute("data-row-key") || "";
+							if (groupsTried.has(key)) continue;
+							groupsTried.add(key);
+							group.click();
+							return;
+						}
+					} catch {
+						// 任何一次尝试出错都不算失败：继续下一拍，超时自然停。
 					}
-					// 还可能是工作区分组收着：逐个展开（每个只试一次）。
-					const collapsed = [].slice.call(document.querySelectorAll('[data-row-key^="workspace:"]'))
-						.filter((g) => g.getAttribute("aria-expanded") === "false");
-					for (const group of collapsed) {
-						const key = group.getAttribute("data-row-key") || "";
-						if (groupsTried.has(key)) continue;
-						groupsTried.add(key);
-						group.click();
-						return;
-					}
-				} catch {
-					// 任何一次尝试出错都不算失败：继续下一拍，超时自然停。
-				}
+				};
+				timer = setInterval(step, 500);
+				step();
 			};
-			timer = setInterval(step, 500);
-			step();
-			ctx.effect(() => stop, "dsh-push-host: reveal session from hash");
+			const first = readTarget();
+			if (first.length > 0) reveal(first);
+			// 网页已开着时点另一条推送：只发生片段跳转，不重载页面 ⇒ 靠这个监听。
+			const onHash = () => {
+				const target = readTarget();
+				if (target.length > 0) reveal(target);
+			};
+			window.addEventListener("hashchange", onHash);
+			// 注意 `ctx.effect(fn)` 里的 fn 是**立即执行**的效果体，**它返回的那个函数**才是清理器
+			// （本文件上面那处就是 `ctx.effect(() => () => …)`）。写成 `ctx.effect(() => { 清理… })`
+			// 会在挂上监听的同一刻就把监听摘掉——v0.2.3 第一版正是这么坏的（实测 hashchange 不触发）。
+			ctx.effect(() => () => {
+				stop();
+				window.removeEventListener("hashchange", onHash);
+			}, "dsh-push-host: reveal session from hash");
 		}
 
 		exports.NS = NS;
