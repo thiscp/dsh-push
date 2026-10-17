@@ -47,6 +47,7 @@ class MainActivity : Activity() {
     private var breathX: ObjectAnimator? = null
     private var breathY: ObjectAnimator? = null
     private var twinkle: ObjectAnimator? = null
+
     private var lastMaxTs = -1L
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -157,18 +158,23 @@ class MainActivity : Activity() {
             text = getString(R.string.hosts_btn)
             setOnClickListener { showHosts() }
         }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
-        // 换主题入口（v1.7.0）
+        // 设置入口（v1.32.29）：主页只留常用操作，其余（换主题 / 后台服务 / 电池白名单 /
+        // 保活体检 / 调试浮层）收进这个菜单——用户「主页的按钮太多了，能只保留常用的吗，
+        // 其他的可以做个设置菜单放里面」。换主题原先这颗胶囊就搬进菜单第 4 项。
         header.addView(pill(Button(this)).apply {
-            text = getString(R.string.theme_btn)
-            setOnClickListener { showThemePicker() }
+            text = "设置"
+            setOnClickListener { showSettings() }
         }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
         content.addView(header)
 
         // 状态卡片（全局网页胶囊已于 v1.9.5 退役：入口收敛到常驻通知与卡片自带按钮）
-        // v1.32.9：statusText 下加「全部已读」pill（右对齐，仅未读>0 时可见）
+        // v1.32.33：两颗胶囊改成**竖排文字**贴在正文右侧——用户「现在的按钮是里面文字是水平
+        // 布局的，能否改为垂直布局，如我图中红色位置这样的布局。以此来把上面那行的空间也节省
+        // 出来」。竖排用字符间插 \n 实现（无需自定义 View）；正文因此独占整高，不再需要首行。
+        // 配套把几行正文改短，否则窄列会让长行折行、把省下的空间又吃回去（实测见 HANDOVER）。
         statusText = TextView(this).apply { textSize = 13f; setTextColor(c(R.attr.dshTextPrimary)) }
         markAllBtn = pill(Button(this)).apply {
-            text = "全部已读"
+            text = "全\n部\n已\n读"
             visibility = View.GONE
             setOnClickListener {
                 val n = PushService.markAllRead(this@MainActivity)
@@ -176,12 +182,30 @@ class MainActivity : Activity() {
                 // 列表与按钮可见性的刷新交给 markAllRead 里的 listener 回调，不自己再调
             }
         }
+        // 清空消息记录（v1.9.9）：只清列表与空状态，通知栏已弹的通知不动
+        val clearBtn = pill(Button(this)).apply {
+            text = "清\n空\n消\n息"
+            setOnClickListener { confirmClearMsgs() }
+        }
+        // 竖排胶囊必须**同时硬定宽高**：Button 样式自带 minHeight=48dp 与 minWidth=88dp，
+        // 光靠 setMinimumHeight/Width 压不住（v1.32.33 装机实测胶囊 352px 宽、正文列只剩
+        // 416px，每行都折行，反而比上一版高 201px）。这里给确切宽度 28dp（12sp 一个字 + 内边距）。
+        for (p in arrayOf(markAllBtn, clearBtn)) {
+            p.setPadding(dp(2), dp(2), dp(2), dp(2))
+            p.setLineSpacing(0f, 0.92f)   // 只有 setter 方法，没有 lineSpacingMultiplier 可写属性（v1.32.34 编译报错）
+        }
+        val pillW = dp(28)
+        val pillCol = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(markAllBtn, LinearLayout.LayoutParams(pillW, -2))
+            addView(clearBtn, LinearLayout.LayoutParams(pillW, -2).apply { leftMargin = dp(6) })
+        }
         val statusBar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(statusText)
-            addView(markAllBtn, LinearLayout.LayoutParams(-2, -2).apply {
-                gravity = Gravity.END
-                topMargin = dp(10)
+            orientation = LinearLayout.HORIZONTAL
+            addView(statusText, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(pillCol, LinearLayout.LayoutParams(-2, -2).apply {
+                leftMargin = dp(10)
+                gravity = Gravity.CENTER_VERTICAL   // 竖排胶囊垂直居中贴着正文
             })
         }
         content.addView(card(statusBar, dp(14)))
@@ -241,66 +265,8 @@ class MainActivity : Activity() {
         }
         content.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // 操作按钮行（胶囊风格，与整体统一）：v1.14.0 起拆两行，第二行塞保活体检入口
-        val btnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        btnRow.addView(pill(Button(this)).apply {
-            text = "启动监听"
-            setOnClickListener {
-                startForegroundService(Intent(this@MainActivity, PushService::class.java))
-                toast("服务已启动")
-            }
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        btnRow.addView(pill(Button(this)).apply {
-            text = "停止服务"
-            textSize = 12f
-            setOnClickListener { stopService(Intent(this@MainActivity, PushService::class.java)) }
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(btnRow)
-
-        // 第二行：电池白名单 / 保活体检 / 清空消息（体检只读，绝不改系统设置）
-        val btnRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, 0)
-        }
-        btnRow2.addView(pill(Button(this)).apply {
-            text = "电池白名单"
-            textSize = 12f
-            setOnClickListener { openBatteryWhitelist() }
-        }, LinearLayout.LayoutParams(0, -2, 1.2f))
-        btnRow2.addView(pill(Button(this)).apply {
-            text = "保活体检"
-            textSize = 12f
-            setOnClickListener { showCheckup() }
-        }, LinearLayout.LayoutParams(0, -2, 1.2f))
-        // 清空消息记录（v1.9.9）：只清列表与空状态，通知栏已弹的通知不动
-        btnRow2.addView(pill(Button(this)).apply {
-            text = "清空消息"
-            textSize = 12f
-            setOnClickListener { confirmClearMsgs() }
-        }, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(btnRow2)
-
-        // 第三行：调试浮层开关（v1.32.28）——默认关，平时网页上不出现任何调试文字；
-        // 遇到「模拟器复现不了」的真机问题（键盘态/浮层/透明）时打开，DSH 页面左上角
-        // 会出现诊断 HUD，截图即可定位。开关存 shared_prefs，回到 DSH 页面即时生效。
-        val btnRow3 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(6), 0, 0)
-        }
-        val diagBtn = pill(Button(this)).apply {
-            textSize = 12f
-            setOnClickListener {
-                val on = !DiagPrefs.on(this@MainActivity)
-                DiagPrefs.set(this@MainActivity, on)
-                text = if (on) "调试浮层：开" else "调试浮层：关"
-                toast(if (on) "调试浮层已开：DSH 页面左上角会显示诊断信息" else "调试浮层已关")
-            }
-        }
-        diagBtn.text = if (DiagPrefs.on(this)) "调试浮层：开" else "调试浮层：关"
-        btnRow3.addView(diagBtn, LinearLayout.LayoutParams(0, -2, 1f))
-        content.addView(btnRow3)
+        // 底部操作行已于 v1.32.30 退役：「清空消息」进状态卡片右侧，「调试浮层」进「设置」
+        // 菜单——用户「把清空消息放在主页的状态框内的右侧，调试浮层也放设置里面」。
 
         // 底部署名
         content.addView(TextView(this).apply {
@@ -471,6 +437,53 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             toast("打不开这个链接")
         }
+    }
+
+    // ---------- 设置菜单（v1.32.29） ----------
+    // 用户「主页的按钮太多了，能只保留常用的吗，其他的可以做个设置菜单放里面」：
+    // 主页只留「清空消息 / 调试浮层」，其余操作收在这里（顶栏「设置」进来）。
+    // 服务是否在跑直接读 PushService.state（它是 @Volatile 的现值，比查进程表可靠）。
+    private fun serviceRunning(): Boolean {
+        val s = PushService.state
+        return s != "未启动" && s != "已停止"
+    }
+
+    private fun showSettings() {
+        val pm = getSystemService(PowerManager::class.java)
+        val batOk = pm.isIgnoringBatteryOptimizations(packageName)
+        val running = serviceRunning()
+        val labels = arrayOf(
+            if (running) "后台服务：运行中（" + PushService.state + "）- 点按停止"
+            else "后台服务：未运行 - 点按启动",
+            "电池优化白名单：" + (if (batOk) "已加入" else "未加入（vivo 上服务容易被杀）"),
+            "保活体检（只读，不改系统设置）",
+            getString(R.string.theme_btn),
+            "调试浮层：" + (if (DiagPrefs.on(this)) "已开" else "已关") + "（DSH 页面左上角诊断信息）",
+        )
+        AlertDialog.Builder(this)
+            .setTitle("设置")
+            .setItems(labels) { _, which ->
+                when (which) {
+                    0 -> if (running) {
+                        stopService(Intent(this, PushService::class.java))
+                        toast("服务已停止")
+                    } else {
+                        startForegroundService(Intent(this, PushService::class.java))
+                        toast("服务已启动")
+                    }
+                    1 -> openBatteryWhitelist()
+                    2 -> showCheckup()
+                    3 -> showThemePicker()
+                    else -> {
+                        val on = !DiagPrefs.on(this)
+                        DiagPrefs.set(this, on)
+                        toast(if (on) "调试浮层已开：DSH 页面左上角会显示诊断信息" else "调试浮层已关")
+                    }
+                }
+                refresh()
+            }
+            .setNegativeButton("返回", null)
+            .show()
     }
 
     private fun showThemePicker() {
@@ -921,14 +934,17 @@ class MainActivity : Activity() {
         }
         lastMaxTs = maxTs
 
-        // 状态卡片：有未读就在最前面顶一行纯文本计数（vivo 上 emoji 渲染差，故用实心圆点）（v1.9.9）
+        // 未读计数回到正文首行（v1.32.33：胶囊改竖排后不再有首行）；vivo 上 emoji 渲染差，
+        // 故用实心圆点（v1.9.9）。正文右侧要让给两颗竖排胶囊（约 224px），所以几行文案改短，
+        // 避免折行把省出的垂直空间吃回去：服务器去掉 https://、白名单去掉「电池优化」前缀与
+        // 长说明（完整说法在顶栏「设置」菜单里）。
         statusText.text = buildString {
             if (unread > 0) append("● ${unread} 条未读\n")
             append("""
                 状态：${PushService.state}（v${PushService.appVer(this@MainActivity)}）
-                服务器：${PushService.BASE}（topic dsh）
-                通行证：${if (hasToken()) "已配置 ✔（长按头像可更换）" else "未配置 ✘（下面填一张）"}
-                电池优化白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 上服务容易被杀，务必点下面按钮）"}
+                服务器：${PushService.BASE.replace("https://", "")}（topic dsh）
+                通行证：${if (hasToken()) "已配置 ✔（长按头像换）" else "未配置 ✘（下面填一张）"}
+                白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 易杀）"}
             """.trimIndent())
         }
         statusText.setTextColor(if (batteryOk) c(R.attr.dshTextPrimary) else c(R.attr.dshWarn))
