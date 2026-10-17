@@ -660,12 +660,22 @@ class WebActivity : Activity() {
                 "if(sb){exp=sb.className.indexOf('_collapsed')<0;}" +
                 "else{sb=g?g.sb:null;exp=!!g&&g.sbExpanded;" +
                 "if(!sb){sb=bwFpSb(window.innerWidth,window.innerHeight);" +
-                "if(sb&&!bwFpPlace(sb,window.innerWidth,window.innerHeight))sb=null;" +
+                // ★ v1.33.4：工作VM/VM1 的侧栏是挂在 body 下的**满屏宽 portal 覆盖层**（真机浮层实测
+                //   sb=hHd-Xa_root@360 exp=1 pinned=0）——配不上外壳轨道，结构臂与 bwFpPlace 都判 false，
+                //   于是整个几何段直接放弃，100% 宽是页面自己的。这种形态要的是**只夹宽度、不动轨道**：
+                //   宽度取 min(实测, 0.78vw)，位置与层叠交回页面，正文列本来就没被挤。
+                "if(sb&&!bwFpPlace(sb,window.innerWidth,window.innerHeight)){" +
+                "var vw0=window.innerWidth;" +
+                "var nw0=Math.min(Math.round(sb.getBoundingClientRect().width),Math.round(vw0*0.78));" +
+                "if(window.__bwFpW&&window.__bwFpW!==sb){try{window.__bwFpW.style.removeProperty('width');" +
+                "window.__bwFpW.style.removeProperty('max-width');}catch(e9){}window.__bwFpW=null;}" +
+                "if(nw0>=96){bwSet(sb,'width',nw0+'px');bwSet(sb,'max-width',nw0+'px');window.__bwFpW=sb;}" +
+                "sb=null;}" +
                 "exp=!!sb&&bwFpExp(sb);}}" +
                 "window.__bwSbEl=sb||null;" +
                 "window.__bwDbg='pre='+(pre||'-')+' sb='+(sb?String(sb.className).slice(0,18)+'@'+" +
-                "Math.round(sb.getBoundingClientRect().width):'-')+' exp='+(exp?1:0)+' pinned='+(window.__bwW?1:0)" +
-                "+' vw='+window.innerWidth;" +
+                "Math.round(sb.getBoundingClientRect().width):'-')+' exp='+(exp?1:0)+' pinned='+(window.__bwW?1:0) +" +
+                "' vw='+window.innerWidth+' narrow='+(window.__bwFpW?Math.round(window.__bwFpW.getBoundingClientRect().width):0);" +
                 "if(!sb){bwAlpha(window.__bwBgEl,false);return;}" +
                 //   展开/收起：类名宿主沿用原来的 collapsed 类名判据；几何宿主读「侧栏宽 ≥
                 //   轨道宽+40」（真机撤销定位后侧栏 position 仍是 static，既不能用 position 判、
