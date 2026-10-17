@@ -38,6 +38,9 @@ class PushService : Service() {
         const val NOTIF_SERVICE_ID = 2
         // 常驻通知「DSH 入口」动作给主界面的标记（v1.29.0）
         const val EXTRA_SHOW_HOSTS = "showHosts"
+        // 常驻通知「回到上次的现场」用的 PendingIntent 请求码（v1.32.36）。必须与
+        // activityIntent() 的 cls.hashCode()+extras.hashCode() 错开，否则 FLAG_UPDATE_CURRENT 会互相覆盖。
+        private const val RC_RESTORE_SCENE = 0x51E57
         // 版本号**唯一真值** = app/build.gradle.kts 的 versionName。显示处必须运行时派生，禁止再写死
         // （§6.4：v1.32.15 与 v1.32.16 两版都因为写死而把状态卡片显示成旧版本号——设备装的是
         // 82/1.32.16，卡片写 v1.32.15，用户看得见）。取不到一律兜底 "?"，不得显示空、不得崩。
@@ -248,7 +251,8 @@ class PushService : Service() {
             // 常驻通知也带主题色徽章（v1.7.8）
             .setLargeIcon(themedLargeIcon(R.drawable.pet_idle))
             .setColor(ThemePrefs.color(this, R.attr.dshNotif))
-            .setContentIntent(activityIntent(MainActivity::class.java, null))
+            // 点常驻通知 = 点桌面图标：回到上次的现场（v1.32.36，用户「把点击通知栏的监听中的图标也进入主页改为也进入之前的现场」）
+            .setContentIntent(restoreSceneIntent())
         // 常驻一键直达 DSH 网页：用最近一次推送带来的新鲜链接（v1.9.2）
         val web = prefs?.getString(KEY_WEB, "") ?: ""
         if (web.isNotEmpty()) b.addAction(webAction(web))
@@ -292,6 +296,24 @@ class PushService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         return Notification.Action.Builder(
             android.R.drawable.ic_menu_view, "已读", pi).build()
+    }
+
+    /**
+     * 「回到上次的现场」用的内容意图（v1.32.36）：走和桌面图标**完全同一条路**——
+     * ACTION_MAIN + CATEGORY_LAUNCHER + NEW_TASK，且不带任何 extra。系统会把已有任务按当前栈顶恢复；
+     * 若它选择往栈上叠一个新的 MainActivity，MainActivity 自己的「光启动器意图 + !isTaskRoot ⇒ finish()」
+     * 守卫会把它收掉，于是露出下层（通常是 DSH 内置网页）。原先用 activityIntent(MainActivity) 自带
+     * CLEAR_TOP，点常驻通知会把网页清掉、只能回主页。消息事件通知（另一处 contentIntent）**不变**：
+     * 点消息就该看到消息，仍进主页。
+     */
+    private fun restoreSceneIntent(): PendingIntent {
+        val i = Intent(this, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return PendingIntent.getActivity(
+            this, RC_RESTORE_SCENE, i,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     private fun activityIntent(cls: Class<*>, extras: Intent?): PendingIntent {
