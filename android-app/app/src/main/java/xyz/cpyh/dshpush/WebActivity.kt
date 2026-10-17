@@ -650,6 +650,24 @@ class WebActivity : Activity() {
                 //   （实测 VM1 是 hHd-Xa_、笔电是 _2H3hWW_，同一版 0.2.0-rc.2 也不同），写死会让别的宿主
                 //   打不中锚点、掉进结构臂，被改成 fixed + 0.85vw 覆盖层 = 用户报的「侧栏铺满屏幕」。
                 //   改成从本机构建的 *_sidebarCol 反推前缀，所有宿主都走笔电那条「一行未变」的路。
+                // ★ v1.33.5：CDP 连进模拟器实测——360 CSS 下页面**自己**就把 *_sidebarCol 给成 360 宽
+                //   （窄屏设计如此），且 pI_x6G_frame 这时已不是多轨道网格 ⇒ bwFind 找不到外壳 ⇒
+                //   pinned=0，前面几版改的宽度分支全都没执行到。正文在 *_overlayLayer（absolute,
+                //   z=20）里、本来就是满宽，所以只要把侧栏与它的列一起夹到 0.78vw，右边就露出正文
+                //   （CDP 当场试改已验证：col 360→281、root→280、overlayLayer 仍 360）。
+                //   与有没有外壳、走哪条臂无关 —— 只看「解析出的侧栏是不是几乎占满宽度」。
+                "function bwNarrow(sb,vw){" +
+                "var prev=window.__bwNarrowEl||[];" +
+                "if(!sb||vw>1023||!sb.isConnected){for(var z=0;z<prev.length;z++){try{" +
+                "prev[z].style.removeProperty('width');prev[z].style.removeProperty('max-width');}catch(e7){}}" +
+                "window.__bwNarrowEl=[];window.__bwFpW=null;return 0;}" +
+                "var r=sb.getBoundingClientRect();if(r.width<vw*0.9)return window.__bwNarrow||0;" +
+                "var nw=Math.round(vw*0.78);var col=document.querySelector(\"[class*='_sidebarCol']\");" +
+                "var els=[sb];if(col&&col.isConnected&&col.getBoundingClientRect().width>=vw*0.9)els.push(col);" +
+                "for(var z=0;z<prev.length;z++){if(prev[z]&&prev[z]!==sb&&prev[z]!==col&&prev[z].isConnected){" +
+                "try{prev[z].style.removeProperty('width');prev[z].style.removeProperty('max-width');}catch(e8){}}}" +
+                "for(var y=0;y<els.length;y++){bwSet(els[y],'width',nw+'px');bwSet(els[y],'max-width',nw+'px');}" +
+                "window.__bwNarrowEl=els;window.__bwNarrow=nw;window.__bwFpW=sb;return nw;}" +
                 "function bwPanelBg(){var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
                 //   注意：DSH 的 bundle 里**外壳与侧栏根是两个不同哈希命名空间**（笔电外壳 BynINW_*
                 //   但侧栏根 _2H3hWW_*；VM1 是 pI_x6G_* / hHd-Xa_*），所以推导前缀只能当兜底：
@@ -672,6 +690,7 @@ class WebActivity : Activity() {
                 "if(nw0>=96){bwSet(sb,'width',nw0+'px');bwSet(sb,'max-width',nw0+'px');window.__bwFpW=sb;}" +
                 "sb=null;}" +
                 "exp=!!sb&&bwFpExp(sb);}}" +
+                "window.__bwNarrow=bwNarrow(sb,window.innerWidth);" +
                 "window.__bwSbEl=sb||null;" +
                 "window.__bwDbg='pre='+(pre||'-')+' sb='+(sb?String(sb.className).slice(0,18)+'@'+" +
                 "Math.round(sb.getBoundingClientRect().width):'-')+' exp='+(exp?1:0)+' pinned='+(window.__bwW?1:0) +" +
