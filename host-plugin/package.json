@@ -1,6 +1,6 @@
 {
   "name": "dsh-push-host",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "DSH host-side phone push: question events to ntfy + in-process answering via relay polling (replaces the external notifier + answer bridge)",
   "keywords": [
     "dsh",

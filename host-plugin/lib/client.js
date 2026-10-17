@@ -1,5 +1,7 @@
-// dsh-push-host 的浏览器半（v0.2.3）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话
-// （v0.2.3 补 hashchange 监听：网页已开着时点另一条推送只做片段跳转、不重载页面）。
+// dsh-push-host 的浏览器半（v0.2.4）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话。
+// v0.2.3：补 hashchange 监听——网页已开着时点另一条推送只做片段跳转、不重载页面。
+// v0.2.4：开关与「展开其余 N 个会话」都改用语义锚点 + 中英双标签——这些文案是本地化的，
+// 只按英文标签找在中文手机上必然找不到（用户真机实遇）。
 // 手写模块，格式照抄现成编译产物（window.__ModuleLoader__.load，见
 // dsh-client-ui-settings-subagent/lib/client.js）；宿主 client-modules 经
 // package.json 的 dsh.client{platform:"web"} + exports "./client" 挂载它。
@@ -18,7 +20,7 @@ window.__ModuleLoader__.load({
 
 		// 诊断（v0.2.2）：开机瞬间 URL 里到底有没有 hash、切会话走到哪一步，一页之内就能看出来，
 		// 不用去猜「是没跑还是没点到」。控制台里读 window.__DSHPUSH_CLIENT__ 即可。
-		const DIAG = { v: "0.2.3", hash: "", tries: 0, opened: false, rowSeen: false, clicks: 0, done: false };
+		const DIAG = { v: "0.2.4", hash: "", tries: 0, opened: false, rowSeen: false, clicks: 0, done: false };
 		try {
 			DIAG.hash = String(location.hash || "");
 		} catch {
@@ -231,14 +233,24 @@ window.__ModuleLoader__.load({
 							row.click();
 							return;
 						}
-						const toggle = document.querySelector('button[aria-label="Open sidebar"]');
+						// 展开侧栏那颗按钮的**标签是本地化的**（en `Open sidebar` / zh 「打开侧边栏」；DSH 网页端只有
+						// zh、en 两套字典，实测于 bundle）。只按英文标签找，在中文系统的手机上必然找不到 ⇒
+						// 侧栏开不了、行不出现、20s 后放弃（用户真机实遇：手动点一下侧栏才自动切换）。
+						// 首选**与语言无关**的锚点：侧栏根 `[data-slot="sidebar"]` 里的第一个按钮就是这颗开关
+						// （实测 sameElement:true；且收起态下 0 个会话行 ⇒ 「一个行都没有才点它」是安全规则，
+						// 不会反过来把已展开的侧栏关掉）。英文/中文标签只作兜底。
+						const rowsPresent = document.querySelectorAll('[data-row-key^="session:"]').length > 0;
+						const toggle = rowsPresent ? null : (document.querySelector('[data-slot="sidebar"] button')
+							?? document.querySelector('button[aria-label="Open sidebar"], button[aria-label="打开侧边栏"]'));
 						if (toggle !== null) {
 							DIAG.opened = true;
 							toggle.click();
 							return;
 						}
 						if (!moreClicked) {
-							const more = [].slice.call(document.querySelectorAll('button,[role="button"]')).filter((b) => /show\s*\d+\s*more|更多/i.test(String(b.textContent)))[0];
+							// 同样本地化：en `Show {n} more sessions` / zh 「展开其余 {n} 个会话」。`收起`（Show less）是已展开
+							// 后的反向按钮，MUST NOT 点，所以只匹配展开这一个方向。
+							const more = [].slice.call(document.querySelectorAll('button,[role="button"]')).filter((b) => /show\s*\d+\s*more|展开其余/i.test(String(b.textContent)))[0];
 							if (more !== undefined) {
 								moreClicked = true;
 								more.click();
