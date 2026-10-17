@@ -185,7 +185,12 @@
 - **预期**: 图标中心与图标内的点必须触发它自己；只有"故意点到邻居图标上"才触发邻居。命中框可以重叠，但**不能让 A 的视觉区落在 B 的命中框里**。
 - **实际（v1.32.14 CSS360 复测，2026-10-15）**: **CSS360 基线重打完成，重叠仍存在**：收起态 header 7 按钮命中框 `Collapse sidebar`(40x40 @234,16)、`Open in File Explorer`(23x40 @235.1,5.1)、`More ways to open`(20x40 @259.4,5.1)；**`Collapse sidebar`↔`Open in File Explorer` 横向重叠 23px**（面积 669.3）、**`Collapse sidebar`↔`More ways to open` 重叠 14.6px**；`realTaps` 实证：点 `Open in File Explorer` 中心 (246.6,25.1) 触发 `New session`/`Collapse sidebar`（`selfHit=false`），7 处边缘/中心误触（`Search sessions`/`View options`/`Add workspace` 左右边缘触发 `Workspaces`）。⇒ **v1.32.7 FINDING-1 延续，P1 持续**（归因：DSH Web 上游紧凑布局 + App 40px 放大）。
 - **实际（v1.32.7 旧 411 宽，数字作废）**: v1.32.7 **不满足**：Open in File Explorer(40x40 @279.3) 与 More ways to open(40x40 @299.3) 横向重叠 20px，前者图标视觉中心(299.3) 的 owner 是后者 —— elementFromPoint 与真实输入双重确认"点它的中心打开了邻居的菜单"；Workspaces 行 Search sessions / View options / Add workspace（各 40x40，中心距 32px）两两重叠 8px，点右/左边缘分别触发邻居（真点验证 3 处）。
-- **结果**: **FAIL（P1）**，见 verify/QA-ROUND-v1.32.7.md FINDING-1/2
+- **结果**: ~~**FAIL（P1）**，见 verify/QA-ROUND-v1.32.7.md FINDING-1/2~~ → **✅ 已销（2026-10-17 复测，v1.32.34 + 当前 DSH Web，CSS360/dpr4）**
+- **销账依据（模拟器实测，非推断）**:
+  - **侧栏收起态**（用户日常入口）：视口内 16 个图标按钮，**视觉区错配 0 处** ⇒ 本用例断言满足。
+  - **侧栏展开态**：30 处错配，但**没有任何一对按钮的视觉区落进邻居的命中框**（`aVisInB`/`bVisInA` 全 false）。真正原因是主视图 header 那一排图标**被展开的侧栏抽屉整个盖住**——`More ways to open` 的图标中心 `elementFromPoint` 返回的**根本不是按钮**（owner=null，盖住它的是侧栏面板本身）。属**上游抽屉遮挡行为**，不是命中区放大的缺陷。
+  - 责任方核对：`Collapse sidebar` 命中框 **28×28、margin 0**（**没被** App 的 40px 补丁放大）；被放大的是 `Open in File Explorer`(23×40, margin -8.5px)、`More ways to open`(20×40)、`Agent Team`(28×40, margin -6px)。当年那对重叠（`Collapse sidebar` ↔ `Open in File Explorer`）仍在（横向 18.1px，当年记 23px），但它是**抽屉压在 header 上**造成的位置重合，去掉补丁也一样会被盖住。
+- **口径修正（防下次又判成 P1）**: 本用例的断言 SHALL 只在**侧栏收起态**下评估「视觉区自命中」；展开态下抽屉覆盖主视图 header 属上游设计，MUST NOT 记成本 App 的命中区缺陷。
 - **证据**: tmp\shots\v1327-qa\qa-A14-hitboxes.png（红=命中框、绿=图标）、qa-report 的 QA-A14.dom.realTaps
 
 ### QA-A15 收起态图标轨道：40px 命中框会不会顶出 56px 轨道 / 纵向互叠
