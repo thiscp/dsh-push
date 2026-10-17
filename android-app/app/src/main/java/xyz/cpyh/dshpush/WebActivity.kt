@@ -156,6 +156,12 @@ class WebActivity : Activity() {
         // 深色三档：仅所选主题为深色时开，浅色主题保持亮页（v1.12.0）
         val dark = ThemePrefs.KEYS[ThemePrefs.current(this)] in setOf("night", "starry")
         web = WebView(this).apply {
+            // v1.33.1：调试浮层开着时顺带打开 WebView 远程调试 + 控制台转发（tag dshweb），
+            // 这样能用 USB/adb 从电脑直接连进手机里那个页面读真实 DOM 与生效样式。
+            if (DiagPrefs.on(this@WebActivity)) {
+                android.webkit.WebView.setWebContentsDebuggingEnabled(true)
+                android.util.Log.d("dshweb", "WebView 远程调试已开（chrome://inspect 可连）")
+            }
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             // 去掉 Mobile 标记，DSH Web 按桌面版渲染（v1.9.8）
@@ -608,6 +614,18 @@ class WebActivity : Activity() {
                 "bwSet(f,'grid-template-columns',nw.join(' '));}" +
                 "for(j=0;j<BWC.length;j++)bwSet(col,BWC[j],(BWC[j]==='overflow'?'visible':" +
                 "(BWC[j]==='will-change'?'auto':'none')));" +
+                // ★ v1.33.1 护栏（与哈希无关）：侧栏若是**在流内的网格轨道**（position 是 static、
+                //   且宽度正好等于外壳某条轨道），就不要把它改成 fixed 覆盖层——只保留钉轨道
+                //   （解除挤压的目的达到），宽度交回页面自己。真机实测：笔电走的是写死哈希的
+                //   CSS 规则（宽度沿用页面自己的 280px ≈ 78%），而 VM1/工作机哈希不同、落到这条
+                //   JS 臂，被钉成 0.85vw=306px ≈ 85% 的满屏覆盖层 = 用户报的「侧栏铺满屏幕」。
+                "var pw0=Math.round(panel.getBoundingClientRect().width),inflow=0;" +
+                "if(getComputedStyle(panel).position==='static'&&getComputedStyle(f).display.indexOf('grid')>=0){" +
+                "for(j=0;j<tr.length;j++){if(Math.abs(tr[j]-pw0)<=6){inflow=1;break;}}}" +
+                "if(inflow){var w0=window.__bwW;" +
+                "if(w0&&w0.panel&&w0.panel===panel){try{for(var kk=0;kk<BWK.length;kk++)" +
+                "panel.style.removeProperty(BWK[kk]);}catch(e3){}}" +
+                "window.__bwW={f:f,col:col,panel:null};return;}" +
                 "var pw=Math.round(panel.getBoundingClientRect().width);" +
                 "if(pw<rail+40)pw=280;if(pw>vw*0.9)pw=Math.round(vw*0.85);" +
                 "bwSet(panel,'position','fixed');bwSet(panel,'left','0px');" +
@@ -623,15 +641,30 @@ class WebActivity : Activity() {
                 //   （bwFind ①②③④，覆盖「侧栏在流内吃宽度」那类形态，也是修挤压唯一能用的
                 //   形态）→ 最后**指纹臂**（D11，覆盖「侧栏是满屏宽覆盖层」那类形态）。
                 //   __bwSbEl 每轮都发布，与有没有钉浮层、有没有撤销无关。
-                "function bwPanelBg(){var g=bwFind();bwGeomFix(g);" +
+                "function bwPrefix(){if(window.__bwPre!==undefined)return window.__bwPre;" +
+                "var c=document.querySelector(\"[class*='_sidebarCol']\");" +
+                "var m=c?String(c.className).match(/([A-Za-z0-9_-]+?)_sidebarCol/):null;" +
+                "window.__bwPre=m?m[1]:'';return window.__bwPre;}" +
+                // v1.33.1：锚点不再写死笔电那一份构建的哈希（_2H3hWW_）。每个部署的 CSS 模块哈希都不同
+                //   （实测 VM1 是 hHd-Xa_、笔电是 _2H3hWW_，同一版 0.2.0-rc.2 也不同），写死会让别的宿主
+                //   打不中锚点、掉进结构臂，被改成 fixed + 0.85vw 覆盖层 = 用户报的「侧栏铺满屏幕」。
+                //   改成从本机构建的 *_sidebarCol 反推前缀，所有宿主都走笔电那条「一行未变」的路。
+                "function bwPanelBg(){var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
+                //   注意：DSH 的 bundle 里**外壳与侧栏根是两个不同哈希命名空间**（笔电外壳 BynINW_*
+                //   但侧栏根 _2H3hWW_*；VM1 是 pI_x6G_* / hHd-Xa_*），所以推导前缀只能当兜底：
+                //   先认已知的笔电锚点（那条路一行未变，遮罩 alpha 才不会被算错），再退到推导值。
                 "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                "if(!sb&&pre)sb=document.querySelector(\"[class*='\" + pre + \"_root']\");" +
                 "var exp;" +
-                "if(sb){exp=sb.className.indexOf('_2H3hWW_collapsed')<0;}" +
+                "if(sb){exp=sb.className.indexOf('_collapsed')<0;}" +
                 "else{sb=g?g.sb:null;exp=!!g&&g.sbExpanded;" +
                 "if(!sb){sb=bwFpSb(window.innerWidth,window.innerHeight);" +
                 "if(sb&&!bwFpPlace(sb,window.innerWidth,window.innerHeight))sb=null;" +
                 "exp=!!sb&&bwFpExp(sb);}}" +
                 "window.__bwSbEl=sb||null;" +
+                "window.__bwDbg='pre='+(pre||'-')+' sb='+(sb?String(sb.className).slice(0,18)+'@'+" +
+                "Math.round(sb.getBoundingClientRect().width):'-')+' exp='+(exp?1:0)+' pinned='+(window.__bwW?1:0)" +
+                "+' vw='+window.innerWidth;" +
                 "if(!sb){bwAlpha(window.__bwBgEl,false);return;}" +
                 //   展开/收起：类名宿主沿用原来的 collapsed 类名判据；几何宿主读「侧栏宽 ≥
                 //   轨道宽+40」（真机撤销定位后侧栏 position 仍是 static，既不能用 position 判、
@@ -640,6 +673,7 @@ class WebActivity : Activity() {
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
                 "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                "if(!psb&&bwPrefix())psb=document.querySelector(\"[class*='\" + bwPrefix() + \"_root']\");" +
                 "if(psb&&!window.__bwPanelBgObs){window.__bwPanelBgObs=1;" +
                 "new MutationObserver(function(){bwPanelBg();})" +
                 ".observe(psb,{attributes:true,attributeFilter:['class']});" +
@@ -1273,6 +1307,7 @@ class WebActivity : Activity() {
                         "if(document.body)document.body.appendChild(H);}" +
                         "if(!H.parentNode)return;var o=[];" +
                         "o.push('vh='+innerHeight+' vv='+(window.visualViewport?Math.round(visualViewport.height):'-')+' vw='+innerWidth);" +
+                        "o.push(window.__bwDbg||'bw:-');" +
                         "function bgg(x){return x?getComputedStyle(x).backgroundColor:'-';}" +
                         "function nm(x){return x?String(x.className).slice(0,20):'-';}" +
                         "var ov=document.querySelectorAll('.dshOv');" +
@@ -1293,6 +1328,12 @@ class WebActivity : Activity() {
             // 上传与下载（v1.19.0）：
             // WebChromeClient——<input type=file> 弹系统文件选择器，顺带恢复 JS alert/confirm
             webChromeClient = object : WebChromeClient() {
+                // 调试浮层开着时把网页 console 引到 logcat（tag dshweb），关掉就完全静默
+                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                    if (DiagPrefs.on(this@WebActivity))
+                        android.util.Log.d("dshweb", (m.sourceId()?.substringAfterLast('/') ?: "") + " " + m.lineNumber() + " " + m.message())
+                    return true
+                }
                 override fun onShowFileChooser(
                     webView: WebView?, cb: ValueCallback<Array<Uri>>?,
                     params: FileChooserParams?
