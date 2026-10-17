@@ -23,7 +23,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.DeviceDefault.Light.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
+        <!-- 启动器图标要回到「上次的现场」（v1.32.35）：MainActivity 原先是 singleTask，而它是任务根 +
+             LAUNCHER 目标 ⇒ 用户按 Home 退到桌面、再点图标时，Android 会把任务栈**清到根 Activity**，
+             于是 WebActivity（DSH 网页）被清掉、只剩主页。改成默认 standard 后，启动器意图
+             （NEW_TASK|RESET_TASK_IF_NEEDED）会把任务**按原栈顶**恢复。通知/服务路径不受影响：它们本来就
+             显式带 CLEAR_TOP|SINGLE_TOP（PushService.activityIntent），复用根实例 + 清上方，语义不变。
+             alwaysRetainTaskState=true 防系统闲置约 30 分钟后重置任务栈（那样也会丢现场）。 -->
+        <activity android:name=".MainActivity" android:exported="true" android:alwaysRetainTaskState="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

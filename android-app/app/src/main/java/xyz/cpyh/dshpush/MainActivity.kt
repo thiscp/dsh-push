@@ -59,11 +59,34 @@ class MainActivity : Activity() {
     private fun prefs() = getSharedPreferences(PushService.PREF, MODE_PRIVATE)
     private fun hasToken() = !prefs().getString(PushService.KEY_TOKEN, "").isNullOrEmpty()
 
+    /**
+     * 是不是「从桌面点图标进来」这种最朴素的启动意图：ACTION_MAIN + CATEGORY_LAUNCHER，且不带任何
+     * extra。通知、常驻通知动作、深链都会带 extra 或压根没有 action（显式组件意图），不会误判。
+     */
+    private fun isBareLauncherIntent(i: Intent?): Boolean {
+        if (i == null || i.action != Intent.ACTION_MAIN) return false
+        if (!i.hasCategory(Intent.CATEGORY_LAUNCHER)) return false
+        val b = i.extras
+        return b == null || b.isEmpty
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // 主题必须在 super.onCreate 前就位；不能放 attachBaseContext——
         // Android 16 上 Activity.setTheme 走 getWindow().setTheme，那时 window 还没创建（v1.7.0 闪退根因）
         setTheme(ThemePrefs.themeRes(this))
         super.onCreate(savedInstanceState)
+
+        // 「桌面点图标回到上次的现场」（v1.32.35）。实测机制（dumpsys activity activities）：
+        // MainActivity 从 singleTask 改成默认 standard 之后，桌面图标启动会把一个**新的** MainActivity
+        // 叠在任务栈上（#0 Main → #1 Web → #2 Main 新），于是用户从 DSH 网页被带回主页——网页其实
+        // 还在下面没被销毁。所以这里识别「光秃秃的启动器意图」并且自己不是任务根时直接 finish()，
+        // 让下面那个 Activity 露出来 = 回到上次的现场。必须放在 setContentView 之前，否则会先画出
+        // 主页再消失。通知/服务路径不受影响：它们是显式组件意图（action 为空）且自带
+        // CLEAR_TOP|SINGLE_TOP，走的是复用根实例那条路（那时 isTaskRoot 为真，不会 finish）。
+        if (savedInstanceState == null && !isTaskRoot && isBareLauncherIntent(intent)) {
+            finish()
+            return
+        }
 
         val root = FrameLayout(this)
 
