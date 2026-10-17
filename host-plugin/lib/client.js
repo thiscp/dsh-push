@@ -1,7 +1,9 @@
-// dsh-push-host 的浏览器半（v0.2.4）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话。
+// dsh-push-host 的浏览器半（v0.2.5）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话。
 // v0.2.3：补 hashchange 监听——网页已开着时点另一条推送只做片段跳转、不重载页面。
 // v0.2.4：开关与「展开其余 N 个会话」都改用语义锚点 + 中英双标签——这些文案是本地化的，
 // 只按英文标签找在中文手机上必然找不到（用户真机实遇）。
+// v0.2.5：为点到行而展开的侧栏，到位后自动收回——窄屏下侧栏是抽屉，会盖住对话；
+// 只有我们自己开过的才关，用户本来就开着的一律不动。
 // 手写模块，格式照抄现成编译产物（window.__ModuleLoader__.load，见
 // dsh-client-ui-settings-subagent/lib/client.js）；宿主 client-modules 经
 // package.json 的 dsh.client{platform:"web"} + exports "./client" 挂载它。
@@ -20,7 +22,7 @@ window.__ModuleLoader__.load({
 
 		// 诊断（v0.2.2）：开机瞬间 URL 里到底有没有 hash、切会话走到哪一步，一页之内就能看出来，
 		// 不用去猜「是没跑还是没点到」。控制台里读 window.__DSHPUSH_CLIENT__ 即可。
-		const DIAG = { v: "0.2.4", hash: "", tries: 0, opened: false, rowSeen: false, clicks: 0, done: false };
+		const DIAG = { v: "0.2.5", hash: "", service: false, tries: 0, opened: false, rowSeen: false, clicks: 0, closed: false, done: false };
 		try {
 			DIAG.hash = String(location.hash || "");
 		} catch {
@@ -198,6 +200,10 @@ window.__ModuleLoader__.load({
 				stop();
 				let tries = 0;
 				let done = false;
+				// 侧栏是我们为了点到行才展开的：到位后要恢复原状（窄屏下它是抽屉，会盖住对话）。
+				// 只有我们自己开过的才关，用户本来就开着的一律不动。
+				let openedByUs = false;
+				let closeTries = 0;
 				let moreClicked = false;
 				const groupsTried = new Set();
 				const clearHash = () => {
@@ -205,6 +211,34 @@ window.__ModuleLoader__.load({
 						history.replaceState(null, "", location.pathname + location.search);
 					} catch {
 						// 某些 webview 限制 replaceState：抹不掉只是刷新会再切一次，不影响本次跳转。
+					}
+				};
+				// 首选 DSH 客户端自己的服务：`ctx.uiWorkspace.openSession(id)`——bundle 实测 `uiWorkspace`
+				// 的 client 服务，DSH 自家插件就用它切主视图。走这条路**侧栏根本不会弹出来**，这正是用户要的
+				// 「不弹侧边栏直接切换」。服务缺失或点了没生效时，才退回「展开侧栏 → 点那一行」的老路子。
+				// `uiWorkspace` 是**声明依赖才拿得到**的 client 服务：bundle 里 DSH 自家插件一律写
+				// `ctx.inject([... , "uiWorkspace"], scope => scope.uiWorkspace.openSession(id))`。直接读
+				// `ctx.uiWorkspace` 实测拿不到（v0.2.5 第一版就是这样，service 恒 false 只能走降级）。
+				let workspaceApi = null;
+				// inject 的回调**不保证同步**跑到（实测第一拍时还没到货）。没有这个标志就会在服务到货前
+				// 误判成「服务不可用」而去点侧栏开关——抽屉闪一下，正是用户不要的效果。
+				let workspaceProbed = false;
+				try {
+					ctx.inject(["uiWorkspace"], (scope) => {
+						workspaceProbed = true;
+						workspaceApi = scope.uiWorkspace ?? null;
+					});
+				} catch {
+					// 注入不了就永远走点侧栏行的降级路子。
+				}
+				const openViaService = () => {
+					try {
+						if (workspaceApi === null || typeof workspaceApi.openSession !== "function") return false;
+						workspaceApi.openSession(target);
+						DIAG.service = true;
+						return true;
+					} catch {
+						return false;
 					}
 				};
 				const step = () => {
@@ -216,6 +250,24 @@ window.__ModuleLoader__.load({
 					DIAG.tries = tries;
 					try {
 						if (document.querySelector('[data-conversation-session="' + target + '"]')) {
+							// 到位。若侧栏是我们为了点行才展开的，先把它收回去再收尾（窄屏下侧栏是抽屉，
+							// 会盖住对话）；用户本来就开着的一律不动。
+							const rowsStill = document.querySelectorAll('[data-row-key^="session:"]').length > 0;
+							if (openedByUs && rowsStill && closeTries < 4) {
+								closeTries += 1;
+								// 收起必须按标签找：收起态下侧栏根的第一个按钮就是开关，但**展开态下第一个是
+								// New session**（实测 openBtns = New session、Collapse sidebar、New session、Plugins、
+								// Search sessions），拿位置当锚点会点错。标签只有 zh/en 两套，配对即完备。
+								const back = document.querySelector('button[aria-label="Collapse sidebar"], button[aria-label="收起侧边栏"]')
+										?? [].slice.call(document.querySelectorAll('[data-slot="sidebar"] button'))
+											.filter((b) => /collapse|收起/i.test(String(b.getAttribute("aria-label"))))[0]
+										?? null;
+								if (back !== null) {
+									DIAG.closed = true;
+									back.click();
+									return;
+								}
+							}
 							done = true;
 							DIAG.done = true;
 							stop();
@@ -226,6 +278,14 @@ window.__ModuleLoader__.load({
 							stop();
 							return;
 						}
+						// 服务优先：前 8 拍（4 秒）只试 openSession，**绝不碰侧栏**——inject 可能晚一拍到货；
+						// openSession 幂等，每拍重点一次没有副作用。8 拍还不成才降级去点侧栏的行。
+						if (tries <= 8) {
+							if (openViaService()) return;
+							// 服务还没确认不可用（inject 未到货，或到货了但这一拍没成）⇒ 这一拍什么都不点，
+							// 绝不先开侧栏。只有确认服务不存在才提前降级。
+							if (workspaceProbed === false || workspaceApi !== null) return;
+						}
 						const row = document.querySelector('[data-row-key="session:' + target + '"]');
 						if (row !== null) {
 							DIAG.rowSeen = true;
@@ -233,22 +293,21 @@ window.__ModuleLoader__.load({
 							row.click();
 							return;
 						}
-						// 展开侧栏那颗按钮的**标签是本地化的**（en `Open sidebar` / zh 「打开侧边栏」；DSH 网页端只有
-						// zh、en 两套字典，实测于 bundle）。只按英文标签找，在中文系统的手机上必然找不到 ⇒
-						// 侧栏开不了、行不出现、20s 后放弃（用户真机实遇：手动点一下侧栏才自动切换）。
-						// 首选**与语言无关**的锚点：侧栏根 `[data-slot="sidebar"]` 里的第一个按钮就是这颗开关
-						// （实测 sameElement:true；且收起态下 0 个会话行 ⇒ 「一个行都没有才点它」是安全规则，
-						// 不会反过来把已展开的侧栏关掉）。英文/中文标签只作兜底。
+						// 展开侧栏那颗按钮的标签是本地化的（en `Open sidebar` / zh 「打开侧边栏」），只按英文
+						// 标签找在中文手机上必然为空。首选与语言无关的锚点：收起态下侧栏根里的第一个按钮
+						// 就是这颗开关（实测 sameElement:true），且收起态 0 个会话行 ⇒ 「一个行都没有才点它」
+						// 既有效又安全（不会反向关掉已展开的侧栏）。
 						const rowsPresent = document.querySelectorAll('[data-row-key^="session:"]').length > 0;
 						const toggle = rowsPresent ? null : (document.querySelector('[data-slot="sidebar"] button')
-							?? document.querySelector('button[aria-label="Open sidebar"], button[aria-label="打开侧边栏"]'));
+								?? document.querySelector('button[aria-label="Open sidebar"], button[aria-label="打开侧边栏"]'));
 						if (toggle !== null) {
 							DIAG.opened = true;
+							openedByUs = true;
 							toggle.click();
 							return;
 						}
 						if (!moreClicked) {
-							// 同样本地化：en `Show {n} more sessions` / zh 「展开其余 {n} 个会话」。`收起`（Show less）是已展开
+							// 同样本地化：en `Show {n} more sessions` / zh 「展开其余 {n} 个会话」；`收起` 是已展开
 							// 后的反向按钮，MUST NOT 点，所以只匹配展开这一个方向。
 							const more = [].slice.call(document.querySelectorAll('button,[role="button"]')).filter((b) => /show\s*\d+\s*more|展开其余/i.test(String(b.textContent)))[0];
 							if (more !== undefined) {
@@ -273,7 +332,9 @@ window.__ModuleLoader__.load({
 				timer = setInterval(step, 500);
 				step();
 			};
-			const first = readTarget();
+
+
+		const first = readTarget();
 			if (first.length > 0) reveal(first);
 			// 网页已开着时点另一条推送：只发生片段跳转，不重载页面 ⇒ 靠这个监听。
 			const onHash = () => {
