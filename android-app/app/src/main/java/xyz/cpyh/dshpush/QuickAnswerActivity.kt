@@ -67,7 +67,7 @@ class QuickAnswerActivity : Activity() {
                 val tk = getSharedPreferences(PushService.PREF, MODE_PRIVATE)
                     .getString(PushService.KEY_TOKEN, "") ?: ""
                 val req = Request.Builder()
-                    .url("${PushService.BASE}/answer/${URLEncoder.encode(callId, "UTF-8")}/json")
+                    .url("${PushService.baseOf(this)}/answer/${URLEncoder.encode(callId, "UTF-8")}/json")
                     .header("Authorization", "Bearer $tk")
                     .build()
                 client.newCall(req).execute().use { r ->
@@ -244,7 +244,7 @@ class QuickAnswerActivity : Activity() {
                 payload.put("callId", callId)
                 payload.put("answers", answers)
                 val req = Request.Builder()
-                    .url("${PushService.BASE}/answer/submit")
+                    .url("${PushService.baseOf(this)}/answer/submit")
                     .post(payload.toString().toRequestBody("application/json".toMediaType()))
                     .build()
                 client.newCall(req).execute().use { r ->

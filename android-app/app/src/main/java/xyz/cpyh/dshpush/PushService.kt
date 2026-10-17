@@ -26,10 +26,23 @@ import java.util.concurrent.TimeUnit
 
 interface MsgListener { fun onNewMsg() }
 
+/**
+ * 一张通行证解析出来的三件事（v1.33.0）：中继地址、topic、只读令牌。
+ * base/topic 为 null 表示通行证里没写 —— 一律退回老行为（默认中继 + topic dsh），
+ * 这样老的一串 tk_… 粘贴进来和 v1.32.x 完全一致，不会把已经用着的手机搞坏。
+ */
+data class PassCfg(val base: String?, val topic: String?, val token: String)
+
 class PushService : Service() {
     companion object {
         const val BASE = "https://ntfy.cpyh.xyz"
+        // 老版写死的订阅地址（v1.33.0 起只是兜底）：真实地址由 baseOf()/topicOf() 从偏好派生，
+        // 因为多人自助发号后每人一个 topic，写死 dsh 就只能服务一个人。
         const val WS_URL = "wss://ntfy.cpyh.xyz/dsh/ws"
+        const val DEFAULT_TOPIC = "dsh"
+        // 通行证里带来的两项（v1.33.0）：缺省即老行为（默认中继 + topic dsh）。
+        const val KEY_BASE = "base"
+        const val KEY_TOPIC = "topic"
         const val PREF = "dshpush"
         const val KEY_TOKEN = "token"
         const val CH_NORMAL = "dsh2"
@@ -57,6 +70,62 @@ class PushService : Service() {
             appVerCache = v
             return v
         }
+        // ---- v1.33.0：一人一 topic。地址从偏好派生，缺省 = 老行为（默认中继 + topic dsh）----
+        fun topicOf(ctx: android.content.Context): String {
+            val t = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+                .getString(KEY_TOPIC, "")?.trim() ?: ""
+            return if (t.isEmpty()) DEFAULT_TOPIC else t
+        }
+
+        fun baseOf(ctx: android.content.Context): String {
+            val b = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+                .getString(KEY_BASE, "")?.trim() ?: ""
+            return if (b.isEmpty()) BASE else b
+        }
+
+        /** 订阅地址：把 base 的 scheme 换成 ws/wss，再接上本机存着的 topic。 */
+        fun wsUrlOf(ctx: android.content.Context): String {
+            val b = baseOf(ctx).trimEnd('/')
+            val host = b.removePrefix("https://").removePrefix("http://")
+            val scheme = if (b.startsWith("http://")) "ws://" else "wss://"
+            return "$scheme$host/${topicOf(ctx)}/ws"
+        }
+
+        /**
+         * 通行证解析（v1.33.0）：接受插件「通行证」面板给的 dshpush://v1?base=…&topic=…&token=tk_…，
+         * 也接受老的一串 tk_…（此时 topic 走默认 dsh，与 v1.32.x 行为完全一致）。
+         * 返回 (配置, 错误)：错误非空时配置为 null，错误文案是要直接给用户看的话。
+         * 容忍前后带杂字（用户常连说明一起复制），只认第一个 dshpush:// 之后的部分。
+         */
+        fun parsePass(raw: String): Pair<PassCfg?, String> {
+            val s = raw.trim()
+            if (s.isEmpty()) return null to "先填上通行证"
+            val at = s.indexOf("dshpush://")
+            if (at >= 0) {
+                val q = s.substring(at).substringAfter("?", "").trim()
+                if (q.isEmpty()) return null to "这条通行证链接里没有参数，回插件面板重新复制一条"
+                val parts = q.split("&").mapNotNull {
+                    val k = it.substringBefore("=", "").trim().lowercase()
+                    val v = it.substringAfter("=", "").trim()
+                    if (k.isEmpty() || v.isEmpty()) null else k to v
+                }.toMap()
+                val token = parts["token"] ?: ""
+                if (token.isEmpty()) return null to "这条通行证链接里没有 token，回插件面板重新复制一条"
+                if (!token.startsWith("tk_")) return null to "令牌一般以 tk_ 开头，检查一下吧"
+                val topic = parts["topic"] ?: ""
+                if (topic.isNotEmpty() && !Regex("^[A-Za-z0-9_-]{1,64}$").matches(topic)) {
+                    return null to "这条通行证的 topic 名字用不了：" + topic
+                }
+                val base = parts["base"] ?: ""
+                if (base.isNotEmpty() && !base.startsWith("http://") && !base.startsWith("https://")) {
+                    return null to "这条通行证的中继地址不对（要以 http:// 或 https:// 开头）"
+                }
+                return PassCfg(base.ifEmpty { null }, topic.ifEmpty { null }, token) to ""
+            }
+            if (s.startsWith("tk_")) return PassCfg(null, null, s) to ""
+            return null to "看不懂这条通行证：要么整串以 tk_ 开头，要么粘插件面板给的 dshpush:// 链接"
+        }
+
         const val KEY_WEB = "webUrl"
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
@@ -340,7 +409,8 @@ class PushService : Service() {
         }
         state = "连接中…"
         val since = prefs?.getLong("lastTs", 0L) ?: 0L
-        val url = "$WS_URL?since=" + if (since > 0) since.toString() else "latest"
+        // v1.33.0：订阅地址按本机存的 base + topic 派生（多人各一个 topic）。
+        val url = wsUrlOf(this) + "?since=" + if (since > 0) since.toString() else "latest"
         val req = Request.Builder().url(url)
             .header("Authorization", "Bearer $token").build()
         ws = client!!.newWebSocket(req, object : WebSocketListener() {

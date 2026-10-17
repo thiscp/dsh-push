@@ -264,7 +264,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 （`<DSH 安装目录>\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`）。
 harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tmpdir()` 同为 `C:\Temp`，
 但 `copyFileSync` 被拒（`EPERM: operation not permitted, copyfile`）；14 段前有 preflight
-探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **128/128**（v0.2.2 加 3 条 hash 片段断言；v0.3.0 加 24 条发号断言：URL 拼装、通行证文本、名字清洗、HTTP 四种结果、凭据写回与备份、面板状态机含「同一个 seq 绝不重复发号」）。
+探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **136/136**（2026-10-17 复跑实测；v0.2.2 加 3 条 hash 片段断言；v0.3.0 加 32 条发号断言：URL 拼装、通行证文本、名字清洗、HTTP 四种结果、凭据写回与备份与别名同步、面板状态机含「同一个 seq 绝不重复发号」、**列表载荷瘦身后的形状**（每行只有 `name`+`topics`）、**`CREDENTIAL_KEYS` 与 `CREDENTIAL_CONFIG_KEYS` 必须同步**（第三条防线，见下）、fiber 热重启后回灌进程级暂存、垂死 fiber 把结果交接给新 fiber）。
 
 ## 点推送直达来源会话（v0.2.2）
 

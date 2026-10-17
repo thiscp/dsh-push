@@ -72,7 +72,7 @@ class AnswerReceiver : BroadcastReceiver() {
                     .connectTimeout(8, TimeUnit.SECONDS)
                     .readTimeout(10, TimeUnit.SECONDS).build()
                 val req = Request.Builder()
-                    .url("${PushService.BASE}/answer/submit")
+                    .url("${PushService.baseOf(ctx)}/answer/submit")
                     .post(payload.toString().toRequestBody("application/json".toMediaType()))
                     .build()
                 client.newCall(req).execute().use { r ->

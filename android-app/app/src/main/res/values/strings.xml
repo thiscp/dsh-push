@@ -7,7 +7,8 @@
     <string name="quick_title">帮大肥鱼拿个主意？</string>
     <string name="submitted">已交给 DSH，大肥鱼继续盯下一条</string>
     <string name="token_title">把通行证交给大肥鱼</string>
-    <string name="token_hint">粘贴访问令牌（tk_ 开头）</string>
+    <string name="token_saved">通行证收好，大肥鱼出发</string>
+    <string name="token_hint">粘贴通行证：插件给的 dshpush://… 整条，或老的一串 tk_…</string>
     <string name="token_save">收好通行证</string>
     <string name="token_cleared">通行证已清空，填一张新的</string>
     <string name="theme_btn">换主题</string>

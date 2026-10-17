@@ -149,7 +149,9 @@ class MainActivity : Activity() {
         headerPet = ImageView(this).apply {
             setImageResource(R.drawable.pet_idle)
             setOnLongClickListener {
-                prefs().edit().putString(PushService.KEY_TOKEN, "").apply()
+                // 清令牌时把 v1.33.0 的 topic/base 一起清掉，免得下次粘老通行证还留着旧频道
+                prefs().edit().putString(PushService.KEY_TOKEN, "")
+                    .remove(PushService.KEY_TOPIC).remove(PushService.KEY_BASE).apply()
                 tokenCard.visibility = View.VISIBLE
                 tokenInput.setText("")
                 startForegroundService(Intent(this@MainActivity, PushService::class.java)
@@ -441,14 +443,25 @@ class MainActivity : Activity() {
         }
     }
 
+    // v1.33.0：通行证可以是插件面板给的 dshpush://v1?base=…&topic=…&token=…（一人一频道），
+    // 也可以是老的一串 tk_…（退回默认中继 + topic dsh，行为与 v1.32.x 完全一致）。
     private fun saveToken() {
-        val tk = tokenInput.text.toString().trim()
-        if (tk.isEmpty()) { toast("先填上通行证"); return }
-        if (!tk.startsWith("tk_")) { toast("令牌一般以 tk_ 开头，检查一下吧"); return }
-        prefs().edit().putString(PushService.KEY_TOKEN, tk).apply()
+        val raw = tokenInput.text.toString().trim()
+        val (cfg, err) = PushService.parsePass(raw)
+        if (cfg == null) { toast(err); return }
+        val oldTopic = PushService.topicOf(this)
+        val ed = prefs().edit()
+        ed.putString(PushService.KEY_TOKEN, cfg.token)
+        // 通行证里没写 topic/base 就把它俩清掉：从 v1 链接换回老的一串 tk_ 时若留着旧 topic，
+        // 手机会继续盯别人的频道 —— 那是比写死更难查的故障。
+        if (cfg.base == null) ed.remove(PushService.KEY_BASE) else ed.putString(PushService.KEY_BASE, cfg.base)
+        if (cfg.topic == null) ed.remove(PushService.KEY_TOPIC) else ed.putString(PushService.KEY_TOPIC, cfg.topic)
+        val newTopic = cfg.topic ?: PushService.DEFAULT_TOPIC
+        if (newTopic != oldTopic) ed.remove("lastTs")  // 换频道就别带旧游标，免得漏掉新频道最近的消息
+        ed.apply()
         tokenCard.visibility = View.GONE
         startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
-        toast("通行证收好，大肥鱼出发")
+        toast(if (newTopic != PushService.DEFAULT_TOPIC) "通行证收好，大肥鱼盯着 " + newTopic else "通行证收好，大肥鱼出发")
         refresh()
     }
 
@@ -745,6 +758,10 @@ class MainActivity : Activity() {
         if (!PushService.listeners.contains(msgListener)) PushService.listeners.add(msgListener)
         refresh()
         statusText.postDelayed({ refresh() }, 500)
+        // v1.33.0：状态卡在页面停留期间也要跟着刷——保存通行证发的 reload 是异步意图，
+        // 只靠这一次 refresh() 会把旧状态一直钉在屏上（真机实测）。
+        statusText.removeCallbacks(statusTicker)
+        statusText.postDelayed(statusTicker, 2000)
         // v1.18.0：取消"看过 1.2s 自动已读"——已读改由「已读」按钮/「打开 DSH」显式触发
         startAmbient()
         if (!crashChecked) {
@@ -764,6 +781,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
+        statusText.removeCallbacks(statusTicker)   // v1.33.0：状态卡计时器不进后台
         PushService.listeners.remove(msgListener)
         stopAmbient()
     }
@@ -798,6 +816,9 @@ class MainActivity : Activity() {
         twinkle?.cancel(); twinkle = null
         starsView?.alpha = 1f
     }
+
+    /** 最近一次刷新数出的未读数，给状态卡的轻量刷新用（v1.33.0）。 */
+    private var lastUnread = 0
 
     private fun refresh() {
         val pm = getSystemService(PowerManager::class.java)
@@ -957,6 +978,17 @@ class MainActivity : Activity() {
         }
         lastMaxTs = maxTs
 
+        lastUnread = unread
+        renderStatus(unread, batteryOk)
+    }
+
+    /**
+     * 状态卡片文案（v1.33.0 从 refresh() 里抽出来）：抽出来是为了能被单独刷。粘贴通行证后服务要
+     * 一两秒才连上，而 reload 是异步意图 —— refresh() 抢在前面渲染一次就会把旧状态钉在屏上
+     * （真机实测：粘完显示「等待通行证」，直到冷启动才变「已连接」）。停留时每 2 秒只刷这张卡，
+     * 不重建消息列表。
+     */
+    private fun renderStatus(unread: Int, batteryOk: Boolean) {
         // 未读计数回到正文首行（v1.32.33：胶囊改竖排后不再有首行）；vivo 上 emoji 渲染差，
         // 故用实心圆点（v1.9.9）。正文右侧要让给两颗竖排胶囊（约 224px），所以几行文案改短，
         // 避免折行把省出的垂直空间吃回去：服务器去掉 https://、白名单去掉「电池优化」前缀与
@@ -965,7 +997,7 @@ class MainActivity : Activity() {
             if (unread > 0) append("● ${unread} 条未读\n")
             append("""
                 状态：${PushService.state}（v${PushService.appVer(this@MainActivity)}）
-                服务器：${PushService.BASE.replace("https://", "")}（topic dsh）
+                服务器：${PushService.baseOf(this@MainActivity).replace("https://", "")}（topic ${PushService.topicOf(this@MainActivity)}）
                 通行证：${if (hasToken()) "已配置 ✔（长按头像换）" else "未配置 ✘（下面填一张）"}
                 白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 易杀）"}
             """.trimIndent())
@@ -973,6 +1005,17 @@ class MainActivity : Activity() {
         statusText.setTextColor(if (batteryOk) c(R.attr.dshTextPrimary) else c(R.attr.dshWarn))
         // 一键全部已读（v1.32.9）：仅在有未读时出现；点完 unread 归零，listener 再刷时自己隐藏
         markAllBtn.visibility = if (unread > 0) View.VISIBLE else View.GONE
+    }
+
+    /** 停留时每 2 秒刷一次状态卡；onPause 停表，不把定时器留到后台。 */
+    private val statusTicker = object : Runnable {
+        override fun run() {
+            try {
+                val pm = getSystemService(PowerManager::class.java)
+                renderStatus(lastUnread, pm.isIgnoringBatteryOptimizations(packageName))
+            } catch (e: Exception) { /* 刷新失败保持原文案，下一拍再来 */ }
+            statusText.postDelayed(this, 2000)
+        }
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()

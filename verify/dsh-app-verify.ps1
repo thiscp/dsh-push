@@ -511,7 +511,7 @@ if (-not $gmNode -or -not (Test-Path $gmScript)) {
 }
 
 # ---------- 6. optional deploy ----------
-if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
+if ($Deploy -and @($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
   $vc = [regex]::Match((Get-Content "$Repo\android-app\app\build.gradle.kts" -Raw), 'versionCode\s*=\s*(\d+)').Groups[1].Value
   Invoke-Watched "deploy" ("scp " + $SSH_OPTS + " `"$localApk`" `"${Aliyun}:/var/www/certbot/dl/dsh-push.apk`"") $SshTimeoutSec $null | Out-Null
   $chkH = Invoke-Watched "deploy" ("curl.exe -s -o `"$OutDir\dl-check.apk`" -w `"%{http_code} %{size_download}`" `"$Ntfy/dl/dsh-push.apk?v=$vc`"") $SshTimeoutSec $null
@@ -537,7 +537,10 @@ if ($Deploy -and ($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
 }
 
 # ---------- summary ----------
-$fail = ($script:results | Where-Object { -not $_.Ok }).Count
+# PS 5.1 硬坑（2026-10-17 实测）：管道只命中一个对象时 (... | Where-Object {…}).Count 返回 $null，
+# 而 $null 在算术里当 0 → 明明有一项 FAIL 也打出「N/N passed」（v1.33.0 那轮 screenshot 就是这样被
+# 报成 8/8 的）。闸门侥幸是对的（$null -eq 0 为假），但总结会骗人，故用 @() 强制成数组。
+$fail = @($script:results | Where-Object { -not $_.Ok }).Count
 Write-Host ""
 Write-Host ("SUMMARY: {0}/{1} passed" -f ($script:results.Count - $fail), $script:results.Count)
 Finish $(if ($fail) { 1 } else { 0 })
