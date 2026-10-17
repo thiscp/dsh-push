@@ -264,7 +264,33 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 （`<DSH 安装目录>\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`）。
 harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tmpdir()` 同为 `C:\Temp`，
 但 `copyFileSync` 被拒（`EPERM: operation not permitted, copyfile`）；14 段前有 preflight
-探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **101/101**。
+探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **104/104**（v0.2.2 加了 3 条 hash 片段断言）。
+
+## 点推送直达来源会话（v0.2.2）
+
+用户「通过消息通知上的卡片的 dsh 网页按钮进入网页后，似乎是之前默认的对话，能进入后直接进入推送通知的那个对话吗」。
+
+两半都在本插件里，**不需要改 DSH 本体、不需要发 App 版本**：
+
+1. **服务端半**（`lib/index.js:webUrl(sessionId)`）：把来源会话 id 作为 **URL hash 片段**拼到 `#web` 链接尾
+   （`…?token=X#session-<uuid>`）。两条推送路径都带：提问（`questionBody(callId, questions, sessionId)`）
+   与任务结束（`onTurnStopping`）。
+2. **浏览器半**（`lib/client.js:revealFromHash(ctx)`）：读 hash，若当前会话不是它，就展开侧栏、点
+   `[data-row-key="session:<id>"]` 那一行；到位后把 hash 抹掉（`history.replaceState`），免得用户切走后
+   刷新又被拽回来。
+
+**为什么是 hash 片段而不是查询参数**（两条实测理由，别再改回去）：
+
+- `?token=` 入口回的是 **`303 See Other → Location: ./`**，查询串在这一步被丢掉；而浏览器跨跳转**保留 fragment**。
+- 网页客户端**根本没有路由**（`createRouter` 在 bundle 里 0 命中；`pushState`/`popstate` 的命中都在 lodash 注释里），
+  所以路径和查询串都没人读。
+
+**选择器全是语义化的**（不依赖哈希类名，改版风险低）：当前会话 `[data-conversation-session="<id>"]`、
+侧栏行 `[data-row-key="session:<id>"]`、展开侧栏 `button[aria-label="Open sidebar"]`。这些都是 2026-10-17
+在 VM1 的 DSH Web 上实测出来的（窄屏 360 CSS px，模拟器 WebView + CDP）。
+
+**降级安全**：id 形态不对（不是 `session-<uuid>`）就不拼链接；网页端找不到那一行（会话未加载、分组收起）
+就静默放弃，最多 20s，等于本功能之前的行为。不认识 hash 的旧网页端也完全不受影响。
 
 ## 给一个真实用户开通（凭据文件 + 配对）
 

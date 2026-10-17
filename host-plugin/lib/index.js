@@ -320,7 +320,7 @@ class PushHost {
     try {
       await this.relay.push({
         title: 'DSH 等你选择 [' + String(sessionId).slice(-8) + ']',
-        body: this.questionBody(callId, registered),
+        body: this.questionBody(callId, registered, sessionId),
         priority: 4,
       })
     } catch (error) {
@@ -329,7 +329,7 @@ class PushHost {
   }
 
   /** The phone renders this body: question, options, answer link, then machine trailers. */
-  questionBody(callId, questions) {
+  questionBody(callId, questions, sessionId = '') {
     const first = questions[0] ?? { id: 'q0', question: '', options: [] }
     const labels = (first.options ?? []).filter((label) => typeof label === 'string')
     let body = (first.question || 'DSH 正在等你选择') + (labels.length > 0 ? '\n→ ' + labels.slice(0, 3).join(' / ') : '')
@@ -343,7 +343,7 @@ class PushHost {
     ) {
       body += '\n#opts ' + first.id + '=' + labels.join('|')
     }
-    const web = this.webUrl()
+    const web = this.webUrl(sessionId)
     if (web.length > 0) body += '\n#web ' + web
     const friendly = this.config.webName.trim()
     if (friendly.length > 0) body += '\n#name ' + friendly.replace(/\n/g, ' ')
@@ -363,7 +363,17 @@ class PushHost {
    * ships a web entry instead of silently dropping it — reachable exactly as far as whatever
    * address DSH bound to, which is precisely what `webBase` exists to override.
    */
-  webUrl() {
+  /**
+   * v0.2.2 - `sessionId` is appended as a **URL fragment** (`...#session-<uuid>`) so opening the
+   * link lands on the conversation that produced the notification; our client module
+   * (`lib/client.js`) reads it and switches the main view to that session.
+   *
+   * A fragment rather than a query param, for two measured reasons: the `?token=` entry answers
+   * `303 See Other -> Location: ./`, which drops the query string, while browsers carry the
+   * fragment across redirects; and the web client has no router, so nothing else reads path or
+   * query. Clients that ignore the fragment keep behaving exactly as before.
+   */
+  webUrl(sessionId = '') {
     const base = this.config.webBase.trim()
     const file = this.config.webLog.length > 0 ? this.config.webLog : join(homedir(), '.dsh', 'web.log')
     try {
@@ -371,9 +381,13 @@ class PushHost {
       const matches = [...text.matchAll(/dsh web: (http:\/\/\S+[?&]token=\S+)/g)]
       if (matches.length === 0) return ''
       const logged = matches[matches.length - 1][1]
-      if (base.length === 0) return logged
-      const token = /[?&]token=(\S+)/.exec(logged)?.[1] ?? ''
-      return base.replace(/\/+$/, '') + '/?token=' + token
+      const url = base.length === 0
+        ? logged
+        : base.replace(/\/+$/, '') + '/?token=' + (/[?&]token=(\S+)/.exec(logged)?.[1] ?? '')
+      const sid = String(sessionId ?? '').trim()
+      // 只接受 `session-<uuid>` 形态：拿不到或形态不对就不拼，绝不产出 `...#` 这种脏链接。
+      if (!/^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sid)) return url
+      return url + '#' + sid
     } catch (error) {
       this.log('web.log unreadable (' + file + '): ' + String(error?.message ?? error))
       return ''
@@ -433,7 +447,7 @@ class PushHost {
     this.sweepTurns()
 
     let body = '目录: ' + String(session?.header?.cwd ?? '')
-    const web = this.webUrl()
+    const web = this.webUrl(sessionId)
     if (web.length > 0) body += '\n#web ' + web
     const friendly = this.config.webName.trim()
     if (friendly.length > 0) body += '\n#name ' + friendly.replace(/\n/g, ' ')

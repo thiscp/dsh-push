@@ -412,6 +412,43 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   check('webBase set: #web rehosted on the base with the freshest token', body.includes('\n#web http://<tailnet-windows>:3080/?token=NEWtok'), body)
 }
 
+// ── 11b. #web carries the source conversation as a URL fragment (v0.2.2) ─────────────
+{
+  const fixture = join(tmpdir(), 'dsh-push-selftest-web.log')
+  writeFileSync(fixture, 'dsh web: http://100.0.0.9:3080/?token=NEWtok\n', 'utf8')
+  const SID = 'session-3d55c7df-a183-43e5-9c25-ba7983b00af8'
+
+  reset()
+  let made = makeCtx()
+  apply(made.ctx, { ...TOKENS, webLog: fixture })
+  made.state.listeners.get('user-questions/request')(
+    { questions: [question()], wait: { callId: 'frag-question' }, agent: { id: 'ag1', session: { id: SID } } },
+    () => undefined,
+  )
+  await tick()
+  let body = String(calls.push.at(-1)?.message ?? '')
+  check('question #web carries the session id as a fragment', body.includes('\n#web http://100.0.0.9:3080/?token=NEWtok#' + SID), body)
+
+  reset()
+  made = makeCtx()
+  apply(made.ctx, { ...TOKENS, webLog: fixture, notifyTurns: true })
+  made.state.listeners.get('agent/turn-stopping')({ turn: 1, agent: { session: { header: { id: SID, cwd: '/srv/app' } } } })
+  await tick()
+  body = String(calls.push.at(-1)?.message ?? '')
+  check('turn-end #web carries the session id as a fragment', body.includes('\n#web http://100.0.0.9:3080/?token=NEWtok#' + SID), body)
+
+  reset()
+  made = makeCtx()
+  apply(made.ctx, { ...TOKENS, webLog: fixture })
+  made.state.listeners.get('user-questions/request')(
+    { questions: [question()], wait: { callId: 'frag-bogus' }, agent: { id: 'ag1', session: { id: 's1' } } },
+    () => undefined,
+  )
+  await tick()
+  body = String(calls.push.at(-1)?.message ?? '')
+  check('a non-uuid session id appends no fragment (never emits a bare "#")', !body.includes('#web http://100.0.0.9:3080/?token=NEWtok#'), body)
+}
+
 // ── 12. pairing payload: optional webBase/webName + the new flags (v0.1.1) ──────────────
 {
   const full = buildPairingPayload({
