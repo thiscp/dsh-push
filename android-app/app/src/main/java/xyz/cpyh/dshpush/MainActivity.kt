@@ -282,6 +282,26 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         content.addView(btnRow2)
 
+        // 第三行：调试浮层开关（v1.32.28）——默认关，平时网页上不出现任何调试文字；
+        // 遇到「模拟器复现不了」的真机问题（键盘态/浮层/透明）时打开，DSH 页面左上角
+        // 会出现诊断 HUD，截图即可定位。开关存 shared_prefs，回到 DSH 页面即时生效。
+        val btnRow3 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, 0)
+        }
+        val diagBtn = pill(Button(this)).apply {
+            textSize = 12f
+            setOnClickListener {
+                val on = !DiagPrefs.on(this@MainActivity)
+                DiagPrefs.set(this@MainActivity, on)
+                text = if (on) "调试浮层：开" else "调试浮层：关"
+                toast(if (on) "调试浮层已开：DSH 页面左上角会显示诊断信息" else "调试浮层已关")
+            }
+        }
+        diagBtn.text = if (DiagPrefs.on(this)) "调试浮层：开" else "调试浮层：关"
+        btnRow3.addView(diagBtn, LinearLayout.LayoutParams(0, -2, 1f))
+        content.addView(btnRow3)
+
         // 底部署名
         content.addView(TextView(this).apply {
             text = getString(R.string.attribution)

@@ -66,6 +66,10 @@ DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡
 - **WHEN** 复核高度未超过视口 50% 的小代码块（真机实测同屏 8 个，如 `233x182`/`331x182`）
 - **THEN** 其 SHALL 仍为 0.45（按设计走普通分支），本轮 MUST NOT 改变其行为
 
+#### Scenario: 浮层判定不依赖 CSS-module 哈希
+- **WHEN** 上游改版更换 CSS-module 类名哈希后浮层重新渲染
+- **THEN** 浮层仍按 role / position / z-index / 尺寸 / 子项数被命中并保持 0.96（判定 MUST NOT 依赖某一固定类名哈希）
+
 ## ADDED Requirements
 
 ### Requirement: 聊天内容块可读性

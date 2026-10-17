@@ -727,7 +727,31 @@ class WebActivity : Activity() {
                         "var rr=ds[q].getBoundingClientRect();" +
                         "if(rr.width>vw*0.5&&rr.height>vh*0.5)n++;}" +
                         "return n;}" +
+                        // v1.32.23 底部输入框卡片：MUST 在循环外一次性定位（放循环内 var 会被提到
+                        //   _cbn 的函数作用域里，外层引用不到 ⇒ 整段注入 ReferenceError 当场全废，
+                        //   实测症状：卡片实底 a=1、veil 不存在、侧栏 alpha=1、矩阵 collapsed 态 FAIL）。
+                        //   为什么单独降它：它与整页 veil 各 0.45，逐层探针 effectiveOpaque 69.8%
+                        //   （与用户真机截图沿卡片顶边 L 144->231 反推的 0.70 一致）⇒ 底部实底、立绘腿脚
+                        //   被冲掉。降到 0.15 后 53.3%，与聊天区 45% 接近但仍留一点卡片轮廓。
+                        //   判据 MUST NOT 依赖 hash 类名（每次构建都变），也 MUST NOT 依赖布局位置
+                        //   （bottom>72%vh 实测冷启动那一轮卡片还没落位 ⇒ 判据 false ⇒ 停在 0.45，而布局
+                        //   位移不是 DOM 变动，不会再触发第二轮）。这里从整页唯一的 contenteditable 往上走，
+                        //   取第一个「宽>半屏、高在 8%~50% 视口」的祖先：36px 输入行被 8% 下限挡掉，
+                        //   98px 卡片正好命中。多行输入把卡片顶过 50% 视口时 cbmEl=null，退回原语义。
+                        "var cbmEl=null,cbmT=document.querySelector('[contenteditable=true]');" +
+                        "if(cbmT){var cbmZ=cbmT.parentElement,cbmG=0;" +
+                        "while(cbmZ&&cbmG<8){if(String(cbmZ.className||'').indexOf('_card')>=0)" +
+                        "{cbmEl=cbmZ;break;}cbmZ=cbmZ.parentElement;cbmG++;}" +
+                        "if(!cbmEl){cbmZ=cbmT.parentElement;cbmG=0;" +
+                        "while(cbmZ&&cbmG<8){var cbmR=cbmZ.getBoundingClientRect();" +
+                        "if(cbmR.width>vw*0.5&&cbmR.height>48&&cbmR.height<240)" +
+                        "{cbmEl=cbmZ;break;}cbmZ=cbmZ.parentElement;cbmG++;}}}" +
                         "for(var i=0;i<all.length;i++){var e=all[i];" +
+                        // v1.32.27 清残留（**循环体内**独立语句）：键盘态曾把输入行误当卡片写成 rgba(0,0,0,0.15)，
+                        //   这里把它清回原生（放在循环开头，后续分支会重新决定要不要上色）。
+                        "if(cbmT&&e!==cbmEl&&e.contains&&e.contains(cbmT)&&" +
+                        "(e.__dshWhy==='bg45'||e.__dshWhy==='bg15')){" +
+                        "e.style.removeProperty('background-color');e.__dshWhy='clr';}" +
                         // ★ v1.32.16 D3（P3）：visibility:hidden 的子树**根本不渲染**，给它写底色
                         //   只是写脏状态：零 tab 时隐藏的 _emptyTabHost_6nhg2_143（360x671，
                         //   visibility:hidden）被写成 rgb(255,255,255)!important（verify/qa-d1-vm1b.json
@@ -761,7 +785,15 @@ class WebActivity : Activity() {
                         // 且不参与透明/不透明的翻转，故保留作保险；反面 isAnchor 已整体换成结构判据。
                         "var isOv=false,ovRole=false;" +
                         "if(cn.indexOf('BynINW_')<0&&cn.indexOf('_2H3hWW_root')<0&&" +
-                        "cn.indexOf('Dc7zOa_root')<0){" +
+                        // ★ v1.32.25：**含聊天输入框的元素一律不是浮层**。真机实测：键盘弹起时 WebView 会
+                        //   resize（视口降到 ~300 CSS 高），页面把 composer 改成 position:fixed + 高 z 贴到键盘上
+                        //   —— 它下面有 +/权限/模型/发送 4 个可交互子项，正好命中上面那条几何臂 ⇒ 被判成浮层
+                        //   ⇒ 要么加 .dshOv（盖上 0.60 遮罩），要么被 ovRole 分支放行而保留**原生不透明白**，
+                        //   两种都让输入框变成一块实板（v90 把 seat 白纸拿掉后这层才露出来，用户 19:21/19:23 截图）。
+                        //   判据用「包含输入框」而不是类名：键盘态下 React 可能把 composer 挪进新 wrapper/portal，
+                        //   但无论套几层，**祖先里总有那个 contenteditable** ⇒ 一次覆盖全部祖先。
+                        "cn.indexOf('Dc7zOa_root')<0&&" +
+                        "!(cbmT&&e.contains&&e.contains(cbmT))){" +
                         "var role=(e.getAttribute&&e.getAttribute('role')||'').toLowerCase();" +
                         "if(role==='menu'||role==='listbox'||role==='dialog'||" +
                         "role==='alertdialog'||role==='tooltip'){isOv=true;ovRole=true;}" +
@@ -988,7 +1020,12 @@ class WebActivity : Activity() {
                         // 同值幂等的，不放行反而会把"被 React 换节点后露出原生白"的瞬时露白
                         // 固化下去（那时 a0=1，闸门本就不拦；这里补上是为了 a0 已被写成
                         // 0.45 的历史残留也能被拉回 transparent，方向仍是单向的）。
-                        "if(!isOv&&!(big&&isPanel)&&!isCB&&!isLayout&&a0<1)" +
+                        // v1.32.23 输入框卡片专用放行：它不属于浮层/面板/内容块/布局链任何一类，一旦按上面
+                        //   的 0.45 分支写过，a0 就永远 <1 ⇒ 被这道幂等闸门 continue 掉，之后怎么改 alpha 都
+                        //   落不到它身上（实测：手动把内联改成哨兵色后 2.8s 无人重写，判据全过也不生效）。
+                        //   放行只对 cbmEl 这一个元素生效，重写是同值幂等的，不会引起抖动。
+                        "var isCbm=(e===cbmEl);" +
+                        "if(!isOv&&!(big&&isPanel)&&!isCB&&!isLayout&&!isCbm&&a0<1)" +
                         "continue;" +
                         "var skipBg=(cn.indexOf('_2H3hWW_root')>=0&&" +
                         "cn.indexOf('_2H3hWW_collapsed')<0||window.__bwSbEl===e)&&" +
@@ -1041,6 +1078,7 @@ class WebActivity : Activity() {
                         //   发丝描边这次**保留**：0.60 的半透底与它是配套的（v1.32.20 的硬色差来自 alpha=1）。
                         "if(isOv&&(ovRole||!(w>vw*0.5&&h>vh*0.5)||!(w>vw*0.9&&h>vh*0.9))){" +
                         "var oa=(m[4]!==undefined?parseFloat(m[4]):1);" +
+                        "e.__dshWhy='ov';" +
                         "if(oa<1)e.classList.add('dshOv');" +
                         "e.__dshGlass=0;}" +
                         // ★ v1.32.15-B 布局/滚动链（壁纸唯一通道）：**只允许 transparent**。
@@ -1084,14 +1122,33 @@ class WebActivity : Activity() {
                         //   0.45）一律置 0，保证标记始终等于「我们上一次写的是不是 transparent」。
                         "else if(w>vw*0.5&&h>vh*0.5){e.style.setProperty(" +
                         "'background-color','transparent','important');e.__dshGlass=1;}" +
-                        "else if(!skipBg){e.__dshGlass=0;e.style.setProperty(" +
-                        "'background-color','rgba('+" +
-                        "m[1]+','+m[2]+','+m[3]+',0.45)','important');" +
+                        // v1.32.23 输入框卡片单独降到 0.15：实测它与整页 veil 各 0.45，逐层探针算出 effectiveOpaque
+                        //   69.8%（与用户真机截图沿卡片顶边 L 144->231 反推的 0.70 一致）——底部因此呈实底，
+                        //   立绘的腿脚被冲掉。降到 0.15 后为 53.3%，与聊天区的 45% 接近但仍留一点卡片轮廓。
+                        //   判据用 div[contenteditable=true]（实测整页唯一，261x36，bottom=587），不依赖每次构建
+                        //   都会变的 hash 类名；聊天气泡不含它，不会被误降。h<vh*0.5 排除整页大容器。
+                        // ★ v1.32.26：键盘态下**输入框的祖先**（输入行/卡片/root/seat…）一律不再走 0.45 通道：
+                        //   实测真机键盘弹起后输入行被写成 rgba(灰,0.45) ⇒ 一条灰带（v91 只挡了浮层通道，挡不住这条）。
+                        //   卡片自己（cbmEl）仍走 0.15，见下面那两行。
+                        "else if(!skipBg&&!(cbmT&&e!==cbmEl&&e.contains&&e.contains(cbmT))){e.__dshGlass=0;" +
+                        "var ga=0.45;" +
+                        "if(isCbm){ga=0.15;e.__dshWhy='bg15';}" +
+                        "e.style.setProperty('background-color','rgba('+" +
+                        "m[1]+','+m[2]+','+m[3]+','+ga+')','important');" +
+                        "if(e.__dshWhy!=='bg15')e.__dshWhy='bg45';" +
                         "if(w>vw*0.08&&h>vh*0.03&&" +
                         "!(/BynINW_(sidebarCol|frame)/.test(cn))){" +
                         "e.style.setProperty('backdrop-filter','blur(12px)'," +
                         "'important');e.style.setProperty('-webkit-backdrop-" +
                         "filter','blur(12px)','important');}}}" +
+                        // ★ v1.32.27 清残留：cbmEl 原来用 vh*0.08 这个**随视口变化**的阈值分辨卡片/输入行 ——
+                        //   真机键盘弹起 vh 690→363 时阈值 55px→29px，36px 的输入行先被当成卡片 ⇒ 被写成
+                        //   rgba(0,0,0,0.15)（它原生是黑色）＝用户看到的那条灰带（v92 HUD 实拍：row why=bg15）。
+                        //   现在卡片改走 _card 类名锚点、几何兜底改绝对像素阈值；输入行的祖先不再上色，
+                        //   但**同一会话里已经被写上去的那层要主动清掉**，否则要等页面重载才恢复。
+                        //   清残留放在**循环体内开头**（见 for 之后那三行）：不能写成 else if ——
+                        //   0.45 分支后面的第三个 } 是 for 的花括号，else if 挂在那里就是「没有 if 的 else」
+                        //   ⇒ 整段注入 SyntaxError 全废（矩阵会报「侧栏 alpha 1」，本轮第一版就这么死的）。
                         // ★ QA 探针（D1 取证用，只读数组、不参与任何判定）：每轮把候选集导出到
                         // window.__qaCb。字段 cls / innerBig / cbOk / nodeSeq / isCode / isCB；
                         // nodeSeq 是注入侧给每个 DOM 节点发的自增身份号，**换节点就会换号**，
@@ -1122,10 +1179,18 @@ class WebActivity : Activity() {
                         //   最好的 0.60 深一大截）。`:has()` 让 CSS 自己只给**最内层**上色，外层壳
                         //   一旦有了带标记的后代就自动退让——快速通道先给壳上色、全量轮再收敛到内层，
                         //   颜色始终一致，过渡也看不出来。深浅色交给 media，JS 不必再算亮度。
+                        // ★ v1.32.24 底部「实底」的真因**不在卡片**：页面自己的 composerSeat 带一条
+                        //   linear-gradient(color(srgb 0 0 0 / 0) 0px, rgb(255,255,255) 36px)——36px 之后
+                        //   就是**纯白不透明**，把输入框那一片整个盖成白纸。模拟器逐点实测（强制重绘后）：
+                        //   卡片内联底色 0.15 与 0.45 在底部 72540 个采样点里 **0 个不同**（白盖白＝看不见，
+                        //   所以 v1.32.23 调的 alpha 在真机上毫无效果）；把这条渐变置 none 后**31787 个点变化**，
+                        //   底部均值 L 244.0→232.3、细节透出比 0.729→0.791。用户真机同指纹：越靠下越白
+                        //   （透出比 0.334→0.257→0.179）。⇒ 用**样式表**干掉它，比逐个写内联稳：
+                        //   React 换节点/重渲染后依然生效，也不必再给它挂 observer。
                         "var os=document.getElementById('dsh-ov-style');" +
                         "if(!os){os=document.createElement('style');os.id='dsh-ov-style';" +
                         "document.head.appendChild(os);" +
-                        "os.textContent='.dshOv:not(.dshOv .dshOv){background-color:rgba(18,24,40,0.60)!important}@media (prefers-color-scheme:light){.dshOv:not(.dshOv .dshOv){background-color:rgba(255,255,255,0.60)!important}}';}" +
+                        "os.textContent='.dshOv:not(.dshOv .dshOv){background-color:rgba(18,24,40,0.60)!important}@media (prefers-color-scheme:light){.dshOv:not(.dshOv .dshOv){background-color:rgba(255,255,255,0.60)!important}}[class*=composerSeat]{background-image:none!important}';}" +
                         "apply();setTimeout(apply,1500);setTimeout(apply,4000);" +
 // ★ v1.32.22 快速通道：遮罩要**当帧**上，否则又变成用户抱怨过的「等几百 ms 才填充好」。
 //   页内 rAF 实测（v1.32.20）：全量 apply() 一轮本身要 ~780ms，防抖跳不跳都救不了，必须在
@@ -1141,6 +1206,13 @@ class WebActivity : Activity() {
                         "if(i<40)for(var k=0;k<c.children.length;k++)" +
                         "q.push(c.children[k]);}return null;}" +
                         "function fastOv(e){" +
+                        // v1.32.25 同一道闸：快速通道只处理**新增**节点，键盘态下 composer 常被 React 重新挂进
+                        //   新的 fixed wrapper（addedNodes 里就是它）⇒ 这里也要把「含输入框」的整棵子树排掉，
+                        //   否则快速通道会当帧把 .dshOv 打上去（比全量轮更快，用户一眼就看到灰板）。
+                        "if(e.querySelector&&e.querySelector('[contenteditable=true]'))return;" +
+                        //   再加一条按名字的保险：wrapper 可能是「先插入、后把 composer 搬进来」（插入那一刻查不到
+                        //   输入框），但它的类名/ID 一定带 composerSeat/composerStack（hash 前缀不算数）。
+                        "if(/composerSeat|composerStack/.test(String(e.className)+String(e.id)))return;" +
                         "if(!e.isConnected)return;" +
                         "var r=e.getBoundingClientRect();" +
                         "if(!(r.width>100&&r.height>80))return;" +
@@ -1153,7 +1225,7 @@ class WebActivity : Activity() {
                         // 壁纸唯一通道与侧栏**必须跳过**（与主循环同一道类名闸）：侧栏是我们自己改成
                         // position:fixed + z-index:60 的，尺寸与子项数全都过闸，不排就会被盖成实底
                         // （实测 geom-matrix 报「侧栏 alpha 1 不在 [0.4,0.5]」就是这个）。
-                        "if(/byninw_|2h3hww_root|dc7zoa_root|dsh-theme-veil/.test(cn))return;" +
+                        "if(/byninw_|2h3hww_root|dc7zoa_root|dsh-theme-veil|dsh-diag/.test(cn))return;" +
                         // 原生底色已不透明就别盖（那是 DSH Web 自己铺好的浮层）。
                         "var mm=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/.exec(" +
                         "getComputedStyle(e).backgroundColor)||[];" +
@@ -1171,7 +1243,51 @@ class WebActivity : Activity() {
                         "setTimeout(function(){fastOv(hit);},d);});}" +
                         "clearTimeout(t);t=setTimeout(apply,hit?0:400);" +
                         "}).observe(document.body," +
-                        "{childList:true,subtree:true});})();", null)
+                        "{childList:true,subtree:true});" +
+                        // v1.32.23 自愈补跑：apply() 只被 DOM 变动驱动，而「编辑器晚挂 / 布局位移」都不一定
+                        //   带来能触发第二轮的变动（实测冷启动卡片因此停在 0.45）。这里在 700ms / 2500ms 各补一轮（守卫极便宜，见下），但先用
+                        //   一个只读 [style] 的廉价守卫判断 0.15 是否已落地——已落地就不跑那 ~780ms 的全量轮。
+                        //   守卫只认「有没有元素的内联底色含 ,0.15)」，本页只有输入框卡片会被写成 0.15。
+                        "function cbmDone(){var dd=document.querySelectorAll('[style]');" +
+                        "for(var xi=0;xi<dd.length;xi++){" +
+                        "var bv=dd[xi].style.getPropertyValue('background-color')||'';" +
+                        "if(bv.indexOf(',0.15)')>=0)return true;}" +
+                        "return false;}" +
+                        "setTimeout(function(){if(!cbmDone())apply();},700);" +
+                        // ★ v1.32.28 诊断 HUD 改为**可选**（默认关；主界面「调试浮层」按钮切换）：
+                        //   键盘态这类问题模拟器常复现不了（模拟器软键盘盖在页面上、不 resize），
+                        //   打开后页面自己把「谁在画 / 走哪个分支 / 有没有被 .dshOv 标记 / 视口多高」
+                        //   打在左上角，用户截图即可定位。所有分支都写了 __dshWhy：
+                        //   ov=浮层通道、bg15=卡片 0.15、bg45=0.45 通道、其余分支未标记。
+                        //   开关值在注入时烘进字符串（随页面加载定态）；主界面切完回到本页由 onResume
+                        //   里的 __dshDiagSet 热改，不必重开页面。
+                        "var dshDiagOn=" + DiagPrefs.on(this@WebActivity) + ";" +
+                        "window.__dshDiagSet=function(v){dshDiagOn=!!v;dshDiag();};" +
+                        "function dshDiag(){try{" +
+                        "var H=document.getElementById('dsh-diag');" +
+                        "if(!dshDiagOn){if(H&&H.parentNode)H.parentNode.removeChild(H);return;}" +
+                        "if(!H){H=document.createElement('div');H.id='dsh-diag';" +
+                        "H.style.cssText='position:fixed;left:6px;top:6px;z-index:2147483000;" +
+                        "background:rgba(0,0,0,0.78);color:#fff;font:11px/1.4 monospace;padding:6px 8px;" +
+                        "border-radius:6px;max-width:332px;white-space:pre;pointer-events:none';" +
+                        "if(document.body)document.body.appendChild(H);}" +
+                        "if(!H.parentNode)return;var o=[];" +
+                        "o.push('vh='+innerHeight+' vv='+(window.visualViewport?Math.round(visualViewport.height):'-')+' vw='+innerWidth);" +
+                        "function bgg(x){return x?getComputedStyle(x).backgroundColor:'-';}" +
+                        "function nm(x){return x?String(x.className).slice(0,20):'-';}" +
+                        "var ov=document.querySelectorAll('.dshOv');" +
+                        "o.push('dshOv='+ov.length+':'+Array.prototype.map.call(ov,function(z){" +
+                        "return String(z.className).replace('dshOv','').slice(0,12);}).join('|').slice(0,48));" +
+                        "var ce=document.querySelector('[contenteditable=true]');" +
+                        "if(ce){var card=ce.closest('[class*=_card]');" +
+                        "o.push('card '+bgg(card)+' why='+(card?card.__dshWhy:'-')+' m='+(card?card.classList.contains('dshOv'):'-'));" +
+                        "var row=ce.parentElement;" +
+                        "o.push('row  '+bgg(row)+' why='+(row?row.__dshWhy:'-')+' '+nm(row));" +
+                        "o.push('inp  '+bgg(ce)+' why='+(ce.__dshWhy||'-'));" +
+                        "var z=ce.parentElement,g=0;while(z&&g<4){o.push('a'+g+' '+bgg(z)+' why='+(z.__dshWhy||'-')+' '+nm(z));z=z.parentElement;g++;}}" +
+                        "H.textContent=o.join(String.fromCharCode(10));" +
+                        "}catch(e2){}}" +
+                        "dshDiag();setInterval(dshDiag,1000);})();", null)
                 }
             }
             // 上传与下载（v1.19.0）：
@@ -1517,6 +1633,10 @@ class WebActivity : Activity() {
     override fun onResume() {
         super.onResume()
         web?.onResume()
+        // 调试浮层开关（v1.32.28）：主界面「调试浮层」按钮切完回到本页即时生效，不必重开页面。
+        // 老注入里没有 __dshDiagSet 时整个表达式是空操作。
+        web?.evaluateJavascript(
+            "window.__dshDiagSet&&window.__dshDiagSet(" + DiagPrefs.on(this) + ")", null)
     }
 
     override fun onDestroy() {

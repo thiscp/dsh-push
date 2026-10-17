@@ -77,6 +77,14 @@ DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡
 - **WHEN** 复核浮层与内容块两条判据的实现
 - **THEN** 浮层判定 SHALL 依据 `role` ∈ {`menu`,`listbox`,`dialog`,`alertdialog`,`tooltip`} 直接命中，或同时满足 position 为 `fixed|absolute`、`z-index` 非 auto 且 ≥10、宽高均 ≤90% 视口、至少 3 个可交互子项；内容块判定 SHALL 只要求 `big` 且不在布局链 / 定位面板 / 侧栏根 / `#dsh-theme-veil`；两者 MUST NOT 以 CSS-module 类名哈希作为命中条件
 
+#### Scenario: 浮层判定不依赖 CSS-module 哈希
+- **WHEN** 上游改版更换 CSS-module 类名哈希后浮层重新渲染
+- **THEN** 浮层仍按 role / position / z-index / 尺寸 / 子项数被命中并保持 0.96（判定 MUST NOT 依赖某一固定类名哈希）
+
+#### Scenario: 聊天里的大代码块不被大容器分支抹成全透明
+- **WHEN** 用户在内置浏览器中查看聊天正文里的大代码块（真机实测 `_block_7gxqk_4 md-code-block _card_7gxqk_107` 为 331x524、占视口 91.8%×78.1%，**原生** `rgb(249,250,251)`，视口 360x671 ⇒ 大容器阈值 180/335.5 两侧均超出）
+- **THEN** 该内容块的背景 SHALL 保留其原生色相并取 alpha = 1（MUST NOT 是 `transparent`、MUST NOT 是 0.45），代码文字 SHALL 不再透出底层聊天正文；整页设备截图复核 MUST NOT 存在可辨识的叠印
+
 ## ADDED Requirements
 
 ### Requirement: 玻璃化判据 MUST NOT 以类名哈希为决定性闸门

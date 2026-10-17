@@ -50,6 +50,10 @@ DSH Web 页面内所有不透明面板（侧栏、输入卡、消息气泡、卡
 - **WHEN** 复核 `#dsh-theme-veil`（`position:fixed` + `inset:0` + 100%×100%，本身会被 `isPanel` 判为全屏定位面板）
 - **THEN** 其不透明度 SHALL 仍为 0.45（按 id 显式排除，MUST NOT 依赖另一段注入的写入顺序）
 
+#### Scenario: 浮层判定不依赖 CSS-module 哈希
+- **WHEN** 上游改版更换 CSS-module 类名哈希后浮层重新渲染
+- **THEN** 浮层仍按 role / position / z-index / 尺寸 / 子项数被命中并保持 0.96（判定 MUST NOT 依赖某一固定类名哈希）
+
 ## ADDED Requirements
 
 ### Requirement: 文档预览面板可读性
