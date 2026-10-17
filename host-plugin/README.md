@@ -264,7 +264,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 （`<DSH 安装目录>\resources\runtime\primary-runtime\dependencies\node\bin\node.exe`）。
 harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tmpdir()` 同为 `C:\Temp`，
 但 `copyFileSync` 被拒（`EPERM: operation not permitted, copyfile`）；14 段前有 preflight
-探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **104/104**（v0.2.2 加了 3 条 hash 片段断言）。
+探针，撞到这个坑会打印指引并 **exit 2**（不是假 FAIL）。真基线 **128/128**（v0.2.2 加 3 条 hash 片段断言；v0.3.0 加 24 条发号断言：URL 拼装、通行证文本、名字清洗、HTTP 四种结果、凭据写回与备份、面板状态机含「同一个 seq 绝不重复发号」）。
 
 ## 点推送直达来源会话（v0.2.2）
 
@@ -291,6 +291,47 @@ harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tm
 
 **降级安全**：id 形态不对（不是 `session-<uuid>`）就不拼链接；网页端找不到那一行（会话未加载、分组收起）
 就静默放弃，最多 20s，等于本功能之前的行为。不认识 hash 的旧网页端也完全不受影响。
+
+## 自助通行证发号面板（v0.3.0，多人自由使用）
+
+用户「我希望能在插件里面有按钮什么的自动生成一个给手机用的通行证，这样的话才能让多人都能自由的使用我们的插件」。
+
+**为什么必须有中继侧的服务**（不是插件能自己解决的）：我们的 ntfy 2.29.0 里 access-token 的 HTTP API **根本没编译进去**
+（`grep -a -c /v1/tokens /usr/bin/ntfy` = 0），`POST /v1/users` 能建用户但**静默忽略** topic 授权 ⇒ 按 topic 授权与发 token
+**只能在服务器上跑 ntfy CLI**。所以中继上跑了一个极小的发号服务 `dsh-provd`（见仓库 `relay/README.md`），
+本插件是它的 HTTP 客户端。
+
+**新配置项**：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `provisionBase` | `https://ntfy.cpyh.xyz/provision` | 发号服务基址（经 edge nginx 反代到 `127.0.0.1:2588`） |
+| `provisionToken` | 空 | 发号服务的共享密钥（服务端 `/etc/dsh-provd/secret`）。**优先用环境变量 `DSH_PUSH_PROVISION_TOKEN`**，别写进 git |
+| `provisionTokenEnv` | `DSH_PUSH_PROVISION_TOKEN` | 上面那个环境变量名 |
+
+三项都在 `CREDENTIAL_CONFIG_KEYS` 里 ⇒ 可以放凭据文件（分层：默认 < 凭据文件 < profile < env）。
+
+**面板长在哪**：DSH 网页「设置 → 通用」里新增一行「通行证」（`settings.general.item`，id `push-host-pass-panel`，order 130，
+就在「手机作答模式」下面）。输入框预填宿主建议的名字（`provisionDefault`，由 `host`/`webName` 清洗而来，中文/空名退化成
+`dsh-local`），三个动作：**发通行证**、**刷新列表**、每条已发通行证后面的**吊销**。
+
+**往返机制**（浏览器只能写 volatile 字段，这是实测出来的硬约束）：
+
+```
+浏览器 scope.mutate 写 volatile: provisionAction + provisionSeq(+ provisionName)
+   ↓ ctx.on('loader/volatile-update') 命中 provision* ⇒ setTimeout(0) 出 HMR 事务
+宿主 PassProvisioner.run() ⇒ POST {provisionBase}/issue|revoke、GET /list
+   ↓ setVolatileValue 只写内存镜像（绝不 configEditor，免得把结果字符串写进 cordis.patch.yml）
+浏览器读 provisionResult（通行证文本）/ provisionList（JSON 列表）/ provisionDone（== 本次 seq 就收工）
+```
+
+- **`provisionSeq` 是浏览器生成的请求号**：同一个名字连点两次也必须各得一次结果，所以不能只看 action 字段的变化；
+  宿主对**同一个 seq 绝不重复发号**（selftest 有这条）。页面 busy 用 `done === seq` 判，另加 30s 兜底防宿主不在。
+- **发号成功会写回本机凭据文件**（`topic` + `ntfyToken`=只写 token + `phoneToken`=只读 token），写前自动备份
+  `credentials.json.bak-<ts>`、空值绝不覆盖已有密钥、目录不存在会建好。**重启本插件 fiber 后**才按新 topic 发布。
+- **通行证文本格式**：`dshpush://v1?base=<中继>&topic=<topic>&token=<只读 token>` —— App v1.33.0 起解析它；
+  只粘一串 `tk_…` 的老通行证在 App 里仍按默认 topic `dsh` 处理，所以现有手机不会被这次改动破坏。
+- 发号失败（401 无密钥 / 409 名字占用 / 服务不可达）都在面板上显示中文原因，**不动本机凭据文件、不影响已工作的推送链路**。
 
 ## 给一个真实用户开通（凭据文件 + 配对）
 

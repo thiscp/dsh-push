@@ -41,7 +41,7 @@
  *
  * @module dsh-push-host
  */
-import { copyFileSync, existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -75,6 +75,10 @@ const DEFAULTS = {
   ntfyToken: '',
   phoneToken: '',
   ntfyTokenEnv: 'DSH_PUSH_NTFY_TOKEN',
+  // 自助发号（v0.3.0）：中继上的 dsh-provd 服务地址与那把共享密钥（见 relay/README.md）。
+  provisionBase: 'https://ntfy.cpyh.xyz/provision',
+  provisionToken: '',
+  provisionTokenEnv: 'DSH_PUSH_PROVISION_TOKEN',
   credentialsFile: '',
   webLog: join(homedir(), '.dsh', 'web.log'),
   webBase: '',
@@ -108,6 +112,11 @@ export const Config = z.object({
   /** ntfy write token of the host user (`tk_…`); prefer `ntfyTokenEnv`. */
   ntfyToken: z.string().default(''),
   ntfyTokenEnv: z.string().default('DSH_PUSH_NTFY_TOKEN'),
+  /** 发号服务基址（中继 `dsh-provd`，经 edge nginx 暴露在 /provision/*）。 */
+  provisionBase: z.string().default('https://ntfy.cpyh.xyz/provision'),
+  /** 发号服务的共享密钥（`/etc/dsh-provd/secret`）；优先 `provisionTokenEnv`。 */
+  provisionToken: z.string().default(''),
+  provisionTokenEnv: z.string().default('DSH_PUSH_PROVISION_TOKEN'),
   /** ntfy read token of the phone user (`tk_…`): not used here, carried for the pairing payload. */
   phoneToken: z.string().default(''),
   /** Credentials file; empty = `$DSH_PUSH_CREDENTIALS` else `~/.config/dsh-push/credentials.json`. */
@@ -151,6 +160,24 @@ export const Config = z.object({
    * 期望态和实际态可以相反（期望未表态、实际 timed）。
    */
   askUserActual: z.union(['', 'legacy', 'timed']).default('').volatile(),
+  /**
+   * 通行证发号面板（v0.3.0）的往返字段，全部 volatile：网页设置行经 settings RPC 只能写
+   * volatile 字段（见本文件 823 行那段实测结论），所以「请求」由浏览器写这几个字段来表达，
+   * 宿主跑完发号再把结果镜像回 provisionResult / provisionList / provisionDone。
+   * provisionSeq 是浏览器生成的请求号：宿主做完原样回写，页面据此清 busy——同一个名字
+   * 连点两次也必须各得一次结果，所以不能只靠 action 字段的变化触发。
+   */
+  provisionName: z.string().default('').volatile(),
+  provisionAction: z.union(['', 'issue', 'revoke', 'refresh']).default('').volatile(),
+  provisionSeq: z.string().default('').volatile(),
+  /** 最近一次操作的结果文本（'' = 无）：成功时是通行证原文，失败时是给人看的中文原因。 */
+  provisionResult: z.string().default('').volatile(),
+  /** 已发通行证列表的 JSON 文本（宿主写，页面渲染成可吊销的列表）。 */
+  provisionList: z.string().default('').volatile(),
+  /** 宿主建议的默认名字（本机名清洗过），页面预填、用户可改。 */
+  provisionDefault: z.string().default('').volatile(),
+  /** 宿主处理完的请求号回写。 */
+  provisionDone: z.string().default('').volatile(),
 })
 
 /** `[{label, description?}]` (service vocabulary) → `[label]` (what the relay/phone render). */
@@ -781,6 +808,7 @@ export function resolvePluginConfig(config = {}, { env = process.env, readFile =
       hostToken: envOverride('hostToken', resolved.hostTokenEnv),
       regToken: envOverride('regToken', resolved.regTokenEnv),
       ntfyToken: envOverride('ntfyToken', resolved.ntfyTokenEnv),
+      provisionToken: envOverride('provisionToken', resolved.provisionTokenEnv),
     },
   }
 }
@@ -806,6 +834,8 @@ export const CREDENTIAL_CONFIG_KEYS = [
   'pollIntervalMs',
   'credentialsFile',
   'regToken',
+  'provisionBase',
+  'provisionToken',
 ]
 
 function pickConfigKeys(values) {
@@ -1044,6 +1074,285 @@ export class AskUserModeSwitch {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 自助通行证发号（v0.3.0）
+//
+// 中继上的 dsh-provd（见仓库 relay/README.md）是「一人一 topic 一对凭据」的签发口：
+// 网页设置行经 settings RPC 写 volatile 的 provisionAction/provisionName/provisionSeq，
+// 这里观察到就跑一次 HTTP，把结果镜像回 provisionResult/provisionList/provisionDone。
+// 发号成功顺手把 topic + 只写 token + 只读 token 写回插件自己的凭据文件（先备份），
+// 因为 resolvePluginConfig 的分层是「默认 < 凭据文件 < profile < env」——写文件就够了，
+// 不必碰 configEditor（也就不会撞 HMR 事务嵌套）。重启本插件 fiber 后生效。
+
+/** 发号服务地址拼接：去掉多余斜杠，避免出现 //issue。 */
+export function provisionUrl(base, path) {
+  const b = String(base || '').trim().replace(/\/+$/, '')
+  return b + '/' + String(path || '').replace(/^\/+/, '')
+}
+
+/**
+ * 通行证文本（App v1.33.0 起解析）：topic 是多人隔离的关键，只有一串 token 的老通行证
+ * 在 App 里仍按默认 topic 处理，所以这里必须把三项都带上。
+ */
+export function passText({ relayBase, topic, readToken } = {}) {
+  const parts = []
+  if (relayBase) parts.push('base=' + relayBase)
+  if (topic) parts.push('topic=' + topic)
+  if (readToken) parts.push('token=' + readToken)
+  return 'dshpush://v1' + (parts.length ? '?' + parts.join('&') : '')
+}
+
+/** 本机名 → ntfy 允许的 topic 名（^[a-z0-9][a-z0-9-]{1,30}$）；中文/空名退化成 dsh-local。 */
+export function provisionNameSuggest(config = {}) {
+  const raw = String(config.host || '').trim() || String(config.webName || '').trim()
+  const cleaned = raw.toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+/, '')
+    .replace(/-+/g, '-')
+    .slice(0, 31)
+    .replace(/-+$/, '')
+  if (/^[a-z0-9][a-z0-9-]{1,30}$/.test(cleaned)) {
+    const named = cleaned.startsWith('dsh-') ? cleaned : ('dsh-' + cleaned).slice(0, 31).replace(/-+$/, '')
+    return /^[a-z0-9][a-z0-9-]{1,30}$/.test(named) ? named : 'dsh-local'
+  }
+  return 'dsh-local'
+}
+
+/** 一次发号调用（fetch 可打桩）：返回 {ok,data} 或 {ok:false,error:给人看的中文}。 */
+export async function provisionCall({ base, token, path, body, fetchImpl = globalThis.fetch } = {}) {
+  if (!token) return { ok: false, error: '缺少发号密钥：填 provisionToken 或设环境变量 DSH_PUSH_PROVISION_TOKEN' }
+  if (typeof fetchImpl !== 'function') return { ok: false, error: '这个 Node 运行时没有 fetch，无法发号' }
+  let res
+  try {
+    res = await fetchImpl(provisionUrl(base, path), {
+      method: path === 'list' ? 'GET' : 'POST',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: path === 'list' ? undefined : JSON.stringify(body || {}),
+    })
+  } catch (error) {
+    return { ok: false, error: '发号服务不可达：' + String(error && error.message ? error.message : error) }
+  }
+  let text = ''
+  try { text = String(await res.text()) } catch { text = '' }
+  let data = null
+  try { data = JSON.parse(text) } catch { data = null }
+  if (!res.ok) {
+    const why = data && data.error ? data.error : text.slice(0, 120)
+    return { ok: false, error: '发号服务返回 ' + res.status + (why ? '：' + why : '') }
+  }
+  return { ok: true, data: data === null ? {} : data }
+}
+
+/**
+ * 把发到的凭据写回插件自己的凭据文件（先 copyFileSync 备份）。只动 topic / ntfyToken /
+ * phoneToken 三项，其它字段原样保留；文件不存在时按目录建好再写。
+ */
+export function writeCredentialsPatch(path, patch, deps = {}) {
+  const read = deps.readFile || readFileSync
+  const copy = deps.copyFile || copyFileSync
+  const exists = deps.exists || existsSync
+  const mkdir = deps.mkdir || mkdirSync
+  const write = deps.write || writeFileSync
+  const rename = deps.rename || renameSync
+  const stamp = deps.stamp || (() => new Date().toISOString().replace(/[:.]/g, '-'))
+  const dirOf = (p) => String(p).split(/[\\/]/).slice(0, -1).join('/')
+  let current = {}
+  const existed = exists(path)
+  if (existed) {
+    copy(path, path + '.bak-' + stamp())
+    try { current = JSON.parse(read(path, 'utf8')) || {} } catch { current = {} }
+  } else {
+    try { mkdir(dirOf(path), { recursive: true }) } catch { /* 目录已存在 */ }
+  }
+  const next = { ...current, v: current.v || '1' }
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (typeof value === 'string' && value !== '') next[key] = value
+  }
+  const tmp = path + '.tmp-' + stamp()
+  write(tmp, JSON.stringify(next, null, 2) + '\n')
+  rename(tmp, path)
+  return { path, created: !existed, keys: Object.keys(patch || {}) }
+}
+
+/**
+ * 面板镜像的**进程级**暂存（2026-10-17 实测出来的坑）：浏览器经 settings RPC 写 volatile 字段
+ * 会被持久化进 profile 的 cordis.patch.yml（实测文件里出现 provisionName/provisionAction/
+ * provisionSeq 三行），补丁一变宿主就热重启本插件 fiber，内存里的 volatile 镜像当场清零 ——
+ * 用户看到的是「结果闪一下自己就没了」。fiber 重启不换进程 ⇒ 把最后一次结果挂在 globalThis 上，
+ * 新 fiber 一装载就回灌，面板不再自己变空。绝不写文件（镜像是运行态，不该进用户的补丁）。
+ */
+export const PANEL_STORE_KEY = '__DSHPUSH_PANEL__'
+
+export function panelStore() {
+  const g = globalThis
+  if (!g[PANEL_STORE_KEY]) g[PANEL_STORE_KEY] = {}
+  return g[PANEL_STORE_KEY]
+}
+
+/** 每个 profile 只有一个「当前 fiber」：旧 fiber 跑完要把结果转交给新 fiber。 */
+const PANEL_ACTIVE = new Map()
+
+/** Bridges the Web pass panel to the relay provisioning service. */
+export class PassProvisioner {
+  constructor(ctx, config, resolved, log, deps = {}) {
+    this.ctx = ctx
+    this.config = config
+    this.resolved = resolved
+    this.log = log
+    this.fetchImpl = deps.fetchImpl || globalThis.fetch
+    this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
+    this.credentialsPath = deps.credentialsPath || ''
+    this.busy = false
+    this.scheduled = false
+    /** 已经处理过的请求号；同一个 seq 绝不重复发号（重复点按由页面换新 seq）。 */
+    this.lastSeq = ''
+  }
+
+  read(key) { return volatileValue(this.config[key], '') }
+
+  /** 暂存按 profile 分键（同一台机器可能跑多个 profile）。 */
+  storeKey() {
+    return String(this.resolved.host || '') + '|' + String(this.credentialsPath || '')
+  }
+
+  /** 把最后一次结果回灌进当前 fiber 的 volatile 镜像（fiber 刚重启时面板不该是空的）。 */
+  applyStore() {
+    const saved = panelStore()[this.storeKey()]
+    if (!saved) return
+    this.write('provisionResult', String(saved.result || ''))
+    this.write('provisionList', String(saved.list || ''))
+    this.write('provisionDone', String(saved.done || ''))
+  }
+
+  /** 存住本次结果；若已有更新的 fiber 接管（补丁写入引发的重启），转交给它回灌。 */
+  saveStore() {
+    const snapshot = {
+      result: String(this.read('provisionResult') || ''),
+      list: String(this.read('provisionList') || ''),
+      done: String(this.read('provisionDone') || ''),
+    }
+    panelStore()[this.storeKey()] = snapshot
+    const active = PANEL_ACTIVE.get(this.storeKey())
+    if (active && active !== this) {
+      active.config.provisionResult = undefined
+      active.applyStore()
+      this.log('通行证结果已转交给重启后的 fiber（补丁写入会热重启本插件）')
+    }
+  }
+
+  write(key, value) { setVolatileValue(this.config, key, value) }
+
+  /** 开机就把建议名字推给页面预填（用户可改）。 */
+  publishDefault() {
+    const suggested = provisionNameSuggest(this.resolved)
+    if (this.read('provisionDefault') !== suggested) this.write('provisionDefault', suggested)
+  }
+
+  /** volatile-update 发生在 settings RPC 的事务里 ⇒ 挪到下一个宏任务再跑（同 AskUserModeSwitch）。 */
+  schedule() {
+    if (this.scheduled) return
+    this.scheduled = true
+    setTimeout(() => {
+      this.scheduled = false
+      void this.run()
+    }, 0)
+  }
+
+  async list() {
+    const out = await provisionCall({
+      base: this.resolved.provisionBase, token: this.resolved.provisionToken,
+      path: 'list', fetchImpl: this.fetchImpl,
+    })
+    if (!out.ok) return { ok: false, error: out.error }
+    const passes = Array.isArray(out.data.passes) ? out.data.passes : []
+    return { ok: true, passes }
+  }
+
+  /** One panel round-trip: issue / revoke / refresh, then mirror everything back. */
+  async run() {
+    const seq = String(this.read('provisionSeq') || '')
+    const action = String(this.read('provisionAction') || '')
+    if (this.busy || seq === '' || seq === this.lastSeq) return
+    if (action !== 'issue' && action !== 'revoke' && action !== 'refresh') return
+    this.lastSeq = seq
+    this.busy = true
+    const name = String(this.read('provisionName') || '').trim() || provisionNameSuggest(this.resolved)
+    try {
+      if (action === 'issue') {
+        const out = await provisionCall({
+          base: this.resolved.provisionBase, token: this.resolved.provisionToken,
+          path: 'issue', body: { name }, fetchImpl: this.fetchImpl,
+        })
+        if (!out.ok) {
+          this.write('provisionResult', '发号失败：' + out.error)
+          this.log('通行证发号失败：' + out.error)
+        } else {
+          const data = out.data || {}
+          const text = passText({
+            relayBase: this.resolved.relayBase, topic: data.topic, readToken: data.readToken,
+          })
+          this.write('provisionResult', text)
+          this.log('通行证已签发：topic=' + data.topic + '，通行证文本已回写页面')
+          if (this.credentialsPath) {
+            try {
+              // 别名一起写：loader 里 ntfyToken 排在 writetoken 之前（credentials.mjs:77），
+              // 新值一定赢；但只写新键会让文件里留着旧 writeToken 骗读文件的人，所以两边同步。
+              const saved = this.writeCreds(this.credentialsPath, {
+                topic: data.topic,
+                ntfyToken: data.writeToken, writeToken: data.writeToken,
+                phoneToken: data.readToken, readToken: data.readToken,
+              })
+              this.log('已写回凭据文件 ' + saved.path + '（重启本插件后按新 topic 发布）')
+            } catch (error) {
+              this.log('凭据文件写入失败：' + String(error && error.message ? error.message : error))
+            }
+          }
+        }
+      } else if (action === 'revoke') {
+        const out = await provisionCall({
+          base: this.resolved.provisionBase, token: this.resolved.provisionToken,
+          path: 'revoke', body: { name }, fetchImpl: this.fetchImpl,
+        })
+        this.write('provisionResult', out.ok ? ('已吊销：' + name) : ('吊销失败：' + out.error))
+        this.log(out.ok ? ('通行证已吊销：' + name) : ('通行证吊销失败：' + out.error))
+      }
+      const listed = await this.list()
+      // 载荷瘦身：面板只要 name 与 topic/permission，users 列表对渲染没用却会把镜像撑大。
+      const slim = listed.ok
+        ? listed.passes.slice(0, 40).map((row) => ({
+            name: row.name,
+            topics: (row.topics || []).map((t) => ({ topic: t.topic, permission: t.permission })),
+          }))
+        : []
+      this.log('通行证列表：' + (listed.ok ? String(slim.length) + ' 条' : ('读取失败 ' + listed.error)))
+      this.write('provisionList', listed.ok ? JSON.stringify(slim) : ('__err__' + listed.error))
+    } catch (error) {
+      const message = String(error && error.message ? error.message : error)
+      this.write('provisionResult', '发号异常：' + message)
+      this.log('通行证发号异常：' + message)
+    } finally {
+      this.busy = false
+      this.write('provisionDone', seq)
+      this.saveStore()
+    }
+  }
+
+  /** Wire the trigger: any volatile write under provision* (except our own mirrors). */
+  start() {
+    this.publishDefault()
+    // 认领「当前 fiber」并把上一次的结果回灌：浏览器写 volatile 会改补丁文件 ⇒ 本插件 fiber
+    // 会被热重启 ⇒ 不这么做的话面板结果只显示一瞬间就自己清空（2026-10-17 真机实测）。
+    PANEL_ACTIVE.set(this.storeKey(), this)
+    this.applyStore()
+    const mine = ['provisionAction', 'provisionName', 'provisionSeq']
+    this.ctx.on('loader/volatile-update', (paths) => {
+      const touched = Array.isArray(paths) && paths.some((path) =>
+        Array.isArray(path) && mine.includes(path[0]))
+      if (touched) this.schedule()
+    })
+  }
+}
+
 export function apply(ctx, config = {}) {
   const { resolved, file } = resolvePluginConfig(config)
   const host = new PushHost(ctx, resolved)
@@ -1061,6 +1370,12 @@ export function apply(ctx, config = {}) {
   // 手机作答模式开关（v0.2.1）：显式 timed → 延后出 HMR 事务 → 备份 → configEditor 热改
   // tool-ask-user；未表态/legacy 完全惰性，永不降级，每进程最多成功写一次。
   new AskUserModeSwitch(ctx, config, (message) => host.log(message)).start()
+  // 通行证发号面板（v0.3.0）：网页写 volatile 的 provisionAction/Name/Seq → 这里调中继的
+  // dsh-provd → 把通行证文本与列表镜像回 volatile 字段；发号成功顺手把 topic + 两只 token
+  // 写回插件自己的凭据文件（先备份）。重启本插件 fiber 后按新 topic 发布。
+  new PassProvisioner(ctx, config, resolved, (message) => host.log(message), {
+    credentialsPath: file.path,
+  }).start()
 }
 
 export { PushHost, resolveConfig, CONFIG_KEYS }

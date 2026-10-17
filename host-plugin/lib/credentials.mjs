@@ -84,10 +84,17 @@ export const CREDENTIAL_KEYS = {
   webName: ['webname'],
   pollIntervalMs: ['pollintervalms'],
   credentialsFile: ['credentialsfile'],
+  // 2026-10-17 (v0.3.0 发号面板)：同一个坑又踩一次——provisionToken/provisionBase 加进了
+  // index.js 的 CREDENTIAL_CONFIG_KEYS，却没进这张表，于是 parseCredentials 根本不读它，
+  // 面板回「缺少发号密钥」而文件里明明有（真机实测）。webLog 是同一类潜在漏，一并补上。
+  // 现在 selftest 有一条断言比对两张清单，漏一个就 FAIL。
+  provisionToken: ['provisiontoken'],
+  provisionBase: ['provisionbase'],
+  webLog: ['weblog'],
 }
 
 /** Keys that hold secrets: they are never echoed back in logs or diagnostic output. */
-export const SECRET_KEYS = ['hostToken', 'ntfyToken', 'phoneToken', 'regToken']
+export const SECRET_KEYS = ['hostToken', 'ntfyToken', 'phoneToken', 'regToken', 'provisionToken']
 
 /** `~` / `~/x` / `~\x` → the real home path; everything else resolves against `base`. */
 export function expandHome(input, home = homedir()) {

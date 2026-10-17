@@ -1,4 +1,4 @@
-// dsh-push-host 的浏览器半（v0.2.5）：设置页「手机作答模式」开关 + 按推送链接的 hash 切到来源会话。
+// dsh-push-host 的浏览器半（v0.3.0）：设置页「手机作答模式」开关 + 「通行证」自助发号面板 + 按推送链接的 hash 切到来源会话。
 // v0.2.3：补 hashchange 监听——网页已开着时点另一条推送只做片段跳转、不重载页面。
 // v0.2.4：开关与「展开其余 N 个会话」都改用语义锚点 + 中英双标签——这些文案是本地化的，
 // 只按英文标签找在中文手机上必然找不到（用户真机实遇）。
@@ -22,7 +22,7 @@ window.__ModuleLoader__.load({
 
 		// 诊断（v0.2.2）：开机瞬间 URL 里到底有没有 hash、切会话走到哪一步，一页之内就能看出来，
 		// 不用去猜「是没跑还是没点到」。控制台里读 window.__DSHPUSH_CLIENT__ 即可。
-		const DIAG = { v: "0.2.5", hash: "", service: false, tries: 0, opened: false, rowSeen: false, clicks: 0, closed: false, done: false };
+		const DIAG = { v: "0.3.0", hash: "", service: false, tries: 0, opened: false, rowSeen: false, clicks: 0, closed: false, done: false };
 		try {
 			DIAG.hash = String(location.hash || "");
 		} catch {
@@ -64,6 +64,13 @@ window.__ModuleLoader__.load({
 				order: 120,
 				label: "手机作答模式",
 			}, () => AskUserModeRow(scope, listeners, notify)))), "dsh-push-host: ask-user mode row");
+			// v0.3.0：通行证面板——一人一 topic 一对凭据的自助入口（宿主 lib/index.js:PassProvisioner 跑发号）。
+			ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("settings.general.item", () => ctx.slots.register({
+				name: "settings.general.item",
+				id: "push-host-pass-panel",
+				order: 130,
+				label: "通行证",
+			}, () => PassPanelRow(scope, listeners, notify)))), "dsh-push-host: pass panel row");
 			// v0.2.2：把推送链接 hash 里的来源会话切到主视图（与设置行互不相干，各自独立生效）。
 			revealFromHash(ctx);
 		}
@@ -124,6 +131,110 @@ window.__ModuleLoader__.load({
 					style: { padding: "6px 14px", borderRadius: 8, border: "1px solid currentColor", opacity: writable ? 1 : 0.5 },
 				}, busy ? "启用中…" : timed ? "已开启（本开关不降级）" : "启用（切到 timed）")));
 		}
+
+		/**
+		 * 通行证面板（v0.3.0）。请求经 volatile 字段表达（浏览器只能写 volatile），宿主跑完把
+		 * provisionResult / provisionList / provisionDone 镜像回来；busy 用「done 是否等于本次 seq」判，
+		 * 不靠超时猜（另加 30s 兜底，免得宿主不在时按钮永久卡住）。
+		 * @param scope - 绑定了 push-host 的配置表单。
+		 * @param listeners - 订阅回调集合。
+		 * @param notify - 唤醒全部订阅者。
+		 */
+		function PassPanelRow(scope, listeners, notify) {
+			const [snapshot, setSnapshot] = react.useState(() => scope.getSnapshot());
+			const [busy, setBusy] = react.useState(false);
+			const [name, setName] = react.useState("");
+			const [copied, setCopied] = react.useState(false);
+			react.useEffect(() => {
+				const update = () => setSnapshot(scope.getSnapshot());
+				listeners.add(update);
+				update();
+				return () => {
+					listeners.delete(update);
+				};
+			}, []);
+			const ready = snapshot.status === "ready";
+			const value = snapshot.value ?? {};
+			const text = (key) => (typeof value[key] === "string" ? value[key] : "");
+			const suggested = text("provisionDefault");
+			const result = text("provisionResult");
+			const done = text("provisionDone");
+			const seq = text("provisionSeq");
+			react.useEffect(() => {
+				if (busy && done !== "" && done === seq) setBusy(false);
+			}, [done, seq, busy]);
+			const rawList = text("provisionList");
+			let passes = [];
+			let listError = "";
+			if (rawList.indexOf("__err__") === 0) listError = rawList.slice(7);
+			else if (rawList) {
+				try { passes = JSON.parse(rawList) || []; } catch { passes = []; }
+			}
+			const writable = ready && snapshot.writable === true && !busy;
+			const ask = (action, forcedName) => {
+				if (!writable) return;
+				const nextSeq = String(Date.now()) + "-" + Math.floor(Math.random() * 1e6).toString(36);
+				const ops = [
+					{ op: "set", path: ["provisionAction"], value: action },
+					{ op: "set", path: ["provisionSeq"], value: nextSeq },
+				];
+				const typed = typeof forcedName === "string" && forcedName !== "" ? forcedName.trim() : name.trim();
+				if (action !== "refresh" && typed !== "") ops.push({ op: "set", path: ["provisionName"], value: typed });
+				setBusy(true);
+				setCopied(false);
+				setTimeout(() => setBusy(false), 30000);
+				Promise.resolve()
+					.then(() => scope.mutate(ops, snapshot.revision))
+					.catch(() => setBusy(false))
+					.then(() => notify());
+			};
+			const copy = () => {
+				if (!result) return;
+				try {
+					navigator.clipboard.writeText(result);
+					setCopied(true);
+				} catch {
+					setCopied(false);
+				}
+			};
+			const btn = (label, onClick, disabled) => react.createElement("button", {
+				type: "button", disabled: disabled, onClick: onClick,
+				style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: disabled ? 0.5 : 1 },
+			}, label);
+			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" } },
+				react.createElement("div", { style: { fontWeight: 600 } }, "通行证"),
+				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
+					"给手机签发一条专属通道：一个 topic + 一只只读 token。多人各用各的，通知互不串。"),
+				react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+					react.createElement("input", {
+						value: name, placeholder: suggested || "dsh-local",
+						onChange: (event) => setName(event.target.value),
+						disabled: !writable,
+						style: { padding: "6px 10px", borderRadius: 8, border: "1px solid currentColor", minWidth: 170, background: "transparent", color: "inherit" },
+					}),
+					btn(busy ? "处理中…" : "发通行证", () => ask("issue"), !writable),
+					btn("刷新列表", () => ask("refresh"), !writable)),
+				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
+					"名字：小写字母/数字/短横线，2-31 位、开头不能是短横线。发号成功后 topic 与只写 token 会写回本机凭据文件，重启本插件后按新 topic 发布。"),
+				result !== "" ? react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+					react.createElement("textarea", {
+						readOnly: true, value: result, rows: 2,
+						onFocus: (event) => { try { event.target.select(); } catch {} },
+						style: { flex: "1 1 240px", padding: "6px 8px", borderRadius: 8, border: "1px solid currentColor", background: "transparent", color: "inherit", fontFamily: "monospace", fontSize: 12 },
+					}),
+					btn(copied ? "已复制" : "复制", copy, false)) : null,
+				listError !== "" ? react.createElement("div", { style: { fontSize: 12, color: "#c0392b" } }, "列表读取失败：" + listError) : null,
+				passes.length > 0 ? react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+					react.createElement("div", { style: { fontSize: 12, opacity: 0.7 } }, "已签发 " + passes.length + " 条（吊销即让对方手机上的通行证立刻失效）"),
+					...passes.map((row) => react.createElement("div", {
+						key: row.name,
+						style: { display: "flex", gap: 8, alignItems: "center", fontSize: 12, justifyContent: "space-between", flexWrap: "wrap" },
+					},
+						react.createElement("span", { style: { fontFamily: "monospace", wordBreak: "break-all" } },
+							row.name + "  →  " + (row.topics || []).map((t) => t.topic + "(" + t.permission + ")").join(", ")),
+						btn("吊销", () => ask("revoke", row.name), !writable)))) : null);
+		}
+
 
 		/**
 		 * v0.2.2：推送里的 `#web` 链接把来源会话放在 **URL hash 片段**（`…#session-<uuid>`，服务端

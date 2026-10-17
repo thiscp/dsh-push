@@ -14,13 +14,22 @@ import {
   AskUserModeSwitch,
   apply,
   askUserBackupPath,
+  CREDENTIAL_CONFIG_KEYS,
   askUserSyncPlan,
   isTimedAskUserQuestion,
   nextAskUserConfig,
+  passText,
+  provisionCall,
+  provisionNameSuggest,
+  provisionUrl,
+  PassProvisioner,
   resolveConfig,
+  writeCredentialsPatch,
   setVolatileValue,
   volatileValue,
 } from './lib/index.js'
+import { CREDENTIAL_KEYS, describeSecrets, parseCredentials } from './lib/credentials.mjs'
+import { panelStore } from './lib/index.js'
 import { buildPairingPayload } from './lib/pairing-lib.mjs'
 import { parseArgs } from './lib/pairing.mjs'
 
@@ -731,6 +740,164 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   }
 }
 
+// ---------------------------------------------------------------------------
+// 15. 通行证自助发号（v0.3.0）：URL 拼装、通行证文本、名字清洗、HTTP 结果、凭据写回、状态机
+// ---------------------------------------------------------------------------
+check('provision: url joins without double slash', provisionUrl('https://x/provision/', '/issue') === 'https://x/provision/issue')
+check('provision: url accepts bare path', provisionUrl('https://x/provision', 'list') === 'https://x/provision/list')
+check('provision: pass text carries base/topic/token',
+  passText({ relayBase: 'https://ntfy.cpyh.xyz', topic: 'dsh-alice', readToken: 'tk_aaa' })
+    === 'dshpush://v1?base=https://ntfy.cpyh.xyz&topic=dsh-alice&token=tk_aaa')
+check('provision: pass text degrades to a bare scheme when nothing is known', passText({}) === 'dshpush://v1')
+check('provision: suggested name is prefixed and regex-clean',
+  provisionNameSuggest({ host: 'Laptop' }) === 'dsh-laptop')
+check('provision: an already prefixed name is not doubled', provisionNameSuggest({ host: 'dsh-vm1' }) === 'dsh-vm1')
+check('provision: a Chinese instance name falls back to dsh-local',
+  provisionNameSuggest({ host: '', webName: '`' }) === 'dsh-local')
+check('provision: punctuation in a host name is flattened into dashes',
+  /^[a-z0-9][a-z0-9-]{1,30}$/.test(provisionNameSuggest({ host: 'A B/C' })))
+
+const provNoToken = await provisionCall({ base: 'https://x/provision', path: 'issue', body: { name: 'dsh-a' } })
+check('provision: missing secret is reported in Chinese, no fetch attempted',
+  provNoToken.ok === false && String(provNoToken.error).includes('DSH_PUSH_PROVISION_TOKEN'))
+
+const provCalls = []
+const provFetch = async (url, init) => {
+  provCalls.push({ url, init })
+  if (url.endsWith('/issue')) {
+    return { ok: true, status: 200, async text() { return JSON.stringify({ topic: 'dsh-a', phoneUser: 'dsh-a-phone', pubUser: 'dsh-a-pub', readToken: 'tk_read', writeToken: 'tk_write' }) } }
+  }
+  if (url.endsWith('/revoke')) {
+    return { ok: true, status: 200, async text() { return JSON.stringify({ revoked: ['dsh-a-phone', 'dsh-a-pub'], missing: [] }) } }
+  }
+  if (url.endsWith('/list')) {
+    return { ok: true, status: 200, async text() { return JSON.stringify({ passes: [{ name: 'dsh-a', users: ['dsh-a-phone'], topics: [{ topic: 'dsh-a', permission: 'read-only' }] }] }) } }
+  }
+  return { ok: false, status: 409, async text() { return JSON.stringify({ error: 'name already issued' }) } }
+}
+const provGood = await provisionCall({ base: 'https://x/provision', token: 'sek', path: 'issue', body: { name: 'dsh-a' }, fetchImpl: provFetch })
+check('provision: a 200 issue returns the parsed payload',
+  provGood.ok === true && provGood.data.readToken === 'tk_read' && provGood.data.topic === 'dsh-a')
+check('provision: the bearer header is sent',
+  provCalls[provCalls.length - 1].init.headers.Authorization === 'Bearer sek')
+const provClash = await provisionCall({ base: 'https://x/provision', token: 'sek', path: 'clash', body: { name: 'dsh-z' }, fetchImpl: provFetch })
+check('provision: a 409 keeps the server reason and the status code',
+  provClash.ok === false && String(provClash.error).includes('409') && String(provClash.error).includes('name already issued'))
+const provDown = await provisionCall({ base: 'https://x/provision', token: 'sek', path: 'list', fetchImpl: async () => { throw new Error('ECONNREFUSED') } })
+check('provision: an unreachable service says so instead of throwing',
+  provDown.ok === false && String(provDown.error).includes('不可达'))
+
+const provDir = mkdtempSync(join(tmpdir(), 'dsh-push-prov-'))
+const provFile = join(provDir, 'nested', 'credentials.json')
+const provSaved = writeCredentialsPatch(provFile, { topic: 'dsh-a', ntfyToken: 'tk_write', phoneToken: 'tk_read' }, { stamp: () => 'T1' })
+const provSavedBack = JSON.parse(readFileSync(provFile, 'utf8'))
+check('provision: credentials write-back creates missing directories and the file',
+  provSaved.created === true && provSavedBack.topic === 'dsh-a' && provSavedBack.ntfyToken === 'tk_write' && provSavedBack.phoneToken === 'tk_read')
+writeCredentialsPatch(provFile, { topic: 'dsh-b' }, { stamp: () => 'T2' })
+const provKeptBack = JSON.parse(readFileSync(provFile, 'utf8'))
+const provBackups = readdirSync(join(provDir, 'nested')).filter((name) => name.includes('credentials.json.bak-'))
+check('provision: a second write keeps unrelated keys and leaves a backup behind',
+  provKeptBack.topic === 'dsh-b' && provKeptBack.ntfyToken === 'tk_write' && provBackups.length === 1,
+  'provBackups=' + JSON.stringify(provBackups))
+check('provision: an empty patch value never clobbers a stored secret',
+  (() => { writeCredentialsPatch(provFile, { ntfyToken: '' }, { stamp: () => 'T3' }); return JSON.parse(readFileSync(provFile, 'utf8')).ntfyToken === 'tk_write' })())
+
+// the panel round-trip: browser writes volatile request -> host provCalls the service -> mirrors back
+const panelConfig = { provisionName: '', provisionAction: '', provisionSeq: '', provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '' }
+const panelResolved = { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek' }
+const panelLogs = []
+const panel = new PassProvisioner(
+  { on: () => () => {} }, panelConfig, panelResolved, (m) => panelLogs.push(String(m)),
+  { fetchImpl: provFetch, credentialsPath: provFile, writeCredentialsPatch: (p, patch) => writeCredentialsPatch(p, patch, { stamp: () => 'T4' }) },
+)
+panel.publishDefault()
+// the two lists must stay in step: index.js says which keys may come from the file,
+// credentials.mjs decides which file keys are read at all. regToken tripped over this in
+// 2026-10-12 and provisionToken again on 2026-10-17 (the panel said 缺少发号密钥 on a file
+// that did have it) — so the sync is an assertion now, not a comment.
+const outOfSync = CREDENTIAL_CONFIG_KEYS.filter((key) => !Object.prototype.hasOwnProperty.call(CREDENTIAL_KEYS, key))
+check('credentials: every CREDENTIAL_CONFIG_KEYS entry is actually readable (two lists in sync)',
+  outOfSync.length === 0, 'missing from CREDENTIAL_KEYS: ' + outOfSync.join(', '))
+const parsedProv = parseCredentials(JSON.stringify({ v: '1', topic: 'dsh-a', provisionToken: 'sek-really-long-value', provisionBase: 'https://x/provision' }))
+check('credentials: provisionToken and provisionBase survive parseCredentials',
+  parsedProv.value.provisionToken === 'sek-really-long-value' && parsedProv.value.provisionBase === 'https://x/provision',
+  JSON.stringify(Object.keys(parsedProv.value)))
+check('credentials: provisionToken counts as a secret, so diagnostics mask it instead of echoing it',
+  (() => {
+    const described = JSON.stringify(describeSecrets(parsedProv.value))
+    return described.includes('provisionToken=') && !described.includes('sek-really-long-value')
+  })())
+check('provision: boot publishes a suggested name for the panel to prefill',
+  panelConfig.provisionDefault === 'dsh-local')
+panelConfig.provisionName = 'dsh-a'
+panelConfig.provisionAction = 'issue'
+panelConfig.provisionSeq = 'seq-1'
+await panel.run()
+check('provision: issue mirrors the pass text into provisionResult',
+  panelConfig.provisionResult === 'dshpush://v1?base=https://ntfy.cpyh.xyz&topic=dsh-a&token=tk_read',
+  'got ' + panelConfig.provisionResult)
+check('provision: issue refreshes the list mirror with the issued pass',
+  String(panelConfig.provisionList).includes('dsh-a'))
+check('provision: the list mirror carries only what the panel renders (no user lists)',
+  (() => {
+    const rows = JSON.parse(String(panelConfig.provisionList))
+    return rows.length === 1 && Object.keys(rows[0]).join(',') === 'name,topics'
+  })())
+check('provision: issue echoes provisionDone with the same seq so the row can un-busy',
+  panelConfig.provisionDone === 'seq-1')
+check('provision: issue writes topic + both tokens into the credentials file',
+  JSON.parse(readFileSync(provFile, 'utf8')).topic === 'dsh-a')
+check('provision: the write-back keeps the file aliases in step so a human is never misled',
+  (() => {
+    const back = JSON.parse(readFileSync(provFile, 'utf8'))
+    return back.ntfyToken === back.writeToken && back.phoneToken === back.readToken
+  })())
+const provBeforeRepeat = provCalls.length
+await panel.run()
+check('provision: the same seq never issues twice (double click is idempotent)',
+  provCalls.length === provBeforeRepeat)
+panelConfig.provisionAction = 'nonsense'
+panelConfig.provisionSeq = 'seq-2'
+await panel.run()
+check('provision: an unknown action is ignored and leaves the result untouched',
+  provCalls.length === provBeforeRepeat && panelConfig.provisionDone === 'seq-1')
+panelConfig.provisionAction = 'revoke'
+panelConfig.provisionSeq = 'seq-3'
+await panel.run()
+check('provision: revoke reports the outcome in Chinese',
+  String(panelConfig.provisionResult).includes('已吊销') && panelConfig.provisionDone === 'seq-3')
+
+// the fiber-restart trap: the browser's volatile write lands in cordis.patch.yml, which
+// hot-restarts this plugin's fiber and zeroes the in-memory mirrors — the panel would show
+// a result for one moment and then go blank. The store lives on globalThis instead.
+check('provision: the last outcome is parked on the process-level store',
+  (() => {
+    const saved = panelStore()[panel.storeKey()]
+    return !!saved && String(saved.done) === 'seq-3' && String(saved.result).includes('已吊销')
+  })())
+const rebornConfig = { provisionName: '', provisionAction: '', provisionSeq: '', provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '' }
+const reborn = new PassProvisioner(
+  { on: () => () => {} }, rebornConfig,
+  { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek', host: '' },
+  () => {},
+  { fetchImpl: provFetch, credentialsPath: provFile },
+)
+reborn.start()
+check('provision: a restarted fiber re-mirrors the stored outcome so the panel never blanks itself',
+  String(rebornConfig.provisionResult).includes('已吊销') && String(rebornConfig.provisionList).includes('dsh-a')
+    && rebornConfig.provisionDone === 'seq-3')
+const handoffConfig = { provisionName: '', provisionAction: '', provisionSeq: '', provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '' }
+const handoff = new PassProvisioner(
+  { on: () => () => {} }, handoffConfig,
+  { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek', host: '' },
+  () => {},
+  { fetchImpl: provFetch, credentialsPath: provFile },
+)
+handoffConfig.provisionAction = 'refresh'
+handoffConfig.provisionSeq = 'seq-4'
+await handoff.run()
+check('provision: a dying fiber hands its result to the fiber that replaced it',
+  String(rebornConfig.provisionDone) === 'seq-4')
 const failed = checks.filter((entry) => !entry.ok)
 console.log('\n' + String(checks.length - failed.length) + '/' + String(checks.length) + ' checks passed')
 if (failed.length > 0) {
