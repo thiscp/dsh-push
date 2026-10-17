@@ -656,18 +656,48 @@ class WebActivity : Activity() {
                 //   z=20）里、本来就是满宽，所以只要把侧栏与它的列一起夹到 0.78vw，右边就露出正文
                 //   （CDP 当场试改已验证：col 360→281、root→280、overlayLayer 仍 360）。
                 //   与有没有外壳、走哪条臂无关 —— 只看「解析出的侧栏是不是几乎占满宽度」。
+                // ★ v1.33.9：CDP 把布局链摊开才发现**前面几版靶子选错了**。实测 frame=pI_x6G_frame
+                //   是 display:grid、tracks="280px 80px 0px"：侧栏自然宽只有 280，真正的问题是
+                //   页面自己给正文轨道只留 80px（centerCol 80、里面 viewArea 只有 73）。所以拿
+                //   「侧栏 ≥0.9vw」当判据从一开始就不成立，改成盯**正文列宽度**（也正是四态矩阵
+                //   的断言）：正文 < 0.8vw 就把侧栏轨道压成 0、正文轨道吃满 minmax(0,1fr)，再把
+                //   侧栏列改成 fixed 覆盖层 0.78vw —— 这就是笔电那类宿主的形态（侧栏浮在正文上、
+                //   正文满宽、立绘透得出来）。幂等由判据本身保证：改完正文就 ≥0.8vw，下一拍返回 0。
+                //   撤销只在**自己确实动过手**（prev 非空）时做，否则会把 bwGeomFix 写的轨道清掉。
                 "function bwNarrow(sb,vw){" +
                 "var prev=window.__bwNarrowEl||[];" +
-                "if(!sb||vw>1023||!sb.isConnected){for(var z=0;z<prev.length;z++){try{" +
-                "prev[z].style.removeProperty('width');prev[z].style.removeProperty('max-width');}catch(e7){}}" +
-                "window.__bwNarrowEl=[];window.__bwFpW=null;return 0;}" +
-                "var r=sb.getBoundingClientRect();if(r.width<vw*0.9)return window.__bwNarrow||0;" +
-                "var nw=Math.round(vw*0.78);var col=document.querySelector(\"[class*='_sidebarCol']\");" +
-                "var els=[sb];if(col&&col.isConnected&&col.getBoundingClientRect().width>=vw*0.9)els.push(col);" +
-                "for(var z=0;z<prev.length;z++){if(prev[z]&&prev[z]!==sb&&prev[z]!==col&&prev[z].isConnected){" +
-                "try{prev[z].style.removeProperty('width');prev[z].style.removeProperty('max-width');}catch(e8){}}}" +
-                "for(var y=0;y<els.length;y++){bwSet(els[y],'width',nw+'px');bwSet(els[y],'max-width',nw+'px');}" +
-                "window.__bwNarrowEl=els;window.__bwNarrow=nw;window.__bwFpW=sb;return nw;}" +
+                "function clr(e){try{e.style.removeProperty('grid-template-columns');" +
+                "e.style.removeProperty('position');e.style.removeProperty('left');" +
+                "e.style.removeProperty('top');e.style.removeProperty('bottom');" +
+                "e.style.removeProperty('width');e.style.removeProperty('max-width');" +
+                "e.style.removeProperty('z-index');}catch(e7){}}" +
+                "function undo(){for(var z=0;z<prev.length;z++){if(prev[z]&&prev[z].isConnected)clr(prev[z]);}" +
+                "window.__bwNarrowEl=[];window.__bwNarrow=0;window.__bwFpW=null;return 0;}" +
+                "function skip(){return prev.length?undo():0;}" +
+                "if(vw>1023)return skip();" +
+                "var col=document.querySelector(\"[class*='_sidebarCol']\");" +
+                "var ctr=document.querySelector(\"[class*='_centerCol']\");" +
+                "if(!col||!col.isConnected||!ctr||!ctr.isConnected)return skip();" +
+                "var frame=col.parentElement;if(!frame||!frame.isConnected)return skip();" +
+                "var fcs=getComputedStyle(frame);if(fcs.display.indexOf('grid')<0)return skip();" +
+                //   两种形态都要治（CDP 实测）：①**并排**——tracks="280px 80px 0px"，正文只有 80 ⇒
+                //   把侧栏轨道压成 0、正文轨道 minmax(0,1fr)；②**覆盖层**——展开时 frame 塌成单轨道
+                //   "360px"，侧栏占第一行满宽、正文在第二行被整个盖住（遮罩 0.92 看着不透明）⇒
+                //   只需把侧栏列摘出流（fixed），正文那一行就顶上来占满视口。两种最后都把列 fixed
+                //   成 0.78vw 覆盖层，形态与笔电一致（侧栏浮着、正文满宽、立绘透得出来）。
+                "var ctrW=ctr.getBoundingClientRect().width,sbW=col.getBoundingClientRect().width;" +
+                "if(ctrW>=vw*0.8&&sbW<vw*0.9)return skip();" +
+                "var tr=fcs.gridTemplateColumns.split(' ');" +
+                "var kids=[].slice.call(frame.children),at=-1,n;" +
+                "for(n=0;n<kids.length;n++){if(kids[n]===col){at=n;break;}}" +
+                "var nw=Math.round(vw*0.78);" +
+                "if(ctrW<vw*0.8&&tr.length>=2&&at>=0&&at+1<tr.length){" +
+                "var t2=tr.slice();t2[at]='0px';t2[at+1]='minmax(0,1fr)';" +
+                "bwSet(frame,'grid-template-columns',t2.join(' '));}" +
+                "bwSet(col,'position','fixed');bwSet(col,'left','0px');bwSet(col,'top','0px');" +
+                "bwSet(col,'bottom','0px');bwSet(col,'width',nw+'px');bwSet(col,'max-width',nw+'px');" +
+                "bwSet(col,'z-index','60');" +
+                "window.__bwNarrowEl=[frame,col];window.__bwNarrow=nw;window.__bwFpW=col;return nw;}" +
                 "function bwPanelBg(){var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
                 //   注意：DSH 的 bundle 里**外壳与侧栏根是两个不同哈希命名空间**（笔电外壳 BynINW_*
                 //   但侧栏根 _2H3hWW_*；VM1 是 pI_x6G_* / hHd-Xa_*），所以推导前缀只能当兜底：
