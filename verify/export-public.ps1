@@ -148,5 +148,21 @@ foreach ($r in $remotes) {
   if ($remote -notmatch [regex]::Escape($local)) { throw "$r master != local HEAD $local" }
   Write-Host "verified $r = $($local.Substring(0, 7))"
 }
+# GitHub's DEFAULT branch is "main" (an orphan initial commit, unrelated history to master).
+# Visitors land on the default branch, so mirror master onto main too (force: unrelated roots).
+# Hard fact 2026-10-18: main sat at 1c719c1 for months while master moved on - GitHub's front
+# page showed a stale page. (Cleaner fix not taken: flip GitHub's default branch to master via
+# web settings, then delete main. No API token on this box, so we mirror instead.)
+foreach ($r in $remotes) {
+  $url = ""
+  foreach ($u in (git remote get-url --push $r)) { $url += "$u" }
+  if ($url -notmatch 'github') { continue }
+  git push --porcelain --force $r master:main | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "push $r master:main failed" }
+  $m = ""
+  foreach ($x in (git ls-remote $r main)) { $m += "$x" }
+  if ($m -notmatch [regex]::Escape($local)) { throw "$r main != local HEAD $local" }
+  Write-Host "verified $r main = $($local.Substring(0, 7))"
+}
 Write-Host "exported to all public remotes ("$($remotes -join ',')")"
 Pop-Location
