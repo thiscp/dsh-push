@@ -132,7 +132,8 @@ class QuickAnswerActivity : Activity() {
 
     // 提交成功（v1.31.0）：主题"活立绘"动画 WebP（发丝裙摆波动+呼吸）弹跳入场后循环播放，
     // 停留约 2.6s 自动关闭；API<28 或解码失败退回 v1.26 运行时摇摆（静图+属性动画），零依赖。
-    // 底色跟随主题 dshCardBg（深色主题不穿帮）
+    // v1.33.25：容器底色**必须透明**——v1.31 时动画帧里烘着浅色底，所以要铺 dshCardBg 兜底；
+    // v1.33.23 起动画改为绿键抠像的真 alpha（四角 alpha=0），这层底色就变成了用户能看见的"一块板"。
     private fun showSuccessThenFinish() {
         val pose = ThemePrefs.poseRes(this)
         val iv = ImageView(this).apply {
@@ -141,7 +142,7 @@ class QuickAnswerActivity : Activity() {
         val h = dp(230)
         val w = (h * 935f / 1682f).toInt()
         val box = FrameLayout(this).apply {
-            setBackgroundColor(c(R.attr.dshCardBg))
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0x00000000))
             addView(iv, FrameLayout.LayoutParams(w, h, Gravity.CENTER))
         }
         val d = AlertDialog.Builder(this).setView(box).setCancelable(false).create()

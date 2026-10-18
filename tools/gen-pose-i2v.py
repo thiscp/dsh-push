@@ -1,10 +1,7 @@
 # gen-pose-i2v.py -- free i2v (NO end-frame pin) => the model is allowed to actually act.
-# 旧 FLF2V 路线把首尾钉成同一张图，实测动作幅度只有 6~12px（<1%），等于微动；
-# 这里换 WanImageToVideo（只给 start_image），让 Wan 敢做"蹦 + 挥手"，循环交给
-# key/pingpong 步骤用正反拼接保证无缝（前进 N 帧 + 倒放 N-2 帧）。
-#
+# 鏃?FLF2V 璺嚎鎶婇灏鹃拤鎴愬悓涓€寮犲浘锛屽疄娴嬪姩浣滃箙搴﹀彧鏈?6~12px锛?1%锛夛紝绛変簬寰姩锛?# 杩欓噷鎹?WanImageToVideo锛堝彧缁?start_image锛夛紝璁?Wan 鏁㈠仛"韫?+ 鎸ユ墜"锛屽惊鐜氦缁?# key/pingpong 姝ラ鐢ㄦ鍙嶆嫾鎺ヤ繚璇佹棤缂濓紙鍓嶈繘 N 甯?+ 鍊掓斁 N-2 甯э級銆?#
 # usage: python gen-pose-i2v.py <theme> [seed] [light|full] [length]
-# 输出: %TEMP%\poseai\i2v_<theme>_s<seed>_L<len>_green_raw.webp
+# 杈撳嚭: %TEMP%\poseai\i2v_<theme>_s<seed>_L<len>_green_raw.webp
 import json, os, sys, time, tempfile, urllib.request, urllib.error
 
 THEME = sys.argv[1] if len(sys.argv) > 1 else 'day'
@@ -12,23 +9,28 @@ SEED = int(sys.argv[2]) if len(sys.argv) > 2 else 7
 MODE = sys.argv[3] if len(sys.argv) > 3 else 'light'
 LEN = int(sys.argv[4]) if len(sys.argv) > 4 else 25
 BASE = "http://127.0.0.1:8000"
-W, H = 416, 768
+W = int(sys.argv[5]) if len(sys.argv) > 5 else 416      # quality-first: 480x864 = same aspect as 422x760 (supersample)
+H = int(sys.argv[6]) if len(sys.argv) > 6 else 768     # 璐ㄩ噺浼樺厛锛氱敤 480x864锛堜笌 422x760 鍚屾瘮渚嬭秴閲囨牱锛?H = int(sys.argv[6]) if len(sys.argv) > 6 else 768
 TMP = os.path.join(tempfile.gettempdir(), 'poseai')
 os.makedirs(TMP, exist_ok=True)
-RAW = os.path.join(TMP, f'i2v_{THEME}_s{SEED}_L{LEN}_green_raw.webp')
+RAW = os.path.join(TMP, f'i2v_{THEME}_s{SEED}_L{LEN}_{W}x{H}_green_raw.webp')
 
 POS = ("the cute whale girl with long blue hair and white maid headband, wearing a navy blue dress "
        "with white apron, she jumps up joyfully with both arms raised in celebration, "
        "a big happy bounce, then lands and bounces again, her hair and skirt swing with the jump, "
        "sparkles twinkle around her, energetic cheerful motion, static camera, fixed framing, "
        "uniform flat pure green background, high quality anime style, "
-       "same character and same outfit as the reference image")
+       "same character and same outfit as the reference image, "
+       "her eyes stay exactly the same bright light blue as the reference image, "
+       "identical eye color, identical eye shape, identical bright highlights, identical face")
 NEG = ("sad, crying, angry, walking away, leaving frame, camera movement, zoom in, zoom out, pan, "
        "dolly, scene change, background change, changing clothes, changing hairstyle, changing face, "
        "different character, identity change, extra limbs, missing limbs, deformed hands, "
        "extra fingers, green on character, green outline, morphing, flickering, distorted anatomy, "
        "text, watermark, blurry, low quality, oversaturated, cropped, tiny character, "
-       "character getting smaller, character getting larger")
+       "character getting smaller, character getting larger, "
+       "dark eyes, different eye color, eye color change, eye color shift, different eye shape, "
+       "smaller eyes, narrowed eyes, dull colors, desaturated colors, muddy colors, color grading")
 
 HI = "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
 LO = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
