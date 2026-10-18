@@ -296,13 +296,19 @@ class WebActivity : Activity() {
                         "[class*='mAtvLq_header']{flex-wrap:wrap!important}" +
                         "[class*='mAtvLq_headingBlock']{flex:1 1 100%!important;min-width:0}" +
                         "[class*='_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
-                        "[class*='_sidebarCol']{overflow:visible!important;backdrop-filter:none!important;" +
+                        "[class*='_sidebarCol']{position:relative!important;z-index:80!important;overflow:visible!important;backdrop-filter:none!important;" +
                         "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
                         "[class*='_sidebarCol']>*>[class*='_root']:not([class*='_collapsed']){position:fixed!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
-                        "z-index:60!important;overflow-y:auto!important;overflow-x:hidden!important;" +
+                        "z-index:70!important;overflow-y:auto!important;overflow-x:hidden!important;" +
                         "box-shadow:0 8px 32px rgba(0,0,0,.35)!important}" +
+                        // 126：右面板是 rightbarCol 里的 absolute 全屏浮层（收起态实测也是 0,0,360,671、底色 transparent），DOM 顺序排在侧栏之后；
+                        // 125 把 sidebarCol 抬到 z:80 后，收起态的侧栏反过来压住了右面板的左边缘（用户：「完全遮挡住一部分」，笔电是半透明能透出）。
+                        // 笔电原生的绘制顺序是右面板在上、侧栏透过它的半透明底看得见 ⇒ 只在**收起态**把 rightbarCol 抬到 90 复原；
+                        // 展开态不抬：侧栏仍压住面板（可点），四态矩阵量到的仍是侧栏自己的 0.92 —— 直抬 90 曾被矩阵拦下（expanded 侧栏 alpha 0.45）。
+                        // :has() 判据实测精确：收起态全页只有侧栏根带 _collapsed、展开态一个都没有；老 WebView 不认 :has() 就整条丢弃 = 退回 125 行为。
+                        "[class*='_frame']:has([class*='_collapsed']) [class*='_rightbarCol']{position:relative!important;z-index:90!important}" +
                         "[class*='hIlkoa_title']{min-width:0!important;flex-shrink:1!important}" +
                         "[class*='hIlkoa_time']{flex-shrink:0!important;margin-left:8px!important}" +
                         "[class*='_9lTDKa_list']{padding-bottom:40px!important}" +
@@ -735,11 +741,10 @@ class WebActivity : Activity() {
                 //   展开/收起：类名宿主沿用原来的 collapsed 类名判据；几何宿主读「侧栏宽 ≥
                 //   轨道宽+40」（真机撤销定位后侧栏 position 仍是 static，既不能用 position 判、
                 //   也没有 collapsed 类名可读）；指纹臂用同一条宽度判据 + 把手边界兜底。
-                //   ★ v1.33.12：侧栏根上的毛玻璃压掉。实测 VM 宿主侧栏根有 backdrop-filter:blur(12px)
-                //   （内联样式，样式表的 !important 压不住），笔电那台是 none ⇒ 于是 VM 侧栏后面
-                //   的正文是清晰的、笔电是糊的（用户连拍可以看出）。用 bwSet 写内联 important 才压得住。
-                "if(sb&&exp&&window.innerWidth<=1023){bwSet(sb,'backdrop-filter','none');" +
-                "bwSet(sb,'-webkit-backdrop-filter','none');}" +
+                //   ⚠️ v1.33.14：撤回 v1.33.13 的「压掉侧栏毛玻璃」。那次是拿**浅色主题**的模拟器对比
+                //   得出的结论（两边底色都是 rgba(249,250,251,.92)），而用户手机是 WebView 的**算法暗化**
+                //   （系统 night=yes 后 prefers-color-scheme 仍是 light ⇒ 模拟器复现不出来）。真机对照
+                //   09:05（去毛玻璃）比 22:37 笔电（有毛玻璃）更糟：正文太扎眼 ⇒ 恢复毛玻璃。
                 "bwAlpha(sb,exp&&window.innerWidth<=1023);}" +
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
