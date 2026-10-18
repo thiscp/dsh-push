@@ -8,12 +8,17 @@
 用法（在装了 rembg 的环境里跑，如 F:\\AI\\matte-venv）：
   python matte_pipeline.py <raw.webp> <out.webp> [--start N] [--frames N] [--pingpong]
       [--fit] [--size 422x760] [--duration 84] [--model isnet-anime] [--qa out.png] [--despill 1]
+      [--color-ref pose.webp] [--sharpen 60]
+
+  --color-ref：给出原立绘路径 ⇒ 每帧角色区域在 **Lab 空间做均值/方差对齐**到原立绘，
+      消除生成模型的整体色偏（实测主色相偏约 6°，肉眼就是"头发颜色不一样"）。
+  --sharpen：USM 强度百分比（0=关闭）；生成源分辨率有限，轻微锐化能明显改善"糊"感。
 """
 import os
 import sys
 
 import numpy as np
-from PIL import Image, ImageSequence
+from PIL import Image, ImageFilter, ImageSequence
 from rembg import new_session, remove
 
 args = sys.argv[1:]
@@ -30,6 +35,9 @@ DUR = int(opt("--duration", 84))
 MODEL = opt("--model", "isnet-anime")
 QA = opt("--qa", None)
 SPILL = int(opt("--despill", 1))
+COLOR_REF = opt("--color-ref", None)
+STRENGTH = float(opt("--color-strength", 0.6))
+SHARPEN = int(opt("--sharpen", 60))
 do_fit = "--fit" in args
 do_pp = "--pingpong" in args
 w, h = opt("--size", "422x760").lower().split("x")
@@ -46,6 +54,21 @@ if do_pp:
 print("frames to matte", len(frames), "pingpong", do_pp, flush=True)
 
 sess = new_session(MODEL)
+
+# 色彩对齐的参考统计量（Lab 空间，只看原立绘的角色像素）
+ref_stats = None
+if COLOR_REF and os.path.exists(COLOR_REF):
+    r_im = Image.open(COLOR_REF).convert("RGBA")
+    r_lab = np.asarray(r_im.convert("LAB")).astype(np.float32)
+    r_mask = np.asarray(r_im)[:, :, 3] > 8
+    if r_mask.sum() > 100:
+        ref_stats = [(float(r_lab[..., c][r_mask].mean()), float(r_lab[..., c][r_mask].std()))
+                     for c in range(3)]
+        print("color-ref", COLOR_REF, "masked px", int(r_mask.sum()),
+              "lab mean", [round(x[0], 1) for x in ref_stats], flush=True)
+    else:
+        print("color-ref ignored (no opaque pixels)", flush=True)
+
 out = []
 for i, fr in enumerate(frames):
     res = remove(fr, session=sess)                      # RGBA
@@ -54,7 +77,31 @@ for i, fr in enumerate(frames):
         # 去绿边：绿通道不得超过红蓝较大者（只压绿、不动 alpha 与其它通道）
         cap = np.maximum(a[:, :, 0], a[:, :, 2])
         a[:, :, 1] = np.minimum(a[:, :, 1], cap)
-    out.append(Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), "RGBA"))
+    rgba = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), "RGBA")
+
+    # 色度对齐到原立绘：**只动 Lab 的 a/b（色度），不动 L（亮度），也不做方差缩放**。
+    # 早先做过"三通道 mean+std 全对齐"，结果色相从 231.6° 被推到 214.9°（离原图 237.3° 更远）——
+    # 因为角色在画面里的构成比例（深色裙/白围裙占比）与逐帧不同，强行对齐统计量会过冲。
+    # 现在只平移色度均值并乘 STRENGTH，属于保守校正。
+    if ref_stats is not None and STRENGTH > 0:
+        al = np.asarray(rgba)[:, :, 3]
+        m = al > 8
+        if m.sum() > 100:
+            lab = np.asarray(rgba.convert("LAB")).astype(np.float32)
+            for c in (1, 2):
+                mf = float(lab[..., c][m].mean())
+                mr = ref_stats[c][0]
+                lab[..., c] = np.where(m, lab[..., c] + (mr - mf) * STRENGTH, lab[..., c])
+            lab = np.clip(lab, 0, 255).astype(np.uint8)
+            rgb2 = Image.fromarray(lab, "LAB").convert("RGB")
+            rgba = Image.merge("RGBA", (*rgb2.split(), rgba.split()[3]))
+
+    # 轻微 USM：生成源分辨率有限，锐化后再降采样可明显改善"糊"感
+    if SHARPEN > 0:
+        sharp = rgba.convert("RGB").filter(ImageFilter.UnsharpMask(1.2, SHARPEN, 2))
+        rgba = Image.merge("RGBA", (*sharp.split(), rgba.split()[3]))
+
+    out.append(rgba)
     if (i + 1) % 8 == 0:
         print("  matted", i + 1, flush=True)
 
