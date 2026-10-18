@@ -10,6 +10,9 @@ MODE = sys.argv[3] if len(sys.argv) > 3 else 'light'
 LEN = int(sys.argv[4]) if len(sys.argv) > 4 else 25
 BASE = "http://127.0.0.1:8000"
 W = int(sys.argv[5]) if len(sys.argv) > 5 else 416      # quality-first: 480x864 = same aspect as 422x760 (supersample)
+H = int(sys.argv[6]) if len(sys.argv) > 6 else 768
+# --refp: use the padded green reference (prep_green_pad.py) so raised arms / jumps stay inside the frame
+REF = (f"grefp_{THEME}.png" if "--refp" in sys.argv else f"gref_{THEME}.png")
 H = int(sys.argv[6]) if len(sys.argv) > 6 else 768     # 璐ㄩ噺浼樺厛锛氱敤 480x864锛堜笌 422x760 鍚屾瘮渚嬭秴閲囨牱锛?H = int(sys.argv[6]) if len(sys.argv) > 6 else 768
 TMP = os.path.join(tempfile.gettempdir(), 'poseai')
 os.makedirs(TMP, exist_ok=True)
@@ -45,7 +48,7 @@ g = {
   "4": {"class_type": "VAELoader", "inputs": {"vae_name": "wan_2.1_vae.safetensors"}},
   "5": {"class_type": "CLIPTextEncode", "inputs": {"text": POS, "clip": ["3", 0]}},
   "6": {"class_type": "CLIPTextEncode", "inputs": {"text": NEG, "clip": ["3", 0]}},
-  "7": {"class_type": "LoadImage", "inputs": {"image": f"gref_{THEME}.png"}},
+  "7": {"class_type": "LoadImage", "inputs": {"image": REF}},
   "9": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["1", 0], "shift": SHIFT}},
   "11": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["2", 0], "shift": SHIFT}},
   "10": {"class_type": "LoraLoaderModelOnly", "inputs": {"model": ["9", 0], "lora_name": LORA_HI, "strength_model": 1.0}},

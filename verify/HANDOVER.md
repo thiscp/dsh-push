@@ -1966,3 +1966,27 @@ bright highlights）+ 负向词（dark eyes / eye color change / eye color shift
 | 发布 | SUMMARY **10/10**，**geom-matrix PASS states=4 fails=0（85s，真跑通）**，线上 `?v=131`，通知 `id: OEGTNWsm9v43` |
 | 仓库 | 私有 `4b4bd17`；开源四 ref 全 `84bcd42`（含 github main） |
 | 待用户 | 装 131 后确认：① 快答浮窗不再有底板 ② 瞳孔亮青蓝 |
+
+### 7.9 抠像与构图再优化（1.33.26 / 132，2026-10-18 晚）
+
+用户真机回执又提两条：**① 抠像不够精细 ② 动作大时超出范围显示不全**。
+
+**① 出框的根因是参考图没有余量**：`gref_*.png` 里角色占画布高 **96.7%**、上下仅 **12px(1.6%)**，
+一抬手立刻出框。新增 `tools/prep_green_pad.py` 重建参考图：角色缩到**画布高 70%**、居中、四周留纯绿、
+上下各 **130px**；`gen-pose-i2v.py` 加 `--refp` 切换到该参考图。
+实测六主题出框检查：top 最小 **55px**（此前 0）、bottom/left/right 全在界内 ⇒ 不再被裁。
+
+**② 抠像改用成熟方案**：旧方案 = 纯色键 + `MinFilter(3)` 1px 腐蚀——**腐蚀就是啃掉发丝/蕾丝/羽毛的元凶**。
+换成 **rembg 的 `isnet-anime`**（动漫抠像工业标准，权重 176MB）+ 一道 despill（`G <= max(R,B)`），
+脚本 `tools/matte_pipeline.py`。软边占比由 **0.98% → 2~3%**（半透明细节保留下来了）。
+自研的两版临时探索（`key_alpha2.py` 软过渡+背景反解）保留作对照，**不作为生产路径**——
+反解按纯绿 (0,255,0) 会把绿通道压到 0 而红蓝保留，**边缘发紫**；加"G 不低于 min(R,B)"钳制可缓解但不如 isnet-anime 干净。
+
+**③ 裁剪要统一**：按**全帧并集包围盒**裁一次（不是逐帧裁），否则逐帧缩放会让角色在动画里抖动。
+
+**④ 环境**：rembg 装在**独立 venv `F:\AI\matte-venv`**（miniconda 基座），**绝不装进 ComfyUI 的 venv**
+（rembg 会拉 opencv/onnxruntime，动 numpy 版本会砸坏 torch/cu130）。首次下载模型要能出网——
+本机需开 ClashVerge TUN，否则 `ConnectionResetError 10054`。
+
+**终态**：**1.33.26 / 132**，APK 12,808,104 B，SUMMARY **10/10**（geom-matrix PASS 77s、states=4 fails=0），
+线上 `?v=132`，通知 `id: RdUw3TrTTtCU`；6 主题 33 帧 422×760 真 alpha（四角 0）、正反拼接无缝。
