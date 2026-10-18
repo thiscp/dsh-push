@@ -106,6 +106,15 @@ async function openHot(url) {
   return waitReady(30000);
 }
 async function toggle() {
+  // 先关右面板（若在开）：右面板是 absolute 满屏透明浮层，会吞掉左栏开关的点击
+  // （2026-10-18 VM1 实测：右面板开着时点 "Open sidebar" 落在浮层上，左栏永远展不开，expanded 格恒读 56/0.45）
+  const rp = await ev("(function(){var b=document.querySelectorAll('button,[role=button]');for(var i=0;i<b.length;i++){var a=(b[i].getAttribute('aria-label')||'')+' '+(b[i].title||'');if(a.indexOf('Collapse right sidebar')>=0||a.indexOf('收起右侧边栏')>=0){var r=b[i].getBoundingClientRect();if(r.width>0)return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)])}}return null})()");
+  if (rp) {
+    const p = JSON.parse(rp);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: p[0], y: p[1], button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p[0], y: p[1], button: 'left', clickCount: 1 });
+    await sleep(1200);
+  }
   const pos = await ev("(function(){var b=document.querySelectorAll('button,[role=button]');for(var i=0;i<b.length;i++){var a=(b[i].getAttribute('aria-label')||'')+' '+(b[i].title||'');if(a.indexOf('Open sidebar')>=0||a.indexOf('Collapse sidebar')>=0){var r=b[i].getBoundingClientRect();if(r.width>0&&r.width<90&&r.top<300)return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)])}}return null})()");
   if (!pos) return false;
   const xy = JSON.parse(pos);

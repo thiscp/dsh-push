@@ -1834,3 +1834,52 @@ tmp\p0x\p02-driver.mjs / p02-edge.cmd
 3. 若继续 task-10：**P05 → P03 → P04 → P06**，并要求**每用例即 commit**（引擎抖动环境下把损失上界压到一个用例）。
 4. 判断"队友到底做了没有"：**同查三处**（git 提交 / 报告"实际"小节 / `tmp`+`shots`+`evidence` 的孤儿产物）——
    **git 干净 ≠ 没干活**（本轮 P02 就是干完活没来得及入账）。
+
+---
+
+## 6. v1.33.21 / 127 轮（2026-10-18，单人模式，lead 全程）
+
+### 6.1 需求与根因
+
+用户报告：**聊天里发的图片缩略图左边被切一条，缺的宽度"正好等于侧边栏宽度"，点开全屏又正常**。
+CDP 直连模拟器 WebView 取证钉死根因：**不是侧栏盖图**（卡片 x=212..321 与侧栏 x=0..56 不重叠），
+而是注入 CSS 的 `[class*='_frame']` **子串匹配误伤**消息流里的附件卡 `Nhu-QW_frame`（类名也含 `_frame`）：
+卡片被钉成 `56px|1fr|0` 三列，img（`width:100%` = **列宽**）只剩 56px + cover 居中裁切；
+**56 恰等于收起栏宽**，所以看着像"侧栏盖图"。页面上 `[class*='_frame']` 命中 5 个元素，4 个是误伤。
+
+### 6.2 修复与验收
+
+- `a8f9896` **fix(web) 1.33.21/127**：规则加外壳门控 `[class*='_frame']:has([class*='_sidebarCol'])`。
+  验收：img/卡片 fillRatio **0.514→0.991**、外壳 tracks 仍 `56px 304px 0px`、肉眼截图缩略图完整（计算+截图双证）。
+- `f86db65` **fix(verify) geom-matrix 加固**：`toggle()` 前先点 `Collapse right sidebar` 收右面板——
+  右面板是 absolute 满屏透明浮层，开着会**吞掉左栏开关点击**，expanded 格恒读 56/0.45（本轮连挂三轮的根因之一）。
+- 四态矩阵冷跑 **PASS states=4 fails=0**；发布 **SUMMARY: 10/10**（`LOG: C:\Temp\dsh-verify\verify-20261018-144940.log`）；
+  线上 `?v=127` **size=11,004,556**（= 新包）；更新通知 `id: i40HfsAPNXsV`。
+
+### 6.3 本轮踩出的环境坑（已进 skill §15，此处只留索引）
+
+1. **手改模拟器 prefs 的 chown uid 必须现场解析**（`stat -c %u /data/data/xyz.cpyh.dshpush`）：
+   skill 旧记录的 `u0_a242` 在这台 AVD 实际是 **u0_a216** ⇒ 属主错 ⇒ logcat `without permission`
+   ⇒ App 把 prefs 当空（"通行证未配置"）⇒ 不订阅 ⇒ push-received 三连 FAIL ⇒ **deploy 被静默跳过**
+   （第一次发布线上还是旧包、手机没收到推送，而 SUMMARY 仍打 8/8）。
+2. **VM1 矩阵格两前置**：prefs 里 VM1 token 每次 VM1 DSH 重启必换（现值取 VM1 `~/.dsh/web.log` 最后一条
+   `dsh web:`）；`#session-<id>` 必须存在（`ls ~/.dsh/sessions/<workspace-slug>/`，**不在** profiles/web 下）。
+   失效指纹 = **collapsed/expanded 两态截图逐字节相同** + 标题显示 IP。
+3. **diagHud 调试浮层也会吞左上开关点击**——跑矩阵前确认 `diagHud=false`。
+4. 推送链路体检顺带钉死两条 ntfy 边缘事实（根路径 JSON POST 丢体、`since=-24h` 静默空）——见 skill §15。
+
+### 6.4 终态
+
+| 项 | 值 |
+|---|---|
+| 线上 | `?v=127`、`11,004,556 B`、更新通知 `i40HfsAPNXsV`（**待用户真机回执**） |
+| 模拟器 | 已装 1.33.21、真 GPU、prefs 属主已修（u0_a216）、diagHud=off、VM1 token 已刷新 |
+| 私有仓 | `f86db65`（本轮两提交），工作树干净 |
+| 开源镜像 | export-public 已跑（HEAD 推进后需**再跑一次**才算同步本轮提交——见 6.5） |
+
+### 6.5 待办（下轮/下一步）
+
+1. **用户真机回执 127**（缩略图是否完整显示）。
+2. **export-public 需在文档提交后重跑**（本轮第一次跑时改动未提交 ⇒ "public already up to date"），
+   跑后按纪律 **ls-remote 两远端比 sha + 公开仓全文件个人值正则 0 命中**。
+3. README 硬事实 3（"JSON body 必须 POST 到根路径"）与本轮实测相反（根路径丢体、`/dsh`+头可用）——**下轮复核改口径**。

@@ -295,7 +295,11 @@ class WebActivity : Activity() {
                         "s.textContent=\"@media (max-width:1023px){" +
                         "[class*='mAtvLq_header']{flex-wrap:wrap!important}" +
                         "[class*='mAtvLq_headingBlock']{flex:1 1 100%!important;min-width:0}" +
-                        "[class*='_frame']{grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
+                        // 127：[class*='_frame'] 子串匹配误伤消息流里的附件缩略图卡片 Nhu-QW_frame（类名也含 _frame），
+                        // 被钉成 56px|1fr|0 三列后 img（width:100% = 列宽）只剩 56px、cover 居中裁切 ⇒ 缩略图左边被切，
+                        // 56 恰等于收起栏宽，看着像"侧栏盖图"（实测卡片 x=212..321 与侧栏 x=0..56 不重叠）。
+                        // 加 :has(_sidebarCol) 外壳门控：只有含侧栏列的外壳命中（四态矩阵不受影响），缩略图/会话流自动脱身。
+                        "[class*='_frame']:has([class*='_sidebarCol']){grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
                         "[class*='_sidebarCol']{position:relative!important;z-index:80!important;overflow:visible!important;backdrop-filter:none!important;" +
                         "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
