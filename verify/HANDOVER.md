@@ -1883,3 +1883,59 @@ CDP 直连模拟器 WebView 取证钉死根因：**不是侧栏盖图**（卡片
 2. **export-public 需在文档提交后重跑**（本轮第一次跑时改动未提交 ⇒ "public already up to date"），
    跑后按纪律 **ls-remote 两远端比 sha + 公开仓全文件个人值正则 0 命中**。
 3. README 硬事实 3（"JSON body 必须 POST 到根路径"）与本轮实测相反（根路径丢体、`/dsh`+头可用）——**下轮复核改口径**。
+
+---
+
+## 7. v1.33.21→1.33.23 轮：快答成功动画改由 ComfyUI 生成（2026-10-18 下午）
+
+### 7.1 需求与一次返工
+
+用户要求：**快答成功动画要由 ComfyUI 生成新画面，且背景真透明**。
+第一轮我误解成"把现有静态立绘做程序化位移变形"（路线 A，	ools/gen_pose_anim2.py：连蹦三下+压缩回弹+侧倾），
+已发 1.33.22/128 并被用户指出方向错。**路线 A 保留在 tools/ 作为备选，不再生产使用。**
+
+### 7.2 三条生成路线的实测天花板（5070 Ti，Wan2.2 i2v 14B fp8 + 4 步 lightning LoRA）
+
+| 路线 | 节点 | 耗时 | 动作幅度 | 结论 |
+|---|---|---|---|---|
+| FLF2V 首尾同图（旧配方） | WanFirstLastFrameToVideo | 110s/49帧 | **top 6~12px（<1%）** | 只敢微动——**这就是原版"几乎静止"的根因** |
+| **自由 i2v（采用）** | **WanImageToVideo（只给 start_image）** | **30s/33帧** | **top 34px / 质心 72px，出现明确抬手** | ✅ 出片并采用（seed 42 最佳） |
+| Wan-Animate-2 表演迁移 | WanAnimate2ToVideo + drive-woman-480.mp4 | 360s/81帧 | — | ❌ 产出**驱动视频本身**（真人挥手画面），迁移未生效；推测 width/height 与驱动视频 480x512 不匹配导致直通，未继续修 |
+
+**多种子筛选**（33 帧）：seed 11/23/42/77 的质心垂直位移分别 25/43/**72**/40 px ⇒ 取 42。
+**结论：要让 Wan 做出真动作，必须解除首尾同图约束；循环改由正反拼接保证。**
+
+### 7.3 透明链路（真 alpha，不是烘底色）
+
+生成时提示词写 uniform flat pure green background + 负向词 green on character，输出后：
+色键 lpha = 1 - (G - max(R,B))/30 → MinFilter(3) 1px 腐蚀去抗锯齿环 → despill（半透明像素 G 不得超过 max(R,B)）。
+实测：**四角 alpha 全 0**、不透明占比 0.455、洋红/深色底上零绿边。脚本 	ools/key_alpha.py。
+
+### 7.4 无缝循环的做法
+
+不做 crossfade，用**正反拼接**：取 17 帧 + 倒放 15 帧 = 33 帧，首末帧逐字节一致 ⇒ 天然无缝。
+33 帧 × 84ms = **2.77s** 一轮；配合 App 侧 450ms 入场 ⇒ 停留需 ≥3.22s，故 SuccessPoseActivity/QuickAnswerActivity
+的自动关闭从 2600ms 改为 **3300ms**（否则连"抬手"都没看完就关了）。
+
+### 7.5 本轮踩到的硬事实
+
+1. **ComfyUI 的 SaveAnimatedWEBP 在 81 帧 × 416×768 时会落成 MP4 容器**（文件 magic = typisom，扩展名仍是 .webp），
+   PIL 直接 UnidentifiedImageError。解码要用 v（comfy venv 里有 PyAV 19.0.1；**台式没有 ffmpeg/ffprobe**）。
+   	ools/key_video.py 就是 av 版抠像器。
+2. **PIL 动图 webp 编码是 CPU 单线程、GPU 帮不上忙**：25 帧 × 6 个文件顺序跑要 ~24 分钟。
+   台式机 --jobs 6 并行 **152 秒** 跑完（快 ~9.5×）。生成走 GPU、编码走多进程，两者别混为一谈。
+3. **台式机的 goopencode key 已过期**：gpu-mode video 会报 desktop judge FAILED，
+   根因是 dsh: AUTH: goopencode API error (401) api_key_expired。笔电的 key 是新格式 oc_sk_…（51 字符）可用，
+   台式仍是旧格式 sk-…（67 字符）已废。修法：把笔电 .credentials.yaml 里的 GOOPENCODE_API_KEY 同步到台式（待用户确认）。
+4. **从笔电把命令丢到后台再返回，远端会被连坐杀掉**（Start-Process 起的 ssh 一旦本端结束，远端进程树跟随终止）：
+   多种子 sweep 第一次就是这样只提交了 1 个。要么同步 WaitForExit，要么交给计划任务（见 gpu-mode skill §9.3）。
+
+### 7.6 终态
+
+| 项 | 值 |
+|---|---|
+| 版本 | **1.33.23 / 129**，APK **12,812,384 B**（资产 7143KB→8057KB，+0.9MB） |
+| 发布 | SUMMARY **10/10**，线上 ?v=129 已更新，更新通知 id: u2P39RqMbefs |
+| 资产 | 6 主题各 33 帧 422×760 真 alpha webp（同 seed 42，八套动作一致） |
+| 装机实测 | 模拟器拉起 SuccessPoseActivity 截图：抬手可见、背景透出桌面、连续三帧哈希各异 |
+| 待用户 | 真机回执（装 129 后看快答成功的动画） |

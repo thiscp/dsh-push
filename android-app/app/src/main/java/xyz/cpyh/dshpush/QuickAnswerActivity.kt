@@ -182,7 +182,9 @@ class QuickAnswerActivity : Activity() {
                     }
                 }
             }.start()
-        iv.postDelayed({ d.dismiss(); finish() }, if (anim != null) 2600L else 1400L)
+        // 同 SuccessPoseActivity（v1.33.22）：停留 ≥ 入场 450ms + 动画一整轮（25 帧 × 110ms = 2750ms），
+        // 否则"连蹦三下"会在收尾前被掐断。
+        iv.postDelayed({ d.dismiss(); finish() }, if (anim != null) 3300L else 1400L)
     }
 
     private fun askQuestion(questions: JSONArray, index: Int, collected: JSONArray) {

@@ -68,9 +68,11 @@ class SuccessPoseActivity : Activity() {
                 }
             }.start()
         // 验收钩子：--ei holdMs 延长停留（仅测试传，线上无人传零影响）
+        // v1.33.22：停留时长必须 ≥ 入场 450ms + 动画一整轮，否则"连蹦三下"会被掐在收尾前。
+        // 动画资产 25 帧 × 110ms = 2750ms ⇒ 上限取 3300ms（450+2750 后再留 ~100ms 定格）。
         val hold = intent.getIntExtra("holdMs", 0)
         iv.postDelayed({ finish() },
-            if (hold > 0) hold.toLong() else if (anim != null) 2600L else 1400L)
+            if (hold > 0) hold.toLong() else if (anim != null) 3300L else 1400L)
     }
 
     override fun onDestroy() {
