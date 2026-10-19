@@ -77,6 +77,15 @@ for i, fr in enumerate(frames):
         # 去绿边：绿通道不得超过红蓝较大者（只压绿、不动 alpha 与其它通道）
         cap = np.maximum(a[:, :, 0], a[:, :, 2])
         a[:, :, 1] = np.minimum(a[:, :, 1], cap)
+        # ★ 边缘加强去绿：薄边缘（手指缝、发丝）上残留的绿靠上面一刀压不干净，
+        #   这里只对 alpha<250 的边缘像素按 excess*K 额外扣绿（K>1 表示多扣）。
+        #   限制在边缘是为了不伤到实心区域（皮肤 R>G>B，若全域多扣会发紫）。
+        K = float(opt("--despill-edge", 1.0))
+        if K > 1.0:
+            al = a[:, :, 3]
+            edge = (al > 0) & (al < 250)
+            excess = np.maximum(0.0, a[:, :, 1] - cap)
+            a[:, :, 1] = np.where(edge, a[:, :, 1] - excess * (K - 1.0), a[:, :, 1])
     rgba = Image.fromarray(np.clip(a, 0, 255).astype(np.uint8), "RGBA")
 
     # 色度对齐到原立绘：**只动 Lab 的 a/b（色度），不动 L（亮度），也不做方差缩放**。

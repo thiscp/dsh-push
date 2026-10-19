@@ -18,7 +18,7 @@ TMP = os.path.join(tempfile.gettempdir(), 'poseai')
 os.makedirs(TMP, exist_ok=True)
 RAW = os.path.join(TMP, f'i2v_{THEME}_s{SEED}_L{LEN}_{W}x{H}_green_raw.webp')
 
-POS = ("the cute whale girl with long blue hair and white maid headband, wearing a navy blue dress "
+POS_JUMP = ("the cute whale girl with long blue hair and white maid headband, wearing a navy blue dress "
        "with white apron, she jumps up joyfully with both arms raised in celebration, "
        "a big happy bounce, then lands and bounces again, her hair and skirt swing with the jump, "
        "sparkles twinkle around her, energetic cheerful motion, static camera, fixed framing, "
@@ -26,6 +26,37 @@ POS = ("the cute whale girl with long blue hair and white maid headband, wearing
        "same character and same outfit as the reference image, "
        "her eyes stay exactly the same bright light blue as the reference image, "
        "identical eye color, identical eye shape, identical bright highlights, identical face")
+
+# 小幅动作版：只做呼吸与轻微摆动，避免大位移带来的形变/一致性损失
+POS_GENTLE = ("the cute whale girl with long blue hair and white maid headband, wearing a navy blue dress "
+       "with white apron, she stands still and only breathes gently, "
+       "a very subtle up-and-down breathing motion, a soft gentle sway of her body, "
+       "her long hair and skirt sway very slightly, her hands stay almost still, "
+       "she keeps her exact same pose and keeps facing the camera, minimal motion, small motion, "
+       "sparkles twinkle faintly around her, static camera, fixed framing, "
+       "uniform flat pure green background, high quality anime style, "
+       "same character and same outfit as the reference image, "
+       "her eyes stay exactly the same bright light blue as the reference image, "
+       "identical eye color, identical eye shape, identical bright highlights, identical face")
+
+MOTION_MODE = 'behind' if '--behind' in sys.argv else ('jump' if '--jump' in sys.argv else 'gentle')
+POS = POS_GENTLE if MOTION_MODE == 'gentle' else POS_JUMP
+
+# 手背身后版：手完全不出现，彻底避免手指被重绘糊掉
+POS_BEHIND = ("the cute whale girl with long blue hair and white maid headband, wearing a navy blue dress "
+       "with white apron, she stands still with both hands clasped behind her back, "
+       "her arms are hidden behind her body and no hands are visible in front, "
+       "she only breathes gently with a very subtle up-and-down breathing motion, "
+       "a soft gentle sway of her body, her long hair and skirt sway very slightly, "
+       "she keeps her exact same pose and keeps facing the camera, minimal motion, small motion, "
+       "sparkles twinkle faintly around her, static camera, fixed framing, "
+       "uniform flat pure green background, high quality anime style, "
+       "same character and same outfit as the reference image, "
+       "her eyes stay exactly the same bright light blue as the reference image, "
+       "identical eye color, identical eye shape, identical bright highlights, identical face")
+
+if MOTION_MODE == 'behind':
+    POS = POS_BEHIND
 NEG = ("sad, crying, angry, walking away, leaving frame, camera movement, zoom in, zoom out, pan, "
        "dolly, scene change, background change, changing clothes, changing hairstyle, changing face, "
        "different character, identity change, extra limbs, missing limbs, deformed hands, "
