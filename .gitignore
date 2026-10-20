@@ -5,3 +5,8 @@ verify/config.local.ps1
 node_modules/
 # packaging artifacts (built by npm pack / tools/pack-npm-tarball.mjs), never committed
 *.tgz
+# 发布/QA 流水线产生的临时产物（每次跑都会重新生成，不入库）
+verify/*-app-debug.apk
+verify/*-debug.apk
+verify/geom-*.png
+verify/qa-*.xml
