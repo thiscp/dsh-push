@@ -902,7 +902,10 @@ class WebActivity : Activity() {
                 // 页面（重）加载 ⇒ 原生栏复位为显示（直调，不走 setBar 的幂等门），防 JS/原生状态错位。
                 // 加载后 2.5s 宽限：聊天页会自动滚到底（一次 0→8000 的传送式跳变），
                 // 那不是"用户下滑读消息"，不该把栏收走（实测 m03657 截图就是这么丢的）。
-                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);}})();", null)
+                // 看门狗（用户 m03906）：新建对话没有内容 → 页面不可滚 → 没有"上滑"手势，
+                // 栏一旦收起就永远回不来。每 800ms 查一次：全页找不到可滚的主容器
+                // （clientHeight≥400 且 scrollHeight>clientHeight+50）而栏正收起 → 立刻复位。
+                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);function bwQrChk(){var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.clientHeight>=400&&e.scrollHeight>e.clientHeight+50&&(!best||e.clientHeight>best.clientHeight))best=e;}if(!best&&hidden)setBar(true);}setInterval(bwQrChk,800);}})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
