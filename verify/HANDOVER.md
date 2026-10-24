@@ -2166,3 +2166,29 @@ i2v raw 480x864 (绿底)
 - 测方差前必须**预热一轮**：首滑长任务是页面固有成本，不预热会把「首滑」误判成「修复无效」。
 
 **交付**：1.33.36 / 142，APK 16,703,360 B，SUMMARY **10/10**、在线 `?v=142` Content-Length 16,703,360、update-notify id `G73uAxcQxrCY`，模拟器已装 142。
+
+### 7.16 apply() 几何读：offsetWidth 是瓶颈 + 并集只量一次（1.33.38 / 144，2026-10-25）
+
+**需求**：承 m05233「操作和响应更丝滑」。1.33.37 已把长对话滑动期长任务从 748ms 降到 ~33ms 稳态（§7.15），本轮继续压 `apply()` 单轮成本。
+
+**取证方法（这轮的核心手段是「常量替换 A/B」）**：单次同步 `window.__dshApply()` 外面包 Profiler（`C:\Temp\apply-prof2.mjs`）只能看到 `(program)` 占 66%，看不出具体是哪一行。真正定位靠**把可疑表达式逐个替换成常量再测**（`C:\Temp\apply-bench3.mjs` / `apply-bench4.mjs`）：
+- base=460ms；`setProperty` 变空函数=452ms；`getComputedStyle` 换常量=431ms ⇒ **写与样式读都不是瓶颈**。
+- `offsetWidth`+`offsetHeight` 换常量=**32ms**；`getBoundingClientRect` 换常量=315ms；两者都换=29ms；base2=478ms ⇒ **offsetWidth/offsetHeight 独占 ~430ms**。
+- 纯读成本（`C:\Temp\read-cost.mjs`，n=1237）：rect 147/134ms、**offw 235/262ms**、gcs 只有 7ms ⇒ offsetWidth 走 WebView 绑定层单次约 0.19ms，是 rect 的近两倍。
+
+**等价性验证（改判据之前必须做）**：`C:\Temp\wh-equiv.mjs` 对 1237 个元素同时取 rect 与 offset：四舍五入后 **dw=0 dh=0**，`big` 判定 **dclass=0**。`C:\Temp\tf-scan.mjs`：全页 transform 元素仅 **11 个且全为 translate**（matrix 的 a、d 都是 1，无缩放），其中 8 个连 rect 与 offsetWidth 都逐位相同。
+
+**两处改动（`WebActivity.kt` 注入段）**：
+1. **几何预读**：主循环里 `e.offsetWidth/e.offsetHeight` 提前成一次批量 `getBoundingClientRect()`（一次拿两个值），结果存 `gw[]/gh[]`，循环内改用数组 —— 顺带消除循环内「读-写-读」交错。
+2. **并集只量一次**：`_cbn` 的 `cbSet` 原本另起一趟 `querySelectorAll` + 逐个 rect（≈130ms/轮）。实测两个集合高度重叠（`C:\Temp\set-overlap.mjs`：nA=1237、nB=1131、**nU=1257**、onlyB=20）⇒ 预读改成遍历**并集**、把 w/h 记在元素 expando `__dshGW/__dshGH`（与注入里 `__dshGlass`/`__cbOk`/`__abpGen` 同一做法），cbSet 只挑不再量。判据（选择器与 `>vw*0.5 && >vh*0.5` 阈值）一个字没改。
+
+**收益**：`C:\Temp\apply-now.mjs` DIRECT 447ms → **191/197ms**；`apply-prof2.mjs` 的 `getBoundingClientRect` 计数 **2369 → 1258**（正好等于并集大小），`off` 计数 **1226 → 0**。帧统计 `jank-probe.mjs`：FLING p50=16.7 p90=33.4 max=100。
+
+**陷阱（写进注释与 skill）**：
+- **别**在预读里加 `getComputedStyle(e).transform` 判是否有 transform：gcs 取 transform 一趟 1237 个要 **110~122ms**，而 rect 全量只要 142ms（`C:\Temp\pre-variants.mjs`：plain 268 / rectonly 142 / mix 267），加了判据等于没省。
+- WeakMap 预算几何反而更慢：预算一趟 269ms 比省下的多（`apply-bench5.mjs`：base=402 warm=174 base2=454 warm2=158 preMs=269）⇒ 用 expando 而不是 Map。
+- 「贴阈值补读」不可行：near（±6px 内）有 743 个，补读成本与全量相同（`near-thresh.mjs`，diffs=0）。
+
+**回归**：`dsh-app-verify.ps1` 两次 **8/8**，发布 **10/10**（geom-matrix PASS states=4 fails=0）。注入 JS 语法闸：`node verify/extract-injected-js.mjs > C:/Temp/bw-narrow.js 2>C:/Temp/bw-extract.err; node --check`（进度行走 stderr，否则合进 JS 报 SyntaxError）。
+
+**交付**：1.33.38 / versionCode 144，APK **16,603,608 B**，在线 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=144` Content-Length 16,603,608（逐字节一致），update-notify id `tY6Zgk0CeX5e`。

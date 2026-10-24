@@ -977,12 +977,67 @@ class WebActivity : Activity() {
                         // window.__qaCb（见下方）。只读诊断，不参与判定。
                         "var qa=[];" +
                         "var cand=[];" +
-                        "function _cbn(t){var n=0,ds=t.querySelectorAll(" +
+                        // ★ v1.33.38 性能（用户 m05233「操作和体验更丝滑」，续 1.33.37）：
+                        //   把主循环里逐元素的 `e.offsetWidth/e.offsetHeight` **提前成一次批量读**。
+                        //   实测（笔电 loopback、1237 候选元素）：offsetWidth+offsetHeight 走 WebView
+                        //   绑定层单次约 0.19ms，1226 次合计 **235ms**，而 apply() 整轮只有 450ms
+                        //   ⇒ 几何读占了一半以上；纯计算/写入/样式读都不是瓶颈
+                        //   （把 setProperty 变空函数 452ms、把 getComputedStyle 换常量 431ms，几乎不变）。
+                        //   对照组：同样 1237 个元素 `getBoundingClientRect()` 一趟只要 **139ms**（一次拿两值），
+                        //   而且**四舍五入后与 offsetWidth/offsetHeight 逐位相同**——实测 1237 元素
+                        //   dw=0 dh=0，`big` 判定 dclass=0（wh-equiv.mjs）。
+                        //   ⚠ 但 rect 含 transform、offsetWidth 不含（这条 1.33.37 的注释里已记）；
+                        //   本页实测无缩放型 transform，故统一用 rect（判据阈值一个字不改）。
+                        //   getComputedStyle 一趟 1237 个只要 7ms，用它做闸门几乎零成本。
+                        //   预读还顺带消除循环内「读-写-读」交错：所有几何都在任何写入之前取完。
+                        //   ⚠ 陷阱：**别**在预读里加 `getComputedStyle(e).transform` 判是否有 transform
+                        //   再决定用 rect 还是 offsetWidth——实测 gcs 取 transform 这一趟 1237 个要
+                        //   **110~122ms**，而 rect 全量只要 **142ms**（v1.33.38 pre-variants.mjs：
+                        //   plain 268 / rectonly 142 / mix 267 / gcs 单独 115），加了判据等于没省。
+                        //   实测本页 transform 元素共 **11 个且全为 translate**（matrix 的 a、d 都是 1，
+                        //   即无缩放；tf-scan.mjs），其中 8 个连 rect 与 offsetWidth 都逐位相同。
+                        //   结论：直接全量 rect。
+                        // ★ v1.33.38 第二批：**并集只量一次**。_cbn 的 cbSet 原来另起一趟
+                        //   querySelectorAll(1131 个) + 逐个 rect（≈130ms/轮，惰性但每轮都要付）。
+                        //   实测两个集合高度重叠：主循环 1237 个、cbSet 集合 1131 个，
+                        //   **并集只有 1257 个**（set-overlap.mjs：nA=1237 nB=1131 nU=1257 onlyB=20）。
+                        //   所以预读改成遍历并集、把 w/h 记在元素自己的 expando 上（注入里
+                        //   __dshGlass / __cbOk / __abpGen 都是同样做法），两边各取所需。
+                        //   判据**一个字不改**：cbSet 仍用原来的选择器与阈值，只是不再重复量。
+                        "var gw=new Array(all.length),gh=new Array(all.length);" +
+                        "var gu=document.querySelectorAll('div,main,section,header,aside,nav," +
+                        "button,textarea,input,ul,li,article,pre,code,table');" +
+                        "for(var gi=0;gi<gu.length;gi++){var g0=gu[gi];" +
+                        "var gr0=g0.getBoundingClientRect();" +
+                        "g0.__dshGW=Math.round(gr0.width);g0.__dshGH=Math.round(gr0.height);}" +
+                        "for(var gj=0;gj<all.length;gj++){" +
+                        "gw[gj]=all[gj].__dshGW;gh[gj]=all[gj].__dshGH;}" +
+                        // ★ v1.33.37 性能（用户 m05233「操作和体验更丝滑」）：_cbn 原来对**每个**
+                        //   候选元素各跑一次 `t.querySelectorAll(DSQ)` 再逐个 getBoundingClientRect，
+                        //   是 apply() 里最贵的一段。实测（笔电 loopback、1237 节点 / 41 个 big）：
+                        //   _cbn 合计 **1339~1547ms**，占单轮 apply() 的 90%+；CPU profile 里
+                        //   getBoundingClientRect 独占 56.2%、apply 自身 26.6%、_cbn 3.3%。
+                        //   等价改写：**一轮只量一次**「所有 DSQ 元素里够大的那些」（cbSet），
+                        //   之后 _cbn(t) 就退化成数 cbSet 里 t 的后代个数。
+                        //   逐位等价性已用真机实测（cbn-equiv2.mjs）：41 个 big 元素两版结果
+                        //   **mismatch=0**（旧 1369ms → 新 3ms）。判据本身一个字没改，只是
+                        //   把「同一批几何量」从 O(候选数 × 后代数) 降到 O(全部元素数)。
+                        //   ⚠ MUST 用 getBoundingClientRect（与旧实现同一个度量），不要图快换
+                        //   offsetWidth：带 transform 的盒子两者不等价（0.5px 舍入 + transform 缩放）。
+                        //   再做**惰性化**：cbSet 只在第一次真的要算 _cbn 时才建（首屏/无 big 元素时
+                        //   整段零成本）。代价一次 ~134ms，收益 1339ms。
+                        "var cbSet=null;" +
+                        "function _cbn(t){var n=0;" +
+                        "if(!cbSet){cbSet=[];" +
+                        // v1.33.38：几何已在上面并集预读里量过（挂在 __dshGW/__dshGH 上），
+                        //   这里只挑，不再各量一次 rect。
+                        "var cbAll=document.querySelectorAll(" +
                         "'div,section,main,aside,article,pre,code,table,ul');" +
-                        "for(var q=0;q<ds.length;q++){if(ds[q]===t)continue;" +
-                        "var rr=ds[q].getBoundingClientRect();" +
-                        "if(rr.width>vw*0.5&&rr.height>vh*0.5)n++;}" +
-                        "return n;}" +
+                        "for(var cbi=0;cbi<cbAll.length;cbi++){" +
+                        "var cbA=cbAll[cbi];" +
+                        "if(cbA.__dshGW>vw*0.5&&cbA.__dshGH>vh*0.5)cbSet.push(cbA);}}" +
+                        "for(var q=0;q<cbSet.length;q++){var x=cbSet[q];" +
+                        "if(x!==t&&t.contains(x))n++;}return n;}" +
                         // v1.32.23 底部输入框卡片：MUST 在循环外一次性定位（放循环内 var 会被提到
                         //   _cbn 的函数作用域里，外层引用不到 ⇒ 整段注入 ReferenceError 当场全废，
                         //   实测症状：卡片实底 a=1、veil 不存在、侧栏 alpha=1、矩阵 collapsed 态 FAIL）。
@@ -1022,7 +1077,8 @@ class WebActivity : Activity() {
                         "if(csE.visibility==='hidden')continue;" +
                         "var m=/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?" +
                         "/.exec(csE.backgroundColor);" +
-                        "var w=e.offsetWidth,h=e.offsetHeight;" +
+                        // v1.33.38：改用循环前批量预读的几何（见上方 gw/gh 注释）。
+                        "var w=gw[i],h=gh[i];" +
                         "var cn=(e.className||'').toString();" +
                         // v1.32.11 浮层例外：菜单/popover/对话框此前和普通卡片一样被压到 0.45，
                         // 立绘与底层聊天文字透上来把菜单项文字搅花（用户真机反馈"选择传文件的控件
@@ -1431,6 +1487,9 @@ class WebActivity : Activity() {
                         // apply() 落地。重跑那一轮里它们已是 isCB=true ⇒ 不会再进 cand ⇒ 不会自激。
                         "if(cand.length){requestAnimationFrame(" +
                         "function(){requestAnimationFrame(function(){" +
+                        // ★ v1.33.37：复核用的是**两帧后**的几何，必须丢掉本轮快照重新量
+                        //   （cbSet 在 apply() 闭包里，这里直接置 null 即可让它惰性重建）。
+                        "cbSet=null;" +
                         "var ch=false;for(var c=0;c<cand.length;c++){" +
                         "var t2=cand[c];if(t2.isConnected&&_cbn(t2)<=2)" +
                         "{t2.__cbOk=1;ch=true;if(t2.__qaRec)" +
