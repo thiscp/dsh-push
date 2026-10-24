@@ -2105,3 +2105,5 @@ i2v raw 480x864 (绿底)
 - **连带坑**：露 1/3 后钮中心 cx 在屏外（left=-29 时 cx=-7），CDP 坐标点屏外无效——`fab-drag-test.mjs` 与 `geom-matrix.mjs` 的 toggle 都要改成**点露出的带内**（`clamp(left+4, 4, vw-4)`），这也是真用户的点法。改完矩阵 **PASS states=4 fails=0**（笔电/VM1 两态聊天列 360、展开侧栏 280/alpha 0.92）。
 - 矩阵冷跑又挂死一次（同 7.12 指纹：node 活着、adb 队列卡、18 分钟无输出）——`taskkill 节点 + adb kill-server/start-server` 后重跑即好。
 - 交付：1.33.31 / 137，fab-drag-test 8/8（含 opacity 断言），deploy 8/8+矩阵补跑 PASS，在线 `?v=137`。
+
+**发布链坑（1.33.31 当天）**：`geom-matrix` verdict=FAIL 时 `dsh-app-verify.ps1` 的 deploy 步骤**静默跳过**（L513 门：`$Deploy -and 无失败项`），SUMMARY 仍打 `8/8 passed`、`release.ps1` 仍打 `RELEASE COMPLETE`——**APK 没上传、更新推送没发**，用户端毫无感知。当天矩阵 FAIL 的原因是测试脚本点 FAB 中心（露 1/3 后中心在屏外），修好 toggle 后补跑 `dsh-app-verify.ps1 -Deploy` 得 10/10 才真正上线（update-notify id BO5MED2rv2qB）。⇒ **发布后必须核对 SUMMARY 是 10/10 且 update-notify PASS，8/8 = 没部署**。
