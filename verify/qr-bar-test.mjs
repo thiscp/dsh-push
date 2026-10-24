@@ -59,10 +59,13 @@ async function waitReady(capMs) {
 // 主聊天滚动容器（与注入段同判据：clientHeight≥400 的最大滚动区）
 const SCROLLER = "(function(){var best=null,all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var e=all[i];if(e.scrollHeight>e.clientHeight+50&&e.clientHeight>=400){if(!best||e.clientHeight>best.clientHeight)best=e;}}return best?1:0})()";
 const IH = "window.innerHeight";
-// 在页内对主滚动器做一串真滚动（scrollTop 步进 + 派发 scroll 捕获事件）
+// 在页内对主滚动器做一串真滚动（scrollTop 步进 + 派发 scroll 捕获事件）。
+// 1.33.33 起 QR 要求**连续两帧同向增量**才切换（防底部"钉底回声"自激果冻），
+// 所以这里必须派发 3 个事件（y0 → 中点 → y1），前两帧同向才触发。
 function scrollStep(dy, from) {
   return "(function(){var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.scrollHeight>e.clientHeight+50&&e.clientHeight>=400){if(!best||e.clientHeight>best.clientHeight)best=e;}}if(!best)return -1;" +
     "var y0=" + from + ";best.scrollTop=y0;best.dispatchEvent(new Event('scroll',{bubbles:true}));" +
+    "var ym=y0+Math.round(" + dy + "/2);best.scrollTop=ym;best.dispatchEvent(new Event('scroll',{bubbles:true}));" +
     "var y1=y0+" + dy + ";best.scrollTop=y1;best.dispatchEvent(new Event('scroll',{bubbles:true}));return Math.round(best.scrollTop)})()";
 }
 // uiautomator 旁证：「关闭」钮 bounds 高度（收起态应为 0 或节点消失）

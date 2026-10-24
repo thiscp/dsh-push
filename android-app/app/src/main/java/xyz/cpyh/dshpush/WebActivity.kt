@@ -890,13 +890,19 @@ class WebActivity : Activity() {
                 //   顶部 120px 内不收起（刚进页面/回到顶栏意图明确）。
                 //   JS→原生走 addJavascriptInterface 的 bwNative.barShow（targetSdk34 无桥接风险，
                 //   页面是自己人）。原生侧动画见 setBarShown。
+                //   切换后 450ms 冷却锁（lock）+ **连续两帧同向**判定（prev）：栏收起/展开会改
+                //   WebView 高度 25px，聊天页的"钉在底部"会自动补偿 scrollTop——这记**布局回声
+                //   滚动**（实测单跳 ±25、延迟 ~490ms）若被当作用户手势，在页面底部会 hide↔show
+                //   来回自激成"果冻波动"（用户 1.33.32 实测报的 bug，探针抓到无触摸自振 8 次）。
+                //   回声是**孤立单跳**，真滑动是**每 ~50ms 一串同向增量**——要求本帧和上一帧
+                //   增量同向过阈值才切换，回声天然被拒；锁兜住动画期间的连发。
                 //   ⚠ 本段是超长 "+" 链，Kotlin psi2ir 对链深敏感（1.33.30 拆 33 行炸过栈）——
                 //   新增代码必须**合并成尽量少的长字面量**（这里整块只占 2 个操作数）。
-                "},true);if(!window.__bwQR&&window.bwNative){window.__bwQR=1;var lastPos=new WeakMap(),hidden=false,t0=Date.now();function setBar(s){if(hidden===!s)return;hidden=!s;try{bwNative.barShow(s);}catch(e){}}" +
+                "},true);if(!window.__bwQR&&window.bwNative){window.__bwQR=1;var lastPos=new WeakMap(),lastD=new WeakMap(),hidden=false,t0=Date.now(),lock=0;function setBar(s){if(hidden===!s)return;hidden=!s;lock=Date.now()+450;try{bwNative.barShow(s);}catch(e){}}" +
                 // 页面（重）加载 ⇒ 原生栏复位为显示（直调，不走 setBar 的幂等门），防 JS/原生状态错位。
                 // 加载后 2.5s 宽限：聊天页会自动滚到底（一次 0→8000 的传送式跳变），
                 // 那不是"用户下滑读消息"，不该把栏收走（实测 m03657 截图就是这么丢的）。
-                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t);lastPos.set(t,y);if(p===undefined)return;if(Date.now()-t0<2500)return;if(y>p+12&&y>120)setBar(false);else if(y<p-12)setBar(true);},true);}})();", null)
+                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);}})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
