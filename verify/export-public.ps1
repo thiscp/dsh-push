@@ -127,6 +127,12 @@ Push-Location $Public
 git add -A
 $s = git status --porcelain
 if (-not $s) { Write-Host "public already up to date"; Pop-Location; exit 0 }
+# Native stderr must not abort us: PS 5.1 + $ErrorActionPreference='Stop' turns any native
+# stderr line into a terminating error, and Gitee always prints "remote: Powered by
+# GITEE.COM ..." on push. Hard fact 2026-10-24: that aborted this script right after the
+# first push (exit 1) while origin/gitee had actually moved and github had not - i.e. the
+# mirror silently went half-synced. Every step below is gated on $LASTEXITCODE instead.
+$ErrorActionPreference = "Continue"
 git commit -m $Msg | Out-Null
 # Push EVERY configured remote, then verify each ref really moved. Hard-won 2026-10-16
 # (caught twice): this public clone has origin AND gitee both pointing at Gitee while
