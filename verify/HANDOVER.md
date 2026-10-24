@@ -2107,3 +2107,21 @@ i2v raw 480x864 (绿底)
 - 交付：1.33.31 / 137，fab-drag-test 8/8（含 opacity 断言），deploy 8/8+矩阵补跑 PASS，在线 `?v=137`。
 
 **发布链坑（1.33.31 当天）**：`geom-matrix` verdict=FAIL 时 `dsh-app-verify.ps1` 的 deploy 步骤**静默跳过**（L513 门：`$Deploy -and 无失败项`），SUMMARY 仍打 `8/8 passed`、`release.ps1` 仍打 `RELEASE COMPLETE`——**APK 没上传、更新推送没发**，用户端毫无感知。当天矩阵 FAIL 的原因是测试脚本点 FAB 中心（露 1/3 后中心在屏外），修好 toggle 后补跑 `dsh-app-verify.ps1 -Deploy` 得 10/10 才真正上线（update-notify id BO5MED2rv2qB）。⇒ **发布后必须核对 SUMMARY 是 10/10 且 update-notify PASS，8/8 = 没部署**。
+
+### 7.14 原生顶栏瘦身 + Quick Return 下滑收起（1.33.32 / 138，2026-10-24）
+
+**需求**：用户 m03322「顶部是否也能做成可隐藏式的…或者把顶部的布局和高度缩小一点」，m03479 截图圈定是**原生顶栏**（「DSH 网页 · 笔电」+「关闭」），不是网页 header。两件事都做：
+
+- **瘦身**：原 bar 实测 390px=97.5css，大头是 Button 默认 48dp minHeight + 10/6 padding。改 `setPadding(dp(12),0,dp(10),0)`、关闭钮 `minHeight/minimumHeight/minWidth/minimumWidth=0` + padding 4dp、标题 16sp→13sp、状态栏 inset 交回 root（bar 不再 fitsSystemWindows，targetSdk34 传统 inset，**不能**双份）。瘦后 ~25css（innerHeight 读数 710↔735，差 25）。
+- **Quick Return**（Chrome 地址栏同款）：注入段末尾挂 document **capture** scroll 监听，只认 `clientHeight≥400` 的主滚动容器；下滑过 12px 且 y>120 → 收，上滑过 12px → 回。JS→原生走 `addJavascriptInterface` 单方法桥 `bwNative.barShow(show)`（@JavascriptInterface，页面自托管无注入面）；原生 `setBarShown` 用 ValueAnimator 动画 height 160ms（LinearLayout 里 WebView 随之让出/获得空间）。
+
+**三个坑（都实测踩过）**：
+1. **Kotlin psi2ir 栈溢出复发**：注入段是一条超长 `"…"+"…"` 链，新增 17 行拆分操作数直接把编译器栈炸穿（`generateBinaryExpression` 无限递归）。⇒ 新增代码**合并成 2 个长字面量**（文件里已留注释警告）。
+2. **幂等门写反**：`setBar(s)`（s=show）写成 `if(hidden===s)return`——初始 hidden=false、要收（s=false）时 `false===false` 直接 return，**永远收不下**。正确是 `if(hidden===!s)return`。症状：桥直调 barShow 有效、滚动路线全程 dh=0，极易误判成「监听没挂」。
+3. **加载自动滚到底把栏收走**：聊天页加载完 scrollTop 一次 0→8009 传送跳变，被 QR 当「用户下滑」——截图 m03657 里栏开局就没。修法：注入时记 `t0`，**2.5s 宽限窗内只更新 lastPos 不动栏**（真用户 2.5s 内下滑只是栏不收起，无害）。
+
+**验收**：`verify/qr-bar-test.mjs`（7 断言）——顶栏是原生 View，CDP 里 **window.innerHeight 就是栏态读数**（无歧义）；uiautomator「关闭」钮 bounds 归零作旁证；点 FAB 断言要**把 cx 钳进屏内**（右吸附 cx=vw+7 在屏外，同 7.13 教训）。qr-bar-test 7/7、fab-drag-test 8/8、geom-matrix PASS states=4 fails=0。
+
+**交付**：1.33.32 / 138，APK 16,601,724 B，SUMMARY **10/10**、在线 `?v=138` 确认、更新推送 id `kSvokWa4igdS`，模拟器已装 138。公开镜像 f5475a0。
+
+**工具坑（ops_bash 的 bash-win32）**：adb 参数里的 `/data/local/tmp/...` 会被 MSYS 路径转换改成 `C:\Users\...\bash-win32-x64\data\...` → `No such file`。修法：adb 调用前缀 `MSYS_NO_PATHCONV=1`。

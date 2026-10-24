@@ -40,6 +40,29 @@ class WebActivity : Activity() {
     private var errText: TextView? = null
     // 标题栏文字（v1.30.0）：随加载的链接刷新成「DSH 网页 · 实例名」
     private var titleView: TextView? = null
+    // v1.33.32 Quick Return 顶栏（见注入段 __bwQR）
+    private var topBar: View? = null
+    private var barFullH = 0
+    private var barShown = true
+
+    /** 原生顶栏收起/展开：动画 height（LinearLayout 里 WebView 随之获得/让出空间）。
+     *  160ms，Chrome 地址栏同款手感；重复调用幂等。 */
+    private fun setBarShown(show: Boolean) {
+        if (barShown == show) return
+        barShown = show
+        val b = topBar ?: return
+        if (barFullH == 0) barFullH = b.height
+        if (barFullH == 0) return
+        b.animate().cancel()
+        android.animation.ValueAnimator.ofInt(b.height, if (show) barFullH else 0).apply {
+            duration = 160
+            addUpdateListener {
+                b.layoutParams = b.layoutParams.apply { height = it.animatedValue as Int }
+                b.requestLayout()
+            }
+            start()
+        }
+    }
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     // 网络感知（v1.32.8）：
     //   offline     —— 默认网络丢失（onLost）；离线横幅按它显隐
@@ -127,15 +150,20 @@ class WebActivity : Activity() {
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            // targetSdk 34 = 传统 inset：DecorView 已把状态栏让掉，这里**不能**再 fitsSystemWindows（会双份）。
         }
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(14), dp(10), dp(14), dp(6))
+            // v1.33.32（用户 m03322/m03479 圈定这块原生顶栏）：97.5dp → 48dp。
+            // 状态栏 inset 改由 root 的 fitsSystemWindows 承担（bar 不再被顶到状态栏下方），
+            // 标题 16sp→13sp，关闭钮去默认 minHeight（实测原 bar 390px=97.5css，其中
+            // Button 默认 48dp minHeight + 10/6 padding 占大头）。
+            setPadding(dp(12), 0, dp(10), 0)
         }
         val tv = TextView(this).apply {
             text = "DSH 网页"
-            textSize = 16f
+            textSize = 13f
             setTextColor(c(R.attr.dshTextPrimary))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
@@ -148,10 +176,15 @@ class WebActivity : Activity() {
             setBackgroundResource(R.drawable.bg_pill)
             setTextColor(c(R.attr.dshAccent))
             stateListAnimator = null
-            setPadding(dp(16), dp(6), dp(16), dp(6))
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(14), dp(4), dp(14), dp(4))
             setOnClickListener { finish() }
         })
         content.addView(bar)
+        topBar = bar
 
         // 深色三档：仅所选主题为深色时开，浅色主题保持亮页（v1.12.0）
         val dark = ThemePrefs.KEYS[ThemePrefs.current(this)] in setOf("night", "starry")
@@ -164,6 +197,14 @@ class WebActivity : Activity() {
             }
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            // v1.33.32：网页 → 原生的单向桥（Quick Return 顶栏，见注入段 __bwQR）。
+            // 只暴露一个方法、@JavascriptInterface 注解（API17+ 安全模型），页面自托管无注入面。
+            addJavascriptInterface(object {
+                @android.webkit.JavascriptInterface
+                fun barShow(show: Boolean) {
+                    runOnUiThread { setBarShown(show) }
+                }
+            }, "bwNative")
             // 去掉 Mobile 标记，DSH Web 按桌面版渲染（v1.9.8）
             settings.userAgentString =
                 settings.userAgentString?.replace(" Mobile", "")?.replace("; wv", "")
@@ -841,7 +882,21 @@ class WebActivity : Activity() {
                 "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
                 "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0)" +
                 "{b[i].click();return;}}" +
-                "},true);})();", null)
+                // ★ v1.33.32（用户 m03322/m03479）：原生顶栏 Quick Return——
+                //   下滑（读消息往下走）收起原生顶栏把屏幕让给对话，上滑立刻回来。
+                //   业界通行做法（Chrome Android 地址栏、NN/G「部分常驻头部」：
+                //   下滑动画出、上滑动画回、阈值几个像素防手抖）。判据只认**主聊天滚动容器**
+                //   （clientHeight≥400 的大滚动区），代码块/侧栏小滚动区不触发；
+                //   顶部 120px 内不收起（刚进页面/回到顶栏意图明确）。
+                //   JS→原生走 addJavascriptInterface 的 bwNative.barShow（targetSdk34 无桥接风险，
+                //   页面是自己人）。原生侧动画见 setBarShown。
+                //   ⚠ 本段是超长 "+" 链，Kotlin psi2ir 对链深敏感（1.33.30 拆 33 行炸过栈）——
+                //   新增代码必须**合并成尽量少的长字面量**（这里整块只占 2 个操作数）。
+                "},true);if(!window.__bwQR&&window.bwNative){window.__bwQR=1;var lastPos=new WeakMap(),hidden=false,t0=Date.now();function setBar(s){if(hidden===!s)return;hidden=!s;try{bwNative.barShow(s);}catch(e){}}" +
+                // 页面（重）加载 ⇒ 原生栏复位为显示（直调，不走 setBar 的幂等门），防 JS/原生状态错位。
+                // 加载后 2.5s 宽限：聊天页会自动滚到底（一次 0→8000 的传送式跳变），
+                // 那不是"用户下滑读消息"，不该把栏收走（实测 m03657 截图就是这么丢的）。
+                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t);lastPos.set(t,y);if(p===undefined)return;if(Date.now()-t0<2500)return;if(y>p+12&&y>120)setBar(false);else if(y<p-12)setBar(true);},true);}})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
