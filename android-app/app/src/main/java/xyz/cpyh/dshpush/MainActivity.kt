@@ -42,6 +42,9 @@ class MainActivity : Activity() {
     private lateinit var emptyBox: LinearLayout
     private lateinit var tokenCard: LinearLayout
     private lateinit var tokenInput: EditText
+    private lateinit var tokenState: TextView
+    // v1.33.35：用户手动打开的卡片不被 refresh() 的「有证即隐藏」关掉（推送到达会触发 refresh）
+    private var tokenCardPinned = false
     private lateinit var headerPet: ImageView
     private var starsView: View? = null
     private var breathX: ObjectAnimator? = null
@@ -141,25 +144,20 @@ class MainActivity : Activity() {
             setPadding(dp(18), dp(28), dp(18), dp(12))
         }
 
-        // 顶栏：小头像 + 标题 + 副题（长按头像 = 清空通行证换新的）
+        // 顶栏：小头像 + 标题 + 副题（v1.33.35 起：点头像开/关凭证卡片，长按=打开替换不清空）
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         headerPet = ImageView(this).apply {
             setImageResource(R.drawable.pet_idle)
-            setOnLongClickListener {
-                // 清令牌时把 v1.33.0 的 topic/base 一起清掉，免得下次粘老通行证还留着旧频道
-                prefs().edit().putString(PushService.KEY_TOKEN, "")
-                    .remove(PushService.KEY_TOPIC).remove(PushService.KEY_BASE).apply()
-                tokenCard.visibility = View.VISIBLE
-                tokenInput.setText("")
-                startForegroundService(Intent(this@MainActivity, PushService::class.java)
-                    .setAction("reload"))
-                toast(getString(R.string.token_cleared))
-                refresh()
-                true
+            // v1.33.35：点头像开/关凭证卡片，长按=打开卡片换新证（**不再直接清空**——
+            // 用户「长按头像直接提示清空了凭证必须重新输入。应该不清空吧…可以进去替换」）。
+            // 清空改为卡片内显式按钮 + 确认框。
+            setOnClickListener {
+                if (tokenCard.visibility == View.VISIBLE) closeTokenCard() else openTokenCard()
             }
+            setOnLongClickListener { openTokenCard(); true }
         }
         header.addView(headerPet, LinearLayout.LayoutParams(dp(46), dp(46)))
         header.addView(LinearLayout(this).apply {
@@ -251,12 +249,27 @@ class MainActivity : Activity() {
                 setTextColor(c(R.attr.dshTextPrimary))
                 setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
             })
+            // v1.33.35：打开卡片先看当前凭证状态，替换还是清空一目了然
+            tokenState = TextView(context).apply {
+                textSize = 12f
+                setTextColor(c(R.attr.dshTextSecondary))
+                setPadding(0, dp(4), 0, 0)
+            }
+            addView(tokenState, LinearLayout.LayoutParams(-1, -2))
             addView(tokenInput, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-            addView(pill(Button(context)).apply {
-                text = getString(R.string.token_save)
-                layoutParams = LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(10) }
-                setOnClickListener { saveToken() }
-            })
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, dp(10), 0, 0)
+                addView(pill(Button(context)).apply {
+                    text = getString(R.string.token_save)
+                    setOnClickListener { saveToken() }
+                })
+                addView(pill(Button(context)).apply {
+                    text = "清空凭证"
+                    setOnClickListener { confirmClearToken() }
+                    layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) }
+                })
+            }, LinearLayout.LayoutParams(-2, -2))
         }
         tokenCard = card(tokenBox, dp(14))
         tokenCard.visibility = if (hasToken()) View.GONE else View.VISIBLE
@@ -443,6 +456,40 @@ class MainActivity : Activity() {
         }
     }
 
+    // v1.33.35：凭证卡片的开/关/清空。开卡只展示状态不碰配置（长按头像误触不再丢凭证——
+    // 用户「应该不清空吧，如果用户长按了头像，可以进去替换」）；清空是卡片里的显式按钮。
+    private fun openTokenCard() {
+        tokenCardPinned = true
+        tokenState.text = if (hasToken())
+            "当前凭证已生效：topic " + PushService.topicOf(this) + "（粘贴新证保存即替换）"
+        else "还没配凭证：把插件给的 dshpush://… 整条粘进来"
+        tokenCard.visibility = View.VISIBLE
+    }
+
+    private fun closeTokenCard() {
+        tokenCardPinned = false
+        tokenInput.setText("")
+        tokenCard.visibility = View.GONE
+    }
+
+    private fun confirmClearToken() {
+        AlertDialog.Builder(this)
+            .setTitle("清空凭证")
+            .setMessage("清空后大肥鱼会停收推送，直到粘入新凭证。")
+            .setPositiveButton("确定") { d, _ ->
+                // 清令牌时把 v1.33.0 的 topic/base 一起清掉，免得下次粘老通行证还留着旧频道
+                prefs().edit().putString(PushService.KEY_TOKEN, "")
+                    .remove(PushService.KEY_TOPIC).remove(PushService.KEY_BASE).apply()
+                tokenInput.setText("")
+                startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
+                toast(getString(R.string.token_cleared))
+                refresh()
+                d.dismiss()
+            }
+            .setNegativeButton("取消") { d, _ -> d.dismiss() }
+            .show()
+    }
+
     // v1.33.0：通行证可以是插件面板给的 dshpush://v1?base=…&topic=…&token=…（一人一频道），
     // 也可以是老的一串 tk_…（退回默认中继 + topic dsh，行为与 v1.32.x 完全一致）。
     private fun saveToken() {
@@ -459,6 +506,7 @@ class MainActivity : Activity() {
         val newTopic = cfg.topic ?: PushService.DEFAULT_TOPIC
         if (newTopic != oldTopic) ed.remove("lastTs")  // 换频道就别带旧游标，免得漏掉新频道最近的消息
         ed.apply()
+        tokenCardPinned = false
         tokenCard.visibility = View.GONE
         startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
         toast(if (newTopic != PushService.DEFAULT_TOPIC) "通行证收好，大肥鱼盯着 " + newTopic else "通行证收好，大肥鱼出发")
@@ -823,7 +871,7 @@ class MainActivity : Activity() {
     private fun refresh() {
         val pm = getSystemService(PowerManager::class.java)
         val batteryOk = pm.isIgnoringBatteryOptimizations(packageName)
-        if (hasToken()) tokenCard.visibility = View.GONE
+        if (hasToken() && !tokenCardPinned) tokenCard.visibility = View.GONE
 
         msgList.removeAllViews()
         val arr = try {
@@ -998,7 +1046,7 @@ class MainActivity : Activity() {
             append("""
                 状态：${PushService.state}（v${PushService.appVer(this@MainActivity)}）
                 服务器：${PushService.baseOf(this@MainActivity).replace("https://", "")}（topic ${PushService.topicOf(this@MainActivity)}）
-                通行证：${if (hasToken()) "已配置 ✔（长按头像换）" else "未配置 ✘（下面填一张）"}
+                通行证：${if (hasToken()) "已配置 ✔（点头像换）" else "未配置 ✘（下面填一张）"}
                 白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 易杀）"}
             """.trimIndent())
         }
