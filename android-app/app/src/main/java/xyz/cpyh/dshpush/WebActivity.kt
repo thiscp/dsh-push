@@ -774,18 +774,20 @@ class WebActivity : Activity() {
                 "try{el.dispatchEvent(new MouseEvent('mouseup',Object.assign({buttons:0},o)));}catch(e4){}" +
                 "el.dispatchEvent(new MouseEvent('click',Object.assign({detail:1},o)));return true;}}" +
                 "return false;}" +
-                "function bwFab(){var f=document.getElementById('bw-whale-fab');" +
-                "if(!f&&document.body){f=document.createElement('button');f.id='bw-whale-fab';" +
-                "f.type='button';f.setAttribute('aria-label','Toggle sidebar');" +
-                "f.textContent='🐳';" +
-                "f.style.cssText='position:fixed;left:10px;top:50%;transform:translateY(-50%);" +
-                "z-index:120;width:44px;height:44px;border-radius:50%;padding:0;" +
-                "border:1px solid rgba(255,255,255,.25);background:rgba(18,24,40,.55);" +
-                "color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;" +
-                "-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);" +
-                "box-shadow:0 4px 16px rgba(0,0,0,.35)';" +
-                "f.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();bwToggle();});" +
-                "document.body.appendChild(f);}" +
+                // v1.33.30：钮可自由拖动，松手自动吸附左/右边框并半隐（内藏 18px，露 26px），
+                //   位置存 localStorage（bwFabPos），点露出的半钮=展开侧栏；侧栏展开时钮全显。
+                //   （注意：本段是超长 "+" 链，Kotlin psi2ir 对链深敏感——加行要**合并成少条长字面量**，
+                //   1.33.30 首版拆 33 行曾把编译器栈炸穿 StackOverflowError。）
+                "function bwFabGet(){var p=null;try{p=JSON.parse(localStorage.getItem('bwFabPos'));}catch(e1){}if(!p||(p.side!=='left'&&p.side!=='right')||typeof p.y!=='number')p=window.__bwFabPos;if(!p||(p.side!=='left'&&p.side!=='right')||typeof p.y!=='number')p={side:'left',y:0.5};return p;}" +
+                "function bwFabSave(p){window.__bwFabPos=p;try{localStorage.setItem('bwFabPos',JSON.stringify(p));}catch(e2){}}" +
+                "function bwFabOpen(){var s=document.querySelector(\"[class*='_sidebarCol'] [class*='_root']:not([class*='_collapsed'])\");return !!(s&&s.getBoundingClientRect().width>0);}" +
+                "function bwFabPlace(f,p,anim){var vw=window.innerWidth,vh=window.innerHeight;var cy=Math.min(Math.max(p.y*vh,64),vh-64);var x=p.side==='right'?(bwFabOpen()?vw-50:vw-26):(bwFabOpen()?6:-18);f.style.transition=anim?'left .18s ease-out,top .18s ease-out':'none';f.style.left=x+'px';f.style.top=Math.round(cy)-22+'px';f.style.transform='none';}" +
+                "function bwFab(){var f=document.getElementById('bw-whale-fab');if(!f&&document.body){f=document.createElement('button');f.id='bw-whale-fab';f.type='button';f.setAttribute('aria-label','Toggle sidebar');f.textContent='🐳';" +
+                "f.style.cssText='position:fixed;left:-18px;top:50%;z-index:120;width:44px;height:44px;border-radius:50%;padding:0;border:1px solid rgba(255,255,255,.25);background:rgba(18,24,40,.55);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);touch-action:none;box-shadow:0 4px 16px rgba(0,0,0,.35)';" +
+                "f.addEventListener('pointerdown',function(e){if(e.isPrimary===false||(e.button!=null&&e.button!==0))return;f.__bwDown={x:e.clientX,y:e.clientY,l0:parseFloat(f.style.left)||0,t0:parseFloat(f.style.top)||0,moved:false};try{f.setPointerCapture(e.pointerId);}catch(e3){}f.style.transition='none';});" +
+                "f.addEventListener('pointermove',function(e){var d=f.__bwDown;if(!d)return;var dx=e.clientX-d.x,dy=e.clientY-d.y;if(!d.moved&&dx*dx+dy*dy<64)return;d.moved=true;f.__bwMoved=1;var vw=window.innerWidth,vh=window.innerHeight;f.style.left=Math.min(Math.max(d.l0+dx,0),vw-44)+'px';f.style.top=Math.min(Math.max(d.t0+dy,0),vh-44)+'px';});" +
+                "f.addEventListener('pointerup',function(e){var d=f.__bwDown;f.__bwDown=null;if(!d||!d.moved)return;var vw=window.innerWidth,vh=window.innerHeight;var cx=parseFloat(f.style.left)+22,cy=parseFloat(f.style.top)+22;var p={side:cx<vw/2?'left':'right',y:cy/vh};bwFabSave(p);bwFabPlace(f,p,true);setTimeout(function(){f.__bwMoved=0;},350);});" +
+                "f.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();if(f.__bwMoved){f.__bwMoved=0;return;}if(Date.now()<(window.__bwFabSuppress||0))return;bwToggle();});document.body.appendChild(f);}" +
                 //   logo 可能比注入晚渲染：每轮 bwPanelBg 试克隆一次，成功为止（img/svg 都整节点克隆）。
                 "if(f&&!f.__bwLogo){var sc=document.querySelector(\"[class*='_sidebarCol']\");" +
                 "var lg=sc?(sc.querySelector('img')||sc.querySelector('svg')):null;" +
@@ -793,7 +795,8 @@ class WebActivity : Activity() {
                 "c.removeAttribute('class');c.removeAttribute('style');" +
                 "c.style.width='24px';c.style.height='24px';c.style.display='block';" +
                 "c.style.pointerEvents='none';f.appendChild(c);f.__bwLogo=1;}}" +
-                "if(f){f.style.display=window.innerWidth>1023?'none':'flex';}}" +
+                "if(f){f.style.display=window.innerWidth>1023?'none':'flex';" +
+                "if(!f.__bwDown)bwFabPlace(f,bwFabGet(),false);}}" +
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
                 "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
@@ -829,6 +832,9 @@ class WebActivity : Activity() {
                 "if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&" +
                 "e.clientY<=r.bottom)return;" +
                 "var b=document.querySelectorAll('button');" +
+                // v1.33.30：收起动作会让右缘吸附的悬浮钮滑到手指正下方，Android 按**松手点**
+                // 派发 click 会把它再展开（闪一下回到展开）。给 500ms 抑制窗让这记 click 作废。
+                "window.__bwFabSuppress=Date.now()+500;" +
                 "for(var i=0;i<b.length;i++){var a=b[i].getAttribute('aria-label')||'';" +
                 "if(a.indexOf('Collapse sidebar')>=0||a.indexOf('收起侧边栏')>=0)" +
                 "{b[i].click();return;}}" +

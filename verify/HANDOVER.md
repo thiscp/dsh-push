@@ -2080,3 +2080,21 @@ i2v raw 480x864 (绿底)
 - `release.ps1` 不 commit 导致 `export-public` 报 "public already up to date"——先 commit 再导。
 
 **交付**：1.33.29 / 135，APK 16,599,760 B，在线 `?v=135` 确认，更新推送 id `JtUFHoI7RDbV`。
+
+### 7.13 悬浮鲸鱼钮可拖动 + 边缘吸附半隐入（1.33.30 / 136，2026-10-24）
+
+**用户诉求**（m02856）：钮可以拖动，拖到左右边缘就吸附、半隐入边框，点露出来的一部分展开；吸附后隐藏一部分也合理利用空间。
+
+**实现**（仍全在 `WebActivity.kt` 注入段）：
+1. 位置模型 `{side:'left'|'right', y:0..1}` 存 localStorage `bwFabPos`（try/catch + `window.__bwFabPos` 兜底）；`bwFabPlace()` 按视口算 left（left 吸附 `-18px`、right 吸附 `vw-26px`，半截 18px 隐入边框）+ top 钳进 `[0, vh-44]`。
+2. 拖动：pointerdown 存 `{x,y,l0,t0,moved}` + `setPointerCapture` + 关 transition；**位移一律 `l0+dx`/`t0+dy` 绝对基准**（用 `left += dx` 每帧复利，top 会一路漂到钳位——本轮实测抓到的 bug）；8px 阈值内不算拖动；pointerup 按中心点判边吸附 + 存 LS。
+3. 点钮与拖动互斥：`__bwMoved=1` 时 click 吞掉；**pointerup 后 350ms 自动清 `__bwMoved`**——否则拖动松手点不在钮上时 click 不触发、标志残留，**拖后第一次点钮被吞**（实测）。
+4. **Android WebView 按松手点派发 click**：「点浮层外收起」在 pointerdown 里收起后，右吸附钮滑到静止手指正下方，松手那记 click 落到 FAB 上又展开（闪一下）。修法：收起动作前置 `window.__bwFabSuppress=Date.now()+500`，FAB click 在抑制窗内直接 return。
+5. 验收脚本 `verify/fab-drag-test.mjs`（CDP Input.dispatchTouchEvent 真事件，8 断言）：默认左吸附 -18 / 点钮展开 280 钮全显 6 / 再点收起回 -18 / 拖后右吸附 334,178 / LS 记 right / **右缘点钮展开** / **再点收起** / 刷新位置仍在。**终跑 8/8 PASS**。
+
+**本轮踩的坑**（除上面两个已修的行为 bug）：
+- `release.ps1` 没有 `-Deploy` 参数（deploy 是无条件步骤），传 `-Deploy` 会被 PowerShell 前缀匹配成 `-DeployNote` 且吞掉后续参数 → `MissingArgument`。**别照 dsh-app-verify 的写法给 release.ps1 加 `-Deploy`**。
+- 本会话 PATH 里排最前的是 git-bash 的 `ssh.exe`（`@dsh-ops\bash-win32-x64\usr\bin`），它不认 Windows 的 `-F NUL` → 流水线 build-vm1 挂 `Can't open user config file NUL`。修法：跑发布链前把 `C:\Windows\System32\OpenSSH` 前置进 PATH（`$env:PATH = "C:\Windows\System32;...;$env:PATH"` 后用绝对路径起 powershell）。
+- 从 pwsh 工具起 `.ps1` 时 `-DeployNote "a b"` 引号被吞 → 用**单 token 无空格**的 note（`fab-drag-snap-edge`）。
+
+**交付**：1.33.30 / 136，APK 16,600,452 B，在线 `?v=136` 确认（deploy 步 10/10，更新推送 id `RTAHQ2RTxDE8`），模拟器已装 136。
