@@ -760,7 +760,7 @@ class WebActivity : Activity() {
                 "bwSet(col,'bottom','0px');bwSet(col,'width',nw+'px');bwSet(col,'max-width',nw+'px');" +
                 "bwSet(col,'z-index','60');" +
                 "window.__bwNarrowEl=[frame,col];window.__bwNarrow=nw;window.__bwFpW=col;return nw;}" +
-                "function bwPanelBg(){bwFab();var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
+                "function bwPanelBg(){if(Date.now()<(window.__dshScrolling||0)){window.__bwBgPend=1;return;}bwFab();var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
                 //   注意：DSH 的 bundle 里**外壳与侧栏根是两个不同哈希命名空间**（笔电外壳 BynINW_*
                 //   但侧栏根 _2H3hWW_*；VM1 是 pI_x6G_* / hHd-Xa_*），所以推导前缀只能当兜底：
                 //   先认已知的笔电锚点（那条路一行未变，遮罩 alpha 才不会被算错），再退到推导值。
@@ -898,14 +898,14 @@ class WebActivity : Activity() {
                 //   增量同向过阈值才切换，回声天然被拒；锁兜住动画期间的连发。
                 //   ⚠ 本段是超长 "+" 链，Kotlin psi2ir 对链深敏感（1.33.30 拆 33 行炸过栈）——
                 //   新增代码必须**合并成尽量少的长字面量**（这里整块只占 2 个操作数）。
-                "},true);if(!window.__bwQR&&window.bwNative){window.__bwQR=1;var lastPos=new WeakMap(),lastD=new WeakMap(),hidden=false,t0=Date.now(),lock=0;function setBar(s){if(hidden===!s)return;hidden=!s;lock=Date.now()+450;try{bwNative.barShow(s);}catch(e){}}" +
+                "},true);if(!window.__bwQR&&window.bwNative){window.__bwQR=1;var lastPos=new WeakMap(),lastD=new WeakMap(),hidden=false,t0=Date.now(),lock=0,qrT=null;function setBar(s){if(hidden===!s)return;hidden=!s;lock=Date.now()+450;try{bwNative.barShow(s);}catch(e){}}" +
                 // 页面（重）加载 ⇒ 原生栏复位为显示（直调，不走 setBar 的幂等门），防 JS/原生状态错位。
                 // 加载后 2.5s 宽限：聊天页会自动滚到底（一次 0→8000 的传送式跳变），
                 // 那不是"用户下滑读消息"，不该把栏收走（实测 m03657 截图就是这么丢的）。
                 // 看门狗（用户 m03906）：新建对话没有内容 → 页面不可滚 → 没有"上滑"手势，
                 // 栏一旦收起就永远回不来。每 800ms 查一次：全页找不到可滚的主容器
                 // （clientHeight≥400 且 scrollHeight>clientHeight+50）而栏正收起 → 立刻复位。
-                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);function bwQrChk(){var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.clientHeight>=400&&e.scrollHeight>e.clientHeight+50&&(!best||e.clientHeight>best.clientHeight))best=e;}if(!best&&hidden)setBar(true);}setInterval(bwQrChk,800);}})();", null)
+                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);function bwQrChk(){if(!hidden)return;if(Date.now()<window.__dshScrolling)return;qrT=(qrT||0)+1;if(qrT%4)return;var c=window.__bwScroller;if(c&&c.isConnected&&c.clientHeight>=400&&c.scrollHeight>c.clientHeight+50)return;var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.clientHeight>=400&&e.scrollHeight>e.clientHeight+50&&(!best||e.clientHeight>best.clientHeight))best=e;}window.__bwScroller=best;if(!best)setBar(true);}setInterval(bwQrChk,800);}})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
@@ -918,12 +918,34 @@ class WebActivity : Activity() {
                     // 纱罩深浅按网页文字亮度自动选（深色页配深纱、浅色页配白纱）
                     view?.evaluateJavascript(
                         "(function(){" +
-                        "function apply(){if(!document.body)return;" +
+                        // ★ v1.33.36 滚动期静默（用户 m04813「对话长时滑动卡顿」）：实测一次 apply()
+                        //   对 919 个元素逐个 getComputedStyle + offsetWidth/offsetHeight 再写内联样式，
+                        //   是**读写交错**的强制布局抖动；而长对话滚动时 React 虚拟列表不停回收/复用
+                        //   节点 ⇒ MutationObserver 每批都触发 apply()。3 次甩动内实测 6 个 long task、
+                        //   最长 748ms、getComputedStyle 被调 31516 次 ⇒ 主线程整块卡死，就是用户手感。
+                        //   对策：滚动中不跑全量扫描（记 pending），滚动停下 240ms 后补跑一次。
+                        //   语义不变——静止态最终一定收敛到同一结果，只是把工作挪出滚动帧。
+                        "if(!window.__dshScrollT){window.__dshScrollT=1;window.__dshScrolling=0;" +
+                        "window.__dshScrollPend=0;document.addEventListener('scroll',function(){" +
+                        "window.__dshScrolling=Date.now()+220;" +
+                        "if(window.__dshScrollTimer)clearTimeout(window.__dshScrollTimer);" +
+                        "window.__dshScrollTimer=setTimeout(function(){window.__dshScrolling=0;" +
+                        "if(window.__dshScrollPend){window.__dshScrollPend=0;" +
+                        "try{apply();}catch(e0){}}" +
+                        "if(window.__bwBgPend){window.__bwBgPend=0;" +
+                        "try{if(window.__bwPanelBg)window.__bwPanelBg();}catch(e1){}}},240);},true);}" +
+                        "function apply(){window.__dshApply=apply;if(!document.body)return;" +
+                        // 只**推迟**不取消：滚动结束后 240ms 由上面的定时器补跑一轮，静止态收敛不变。
+                        "if(Date.now()<window.__dshScrolling){window.__dshScrollPend=1;return;}" +
                         "document.documentElement.style.setProperty(" +
                         "'background-color','transparent','important');" +
                         "document.body.style.setProperty('background-color'," +
                         "'transparent','important');" +
                         "var vw=window.innerWidth,vh=window.innerHeight;" +
+                        // ★ v1.33.36：祖先链缓存按**本轮代数**失效——apply() 每跑一轮就换代，
+                        //   同一轮内同一个祖先只量一次（原来 4486 个节点 × ~10 层 = 3.5 万次
+                        //   getComputedStyle，占单轮总量的 97%）。跨轮必须重算：滚动/展开会改布局。
+                        "window.__abpGen=(window.__abpGen||0)+1;" +
                         // 浮层底色回退色（v1.32.11）：真实指令菜单表层 Z9Jnlq_menu 的
                         // computed background 是 **transparent**（它的底色来自样式表/伪元素），
                         // 所以它连下面的正则分支都进不去（!m 或 alpha<1 直接 continue），
@@ -1115,15 +1137,31 @@ class WebActivity : Activity() {
                         //   56px 轨道时落在 96px 下限之外 ⇒ 发现不到 ⇒ 自动置 null，本臂随之
                         //   失效。笔电上类名命中，走的仍是原来那条，行为一行未变。
                         "var isSb=cn.indexOf('_2H3hWW_root')>=0||window.__bwSbEl===e;" +
+                        // ★ v1.33.36 性能（用户 m04813「对话长时滑动卡顿」）：这段祖先链上溯
+                        //   **原来对每个元素无条件跑**（最多 24 层、每层一次 getComputedStyle）。
+                        //   实测一次 apply() 的 getComputedStyle 总量 36144 次里，**这一段独占
+                        //   35138 次（97%）**——因为长对话有 4486 个节点、祖先链深度 ~10，
+                        //   而每层 getComputedStyle 都会强制一次样式解析。它就是长任务的主因。
+                        //   两个事实让它可以安全收窄：
+                        //   · ancBigPos 的**唯一两个消费者**（isLayout / isPanel）都在 `big&&` 里，
+                        //     非 big 元素根本不会读它 ⇒ 非 big 元素**完全不必算**。big 元素
+                        //     （>50%x50% 视口）一屏只有个位数，成本直接降三个数量级。
+                        //   · 同一次 apply 里同一祖先会被几十个后代重复上溯 ⇒ 按祖先节点做
+                        //     **一轮内缓存**（__abpGen 记本轮代数，视口尺寸变了就换代）。
+                        //   语义完全不变：算出来的布尔值与原实现逐位相同，只是不再重复算。
                         "var ancBigPos=false;" +
-                        "var pa=e.parentElement,ph=0;" +
+                        "if(big){var pa=e.parentElement,ph=0;" +
                         "while(pa&&ph<24&&pa!==document.body){" +
+                        "if(pa.__abpGen===window.__abpGen){" +
+                        "if(pa.__abpV){ancBigPos=true;break;}pa=pa.parentElement;ph++;continue;}" +
                         "var acs=getComputedStyle(pa);" +
+                        "var hit=false;" +
                         "if(acs.position==='absolute'||acs.position==='fixed'){" +
                         "var ar=pa.getBoundingClientRect();" +
-                        "if(ar.width>=vw*0.9&&ar.height>=vh*0.9){" +
-                        "ancBigPos=true;break;}}" +
-                        "pa=pa.parentElement;ph++;}" +
+                        "if(ar.width>=vw*0.9&&ar.height>=vh*0.9)hit=true;}" +
+                        "pa.__abpGen=window.__abpGen;pa.__abpV=hit?1:0;" +
+                        "if(hit){ancBigPos=true;break;}" +
+                        "pa=pa.parentElement;ph++;}}" +
                         // ★ v1.32.15 裁定① + D1 修复 A：内容叶子判据 isCode —— 只用**渲染盒树**判，
                         //   不用类名、也不用裸 DOM 深度。isCode = 自身是 PRE，或在**盒树上的直接
                         //   可见子节点**里有 PRE：从直接子节点扫描，遇到 display:contents 的包裹

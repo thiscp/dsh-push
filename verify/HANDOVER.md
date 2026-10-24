@@ -2135,3 +2135,34 @@ i2v raw 480x864 (绿底)
 **这一轮踩的发布链大坑（1.33.35，值得反复看）**：`gesture-test.sh` 早期版本的守卫写成 `grep -q 'name="token" value="tk_'`（SharedPreferences 的 `<string>` 是 `name="token">tk_…` 不是 `value=`）⇒ 判据恒假 ⇒ **每跑一次就往 prefs 追加一条 `<string name="token">tk_test123</string>`**。Android 解析重复键是**后者覆盖前者**，App 实际读到 `tk_test123` ⇒ relay 401 ⇒ `push-received / mid-unique / entry-unread` 三项 FAIL ⇒ `dsh-app-verify.ps1` 的 deploy 门（无失败项才部署）**静默跳过** ⇒ SUMMARY 仍打 `8/8 passed`、`release.ps1` 仍打 `RELEASE COMPLETE`、线上还是旧版。**白跑 4 轮发布**才定位到 prefs。教训两条：① 改 prefs 前先 `adb pull` 备份，出现多项 assert 同时 FAIL 先数 prefs 里有几条 `name="token"`；② 测试脚本断言不能写死测试数据字面值。修完 prefs 后重跑 → **SUMMARY 10/10**（`push-received 1 条 / mid 992277247 / entry-unread / geom-matrix PASS states=4 fails=0 / update-notify qA7DDRgSl3L0`）、线上 `?v=141` Content-Length **16,702,812** = 本机构建字节数、模拟器已装 141。
 
 **回归**：jelly 6/6、fab-drag 8/8、newchat PASS、qr-bar 7/7（**动画缩放=1 时 qr-bar 会假 FAIL**：一次 `cbh=-2`（dump 抛异常）、一次 `dh=13`（未达 ≥16 门）；把三个 `settings put global *_animation_scale` 设 0 后连跑三次全 PASS ⇒ 跑动效断言前先关动画缩放，跑完设回 1）。
+
+### 7.16 长对话滑动卡顿：apply() 读写交错 + 祖先链上溯 + 滚动期静默（1.33.36 / 142，2026-10-24）
+
+**需求**：用户 m04813「我发现有时候对话比较长时，滑动屏幕这些会有些卡顿呢」。
+
+**取证方法（关键）**：三支 CDP 探针（`C:\Temp\jank-*.mjs`，`adb forward tcp:9223 localabstract:webview_devtools_remote_<pid>` → `/json/list` → Node22 原生 WebSocket 驱动）：
+- `jank-probe.mjs`：真触摸 fling（Input.dispatchTouchEvent）+ 页内 rAF 帧间隔采样 + PerformanceObserver longtask + 节点/blur 统计。
+- `jank-attrib.mjs`：**包 `Document/Element.prototype.querySelectorAll` 与 `window.getComputedStyle`，用 `new Error().stack` 取调用者**——这是把「谁在烧 CPU」钉死的手段，比猜快一百倍。
+- `jank-tl.mjs`：longtask 起止时刻对齐 fling/pause 段，判断是「滑动中卡」还是「静置时卡」。
+- `jank-ab3.mjs` / `jank-ab5.mjs`：停掉我们的 observer/apply/interval 做 A/B；`jank-blur*.mjs` / `jank-var.mjs`：backdrop-filter / box-shadow 逐项 A/B。
+
+**改前基线**：一次 apply() 对 **919 个元素**逐个 getComputedStyle + offsetWidth/offsetHeight 再写内联样式，**读写交错强制布局**；3 次甩动内 6 个 long task、最长 **748ms**、getComputedStyle 被调 **31516 次**。调用者归因：总量 36144 次里**祖先链上溯独占 35138 次（97%）**——每个元素无条件跑最多 24 层、每层一次 getComputedStyle。另 `bwQrChk` 每 800ms 一次 `querySelectorAll('*')` 全页扫描。
+
+**三处修复（WebActivity.kt 注入段）**：
+1. **祖先链上溯收窄 + 按轮缓存**：`ancBigPos` 的两个消费者（isLayout / isPanel）都在 `big&&` 里 ⇒ 非 big 元素完全不算；同一轮内同一祖先只量一次（`pa.__abpGen===window.__abpGen` 命中读 `pa.__abpV`），代数在 apply() 开头 `window.__abpGen=(window.__abpGen||0)+1` 换代。语义与原实现逐位相同。
+2. **滚动期静默**：`document.addEventListener('scroll',…,true)` 置 `window.__dshScrolling=Date.now()+220`，滚动停 240ms 后补跑 apply()；`bwPanelBg()` 开头同一道门（置 `__bwBgPend`，由同一 240ms 定时器补跑）。
+3. **bwQrChk 降频**：每 4 次才扫一次全页，命中后把主滚动器缓存进 `window.__bwScroller`，后续只验它是否仍可滚。
+
+**改后实测**：getComputedStyle 调用者 35138 → **1919**（apply 主循环）/ 239（isCode 扫描）/ 34。longtask 时间线改前 `[180,184,200,947]`（含 pause 段 947ms），改后 `[196,228,257,69]` **全部落在首滑**，pause 段 0。帧统计（预热两轮后 4 轮交替 A/B）：**首滑 warm0 max=316.7ms/3 个 longtask，warm1 起 max=33.4ms、longtask=0**。
+
+**A/B 结论（重要，避免白改）**：`*{box-shadow:none}` 与 `*{backdrop-filter:none}` 都**无稳定收益**（A 组 4 轮里 1 轮 383ms、B 组 1 轮 550ms，其余全 33.4）⇒ 剩余长任务不是阴影/模糊，是**页面自身首滑虚拟列表初始化的固有成本**，注入层无能为力。页面规模 nodes 4486–5231，blur 元素仅 7 个（blurAreaPx 60028）。
+
+**回归**：qr-bar-test **7/7 PASS**、fab-drag-test **8/8 PASS**、geom-matrix PASS states=4 fails=0。注入 JS 语法闸升级为**逐段校验**：`verify/extract-injected-js.mjs --all`（每段 `new Function` 编译，退出码 0/1/2），当前「共 2 段内联注入 JS，语法错 0 段」（段1 L333-908 20418B、段2 L920-1563 11187B）。
+
+**工具坑**：
+- `node verify/extract-injected-js.mjs > f.js 2>&1` 会把脚本写到 **stderr** 的进度行也合进 JS ⇒ `node --check` 报 `SyntaxError: Unexpected identifier 'L333'`。正确写法 `> f.js 2>f.err`。
+- `powershell -File verify/bw-iter.ps1` 里的 `ssh -F NUL` 在 bash 下报 `Can't open user config file NUL`（MSYS 路径转换）⇒ 必须用 pwsh 工具跑 bw-iter.ps1。
+- 模拟器 `offline` 且 `adb reconnect offline` 无效 → `schtasks /Run /TN emu-selfheal`。
+- 测方差前必须**预热一轮**：首滑长任务是页面固有成本，不预热会把「首滑」误判成「修复无效」。
+
+**交付**：1.33.36 / 142，APK 16,703,360 B，SUMMARY **10/10**、在线 `?v=142` Content-Length 16,703,360、update-notify id `G73uAxcQxrCY`，模拟器已装 142。
