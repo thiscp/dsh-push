@@ -122,11 +122,16 @@ async function toggle() {
   // v1.33.29：收起态 56px 轨道已取消（侧栏列 0px + 侧栏根 display:none），
   // 旧「坐标点轨道钮」路径找不到 width>0 的钮了。入口现在是悬浮鲸鱼钮——
   // 优先点 FAB 中心（真事件，走用户路径）；找不到 FAB 再退回旧路径（兼容旧包热跑）。
-  const fp = await ev("(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();if(r.width<=0)return null;return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)])})()");
+  // v1.33.31：吸附态钮露出不足一半，中心点可能落在屏外（左吸附 left=-29 时 cx=-7），
+  //   坐标点屏外无效。点「可见区内的点」：cx 钳进 [4, vw-4]（真用户也是点露出的那条带）。
+  const fp = await ev("(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();if(r.width<=0)return null;return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2),Math.round(r.left),Math.round(r.right)])})()");
   if (fp) {
     const q = JSON.parse(fp);
-    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q[0], y: q[1], button: 'left', clickCount: 1 });
-    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q[0], y: q[1], button: 'left', clickCount: 1 });
+    const vw = await ev("window.innerWidth");
+    let x = q[0];
+    if (q[2] < 0 || q[3] > vw) x = Math.min(Math.max(q[2] + 4, 4), vw - 4); // 露出的带内取一点
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y: q[1], button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y: q[1], button: 'left', clickCount: 1 });
     await sleep(1800);
     return true;
   }

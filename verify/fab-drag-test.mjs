@@ -1,8 +1,8 @@
 // FAB 拖动/吸附/半隐 验收（v1.33.30，用户 m02856）。真机口径：冷跑 WebActivity，
 // 用 CDP Input.dispatchTouchEvent（真触摸语义：隐式 pointer capture + click 合成）驱动。
-// 断言链：默认左吸附(-18) → 点钮展开(钮全显 6) → 再点收起(回 -18) →
-//   拖到右侧中部 → 右吸附(vw-26, y 跟手) + localStorage 记 side=right →
-//   点右缘露出的半钮展开(钮 vw-50) → 再点收起(回 vw-26) → 刷新页面位置仍在。
+// 断言链：默认左吸附(-29 露1/3 半透) → 点钮展开(钮全显 6 全透) → 再点收起(回 -29) →
+//   拖到右侧中部 → 右吸附(vw-15, y 跟手, 半透) + localStorage 记 side=right →
+//   点右缘露出的 1/3 钮展开(钮 vw-50) → 再点收起(回 vw-15) → 刷新页面位置仍在。
 // 退出码 0=PASS 1=FAIL 2=ENV。用法：node verify/fab-drag-test.mjs [--hosts 笔电]
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -55,7 +55,7 @@ async function waitReady(capMs) {
   }
   return -1;
 }
-const FABR = "(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();return {x:Math.round(r.left),y:Math.round(r.top),cx:Math.round(r.left+r.width/2),cy:Math.round(r.top+r.height/2)}})()";
+const FABR = "(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();return {x:Math.round(r.left),y:Math.round(r.top),op:parseFloat(getComputedStyle(f).opacity),cx:Math.round(r.left+r.width/2),cy:Math.round(r.top+r.height/2)}})()";
 const SBW = "(function(){var s=document.querySelector(\"[class*='_sidebarCol'] [class*='_root']:not([class*='_collapsed'])\");return s?Math.round(s.getBoundingClientRect().width):0})()";
 const LS = "localStorage.getItem('bwFabPos')";
 async function tap(x, y) {
@@ -92,34 +92,35 @@ async function drag(x0, y0, x1, y1) {
   const geo = await ev("(function(){return {vw:window.innerWidth,vh:window.innerHeight}})()");
   const { vw, vh } = geo;
   let r = await ev(FABR);
-  ck('默认左吸附 left=-18', r && Math.abs(r.x + 18) <= 2 && Math.abs(r.cy - vh / 2) <= 4, r);
-  // 点露出的半钮 → 展开
-  await tap(r.cx, r.cy);
+  ck('默认左吸附 left=-29 露1/3 且半透', r && Math.abs(r.x + 29) <= 2 && Math.abs(r.cy - vh / 2) <= 4 && r.op > 0.4 && r.op < 0.6, r);
+  // 点露出的 1/3 钮 → 展开。露 1/3 后钮中心 cx 已在屏外（left=-29 时 cx=-7），
+  //   必须点露出的那条带（x=4），这也是真用户的点法。
+  await tap(Math.max(4, r.x + 4), r.cy);
   let sbw = await ev(SBW); let r2 = await ev(FABR);
-  ck('点钮展开 sb=280 且钮全显 left=6', sbw === 280 && r2 && Math.abs(r2.x - 6) <= 2, { sbw, r2 });
-  // 再点 → 收起
+  ck('点钮展开 sb=280 且钮全显 left=6 全透', sbw === 280 && r2 && Math.abs(r2.x - 6) <= 2 && r2.op > 0.95, { sbw, r2 });
+  // 再点 → 收起（钮此刻全显在 6..50，点它自己的中心）
   await tap(r2.cx, r2.cy);
   sbw = await ev(SBW); r2 = await ev(FABR);
-  ck('再点收起 sb=0 钮回 -18', sbw === 0 && r2 && Math.abs(r2.x + 18) <= 2, { sbw, r2 });
+  ck('再点收起 sb=0 钮回 -29', sbw === 0 && r2 && Math.abs(r2.x + 29) <= 2, { sbw, r2 });
   // 拖到右侧中部
   await drag(6, vh / 2, 300, 200);
   r = await ev(FABR); const ls = await ev(LS);
-  ck('拖后右吸附 left=vw-26 top≈178', r && Math.abs(r.x - (vw - 26)) <= 3 && Math.abs(r.y - 178) <= 8, r);
+  ck('拖后右吸附 left=vw-15 top≈178 半透', r && Math.abs(r.x - (vw - 15)) <= 3 && Math.abs(r.y - 178) <= 8 && r.op > 0.4 && r.op < 0.6, r);
   ck('localStorage 记 right', ls && /right/.test(ls), ls);
-  // 点右缘露出的半钮 → 展开（钮应全显 vw-50）
+  // 点右缘露出的 1/3 钮 → 展开（钮应全显 vw-50）
   await tap(vw - 4, 200);
   sbw = await ev(SBW); r2 = await ev(FABR);
   ck('右缘点钮展开 sb=280 钮 vw-50', sbw === 280 && r2 && Math.abs(r2.x - (vw - 50)) <= 2, { sbw, r2 });
   await tap(r2.cx, r2.cy);
   sbw = await ev(SBW); r2 = await ev(FABR);
-  ck('再点收起 钮回 vw-26', sbw === 0 && r2 && Math.abs(r2.x - (vw - 26)) <= 2, { sbw, r2 });
+  ck('再点收起 钮回 vw-15', sbw === 0 && r2 && Math.abs(r2.x - (vw - 15)) <= 2, { sbw, r2 });
   // 刷新持久化
   await send('Page.enable');
   await send('Page.navigate', { url });
   await sleep(2500);
   const ready2 = await waitReady(35000);
   r = await ev(FABR);
-  ck('刷新后位置仍在 right 吸附', ready2 >= 0 && r && Math.abs(r.x - (vw - 26)) <= 3 && Math.abs(r.y - 178) <= 8, r);
+  ck('刷新后位置仍在 right 吸附', ready2 >= 0 && r && Math.abs(r.x - (vw - 15)) <= 3 && Math.abs(r.y - 178) <= 8, r);
   console.log(fails === 0 ? 'VERDICT: PASS' : 'VERDICT: FAIL ' + fails);
   process.exit(fails === 0 ? 0 : 1);
 })().catch((e) => { console.log('ENV/ERR: ' + (e && e.message)); process.exit(2); });

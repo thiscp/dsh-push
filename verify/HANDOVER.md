@@ -2098,3 +2098,10 @@ i2v raw 480x864 (绿底)
 - 从 pwsh 工具起 `.ps1` 时 `-DeployNote "a b"` 引号被吞 → 用**单 token 无空格**的 note（`fab-drag-snap-edge`）。
 
 **交付**：1.33.30 / 136，APK 16,600,452 B，在线 `?v=136` 确认（deploy 步 10/10，更新推送 id `RTAHQ2RTxDE8`），模拟器已装 136。
+
+**追加调优（1.33.31 / 137，同日）**：用户验收后说「吸附后外边只显示 1/3 就差不多了，或者去搜比较好的吸附隐藏方案」。查业界做法（知乎/ZCOOL 悬浮球设计总结：吸附+半隐藏是通行方案；鸿蒙 FloatBall 组件半隐藏态 `opacityHide=0.5`）→ 采纳「**露 1/3（15px，藏 29px）+ 吸附态 opacity .5**」：
+- `bwFabPlace`：左吸附 `-29`、右吸附 `vw-15`；收起态 `opacity=.5`，展开态 `1`；transition 加 opacity。
+- pointerdown 立即 `opacity='1'`（触摸即恢复全显全透，跟手）。
+- **连带坑**：露 1/3 后钮中心 cx 在屏外（left=-29 时 cx=-7），CDP 坐标点屏外无效——`fab-drag-test.mjs` 与 `geom-matrix.mjs` 的 toggle 都要改成**点露出的带内**（`clamp(left+4, 4, vw-4)`），这也是真用户的点法。改完矩阵 **PASS states=4 fails=0**（笔电/VM1 两态聊天列 360、展开侧栏 280/alpha 0.92）。
+- 矩阵冷跑又挂死一次（同 7.12 指纹：node 活着、adb 队列卡、18 分钟无输出）——`taskkill 节点 + adb kill-server/start-server` 后重跑即好。
+- 交付：1.33.31 / 137，fab-drag-test 8/8（含 opacity 断言），deploy 8/8+矩阵补跑 PASS，在线 `?v=137`。
