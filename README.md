@@ -45,11 +45,12 @@ DSH (hooks.json: Stop / PreToolUse)
 - 作答回桥：`deploy/aliyun/answer-relay.py`（公网 H5/App 双通道）+ `deploy/work/dsh-answer-bridge.mjs`（DSH 侧）
 - 全部凭据走外部文件，不入库（见 `deploy/README.md`）
 
-## APP 功能一览（v1.25.1）
+## APP 功能一览（v1.33.34）
 
 - 推送接收：前台服务 + `BOOT_COMPLETED` 自启（Android 16 适配）+ WS 断线自动重连
-- 通知即答：问题在通知栏原生渲染（单选/多选/自填），提交后 DSH 任务当场继续；应用内快答浮窗
+- 通知即答：问题在通知栏原生渲染（单选/多选/自填），提交后 DSH 任务当场继续；应用内快答浮窗 + ComfyUI 生成的六套立绘成功动画（透明背景 webp）
 - 内置浏览器：打开 DSH Web；主题壁纸 + 立绘 + 全界面毛玻璃（注入式，不改 DSH 本体）；文件上传/APK 下载直装
+- 手机屏利用：原生顶栏瘦身 + 下滑收起/上滑唤回（Quick Return，带无内容页看门狗自动复位）；网页侧栏收起为**可拖动悬浮鲸鱼钮**（边缘吸附、半隐入边框、位置持久化）
 - 六套小清新主题：矢量场景 + 立绘构图（52% 屏高、跨分辨率一致）、按钮半透明、深色主题网页自动暗化
 - 杂项：崩溃自报告、未读角标、已读回执、密度/DPI 切换自适应
 
@@ -105,6 +106,14 @@ APP 开箱即用：安装 → 填 ntfy 服务器地址 + 读令牌 + topic → �
    被 fold。三个 profile 现状都是默认 `mode: legacy` → 插件只能推通知、作答落地不了。
    另两条实测坑（宿主 fetch 会把同一 URL 的响应喂回第一次的、投影 state 是
    `{questions:{active,settled}}` 嵌套结构）写在 `host-plugin/README.md`，改轮询代码前先读。
+9. **浏览器注入段（`WebActivity.kt` 的 `evaluateJavascript` 长串）三条铁律**：
+   ① 新增代码**必须合并成 ≤2 个长字符串字面量**——那条 `"…"+"…"` 拼接链已两次把 Kotlin 编译器
+   栈炸穿（psi2ir `generateBinaryExpression` 无限递归、Internal compiler error），拆分操作数=加链深=炸。
+   ② 改完必跑语法闸：`node verify/extract-injected-js.mjs > 临时.js && node --check 临时.js`。
+   ③ 滚动驱动的原生 UI（顶栏收起/悬浮钮）**必须用真 touch 事件验收**——程序化 `scrollTop`
+   步进复现不出「布局回声」（栏切换改 WebView 高度，聊天页钉底补偿产生 ~490ms 的孤立单跳自振，
+   用户看到的是果冻）。回归模板：`verify/jelly-test.mjs`、`verify/qr-bar-test.mjs`、
+   `verify/newchat-test.mjs`、`verify/fab-drag-test.mjs`（CDP 连 WebView，adb 路径见 `config.local.ps1`）。
 
 ## 素材授权
 代码为 **MIT**（见 [LICENSE](LICENSE)）。角色立绘为第三方二创，**CC BY-NC-SA 4.0（非商用）**，署名表见 `android-app/assets-src/galgame/NOTICE.md`；商用请替换立绘素材。
