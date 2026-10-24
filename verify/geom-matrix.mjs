@@ -14,6 +14,10 @@
 //     结论：改注入段要判对错，**只有冷跑（重新打包装机）算数**；热跑只用来快速看「页面还在不在、
 //     几何有没有明显异常」。
 // 退出码：0 = PASS，1 = FAIL，2 = 环境/连接问题。
+// v1.33.29（用户 m02568）：收起态不再保留 56px 轨道——侧栏列 0px + 侧栏根 display:none，
+//   入口改为 body 级悬浮鲸鱼钮 #bw-whale-fab。toggle() 优先点 FAB 中心坐标；
+//   collapsed 断言改为「FAB 存在 + 侧栏列 colW<8」（旧 alpha [0.4,0.5] 随隐藏作废），
+//   expanded 断言不变（alpha [0.87,0.97]）。
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -53,7 +57,7 @@ function hostsFromPrefs() {
     return { name: h.name, url: h.url || h.baseUrl };
   });
 }
-const PROBE = "(" + "function(){var J=JSON.stringify;function R(n){if(!n)return null;var r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),x:Math.round(r.left)}}function A(n){if(!n)return null;var cs=getComputedStyle(n);var m=(n.getAttribute('style')||'').match(/background-color:[^;]+/);return {bg:cs.backgroundColor,inline:m?m[0].slice(0,60):''}}var o={};o.vw=window.innerWidth;o.vh=window.innerHeight;o.host=location.host;o.pinned=!!window.__bwW;o.sbPub=!!window.__bwSbEl;var fc=document.querySelector('[class*=centerCol]');o.centerCol=R(fc);o.convVar=fc?String(getComputedStyle(fc).getPropertyValue('--dsh-conversation-column-width')).trim():'';var sb=window.__bwSbEl||null;var list=document.querySelectorAll('div,section,aside');var best=null;for(var i=0;i<list.length;i++){var q=list[i];var cls=String(q.className);if(cls.indexOf('_root')<0)continue;var r=q.getBoundingClientRect();if(r.height<o.vh*0.6||r.left>2)continue;if(!best||r.width<best.getBoundingClientRect().width)best=q}sb=sb||best||document.querySelector('[class*=_root]');o.sbFromCls=!!window.__bwSbEl?'__bwSbEl':'fallback';o.sbCls=sb?String(sb.className).slice(0,60):null;o.sbRect=R(sb);o.sbBg=A(sb);var de=getComputedStyle(document.documentElement);o.docBg=de.backgroundColor;o.bodyBg=document.body?getComputedStyle(document.body).backgroundColor:null;return J(o)})()";
+const PROBE = "(" + "function(){var J=JSON.stringify;function R(n){if(!n)return null;var r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),x:Math.round(r.left)}}function A(n){if(!n)return null;var cs=getComputedStyle(n);var m=(n.getAttribute('style')||'').match(/background-color:[^;]+/);return {bg:cs.backgroundColor,inline:m?m[0].slice(0,60):''}}var o={};o.vw=window.innerWidth;o.vh=window.innerHeight;o.host=location.host;o.pinned=!!window.__bwW;o.sbPub=!!window.__bwSbEl;var fc=document.querySelector('[class*=centerCol]');o.centerCol=R(fc);o.colW=(function(){var sc=document.querySelector('[class*=_sidebarCol]');return sc?Math.round(sc.getBoundingClientRect().width):-1})();o.fab=!!document.getElementById('bw-whale-fab');o.convVar=fc?String(getComputedStyle(fc).getPropertyValue('--dsh-conversation-column-width')).trim():'';var sb=window.__bwSbEl||null;var list=document.querySelectorAll('div,section,aside');var best=null;for(var i=0;i<list.length;i++){var q=list[i];var cls=String(q.className);if(cls.indexOf('_root')<0)continue;var r=q.getBoundingClientRect();if(r.height<o.vh*0.6||r.left>2)continue;if(!best||r.width<best.getBoundingClientRect().width)best=q}sb=sb||best||document.querySelector('[class*=_root]');o.sbFromCls=!!window.__bwSbEl?'__bwSbEl':'fallback';o.sbCls=sb?String(sb.className).slice(0,60):null;o.sbRect=R(sb);o.sbBg=A(sb);var de=getComputedStyle(document.documentElement);o.docBg=de.backgroundColor;o.bodyBg=document.body?getComputedStyle(document.body).backgroundColor:null;return J(o)})()";
 let ws = null, id = 0; const pend = new Map();
 const send = (m, p) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method: m, params: p || {} })); setTimeout(() => { if (pend.delete(i)) rej(new Error('CDP 超时 ' + m)); }, 30000); });
 const ev = async (x) => { const r = await send('Runtime.evaluate', { expression: x, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error('JS:' + JSON.stringify(r.exceptionDetails).slice(0, 200)); return r.result && r.result.value; };
@@ -115,6 +119,17 @@ async function toggle() {
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: p[0], y: p[1], button: 'left', clickCount: 1 });
     await sleep(1200);
   }
+  // v1.33.29：收起态 56px 轨道已取消（侧栏列 0px + 侧栏根 display:none），
+  // 旧「坐标点轨道钮」路径找不到 width>0 的钮了。入口现在是悬浮鲸鱼钮——
+  // 优先点 FAB 中心（真事件，走用户路径）；找不到 FAB 再退回旧路径（兼容旧包热跑）。
+  const fp = await ev("(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();if(r.width<=0)return null;return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)])})()");
+  if (fp) {
+    const q = JSON.parse(fp);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: q[0], y: q[1], button: 'left', clickCount: 1 });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: q[0], y: q[1], button: 'left', clickCount: 1 });
+    await sleep(1800);
+    return true;
+  }
   const pos = await ev("(function(){var b=document.querySelectorAll('button,[role=button]');for(var i=0;i<b.length;i++){var a=(b[i].getAttribute('aria-label')||'')+' '+(b[i].title||'');if(a.indexOf('Open sidebar')>=0||a.indexOf('Collapse sidebar')>=0){var r=b[i].getBoundingClientRect();if(r.width>0&&r.width<90&&r.top<300)return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2)])}}return null})()");
   if (!pos) return false;
   const xy = JSON.parse(pos);
@@ -137,10 +152,18 @@ function judge(tag, o) {
   const cw = o.centerCol ? o.centerCol.w : 0;
   const min = Math.round(o.vw * 0.8);
   if (cw < min) bad.push('聊天列 ' + cw + ' < 0.8vw(' + min + ')');
-  const a = alphaOf(o.sbBg && o.sbBg.bg);
-  const want = tag.indexOf('expanded') >= 0 ? [0.87, 0.97] : [0.4, 0.5];
-  if (a === null) bad.push('读不到侧栏 alpha');
-  else if (a < want[0] || a > want[1]) bad.push('侧栏 alpha ' + a + ' 不在 [' + want[0] + ',' + want[1] + ']');
+  // v1.33.29：两态都必须有悬浮鲸鱼钮（收起态它是唯一入口，展开态它负责再收起）
+  if (!o.fab) bad.push('悬浮鲸鱼钮 #bw-whale-fab 缺失');
+  if (tag.indexOf('expanded') >= 0) {
+    const a = alphaOf(o.sbBg && o.sbBg.bg);
+    if (a === null) bad.push('读不到侧栏 alpha');
+    else if (a < 0.87 || a > 0.97) bad.push('侧栏 alpha ' + a + ' 不在 [0.87,0.97]');
+  } else {
+    // v1.33.29：收起态侧栏整个 display:none——alpha 读不到（旧 [0.4,0.5] 断言作废，
+    // 且 PROBE 的 _root 兜底会抓到 left=0 的聊天根误判）。改断言侧栏列(*_sidebarCol)
+    // 实测宽度已塌到 0（colW<8），配合上面的 FAB 存在 + 聊天列满宽即等价于旧断言。
+    if (o.colW >= 8) bad.push('收起态侧栏列未隐藏 colW=' + o.colW);
+  }
   const tr = String(o.docBg).indexOf('rgba(0, 0, 0, 0)') >= 0 || String(o.docBg) === 'transparent';
   if (!tr) bad.push('页面不透明(壁纸红线) html=' + o.docBg);
   return bad;

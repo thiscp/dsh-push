@@ -299,7 +299,12 @@ class WebActivity : Activity() {
                         // 被钉成 56px|1fr|0 三列后 img（width:100% = 列宽）只剩 56px、cover 居中裁切 ⇒ 缩略图左边被切，
                         // 56 恰等于收起栏宽，看着像"侧栏盖图"（实测卡片 x=212..321 与侧栏 x=0..56 不重叠）。
                         // 加 :has(_sidebarCol) 外壳门控：只有含侧栏列的外壳命中（四态矩阵不受影响），缩略图/会话流自动脱身。
-                        "[class*='_frame']:has([class*='_sidebarCol']){grid-template-columns:56px minmax(0,1fr) minmax(0,0px)!important}" +
+                        // ★ v1.33.29（用户 m02568）：收起态不再保留 56px 轨道——侧栏列压到 0、
+                        //   收起态侧栏根整个 display:none，对话界面占满手机宽度；入口改由
+                        //   body 级悬浮鲸鱼钮 #bw-whale-fab 承担（见下方 bwFab）。展开态不变：
+                        //   侧栏根仍是 fixed 浮层盖在满宽正文上。
+                        "[class*='_frame']:has([class*='_sidebarCol']){grid-template-columns:0px minmax(0,1fr) minmax(0,0px)!important}" +
+                        "[class*='_sidebarCol'] [class*='_root'][class*='_collapsed']{display:none!important}" +
                         "[class*='_sidebarCol']{position:relative!important;z-index:80!important;overflow:visible!important;backdrop-filter:none!important;" +
                         "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
@@ -714,7 +719,7 @@ class WebActivity : Activity() {
                 "bwSet(col,'bottom','0px');bwSet(col,'width',nw+'px');bwSet(col,'max-width',nw+'px');" +
                 "bwSet(col,'z-index','60');" +
                 "window.__bwNarrowEl=[frame,col];window.__bwNarrow=nw;window.__bwFpW=col;return nw;}" +
-                "function bwPanelBg(){var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
+                "function bwPanelBg(){bwFab();var g=bwFind();bwGeomFix(g);var pre=bwPrefix();" +
                 //   注意：DSH 的 bundle 里**外壳与侧栏根是两个不同哈希命名空间**（笔电外壳 BynINW_*
                 //   但侧栏根 _2H3hWW_*；VM1 是 pI_x6G_* / hHd-Xa_*），所以推导前缀只能当兜底：
                 //   先认已知的笔电锚点（那条路一行未变，遮罩 alpha 才不会被算错），再退到推导值。
@@ -750,6 +755,45 @@ class WebActivity : Activity() {
                 //   （系统 night=yes 后 prefers-color-scheme 仍是 light ⇒ 模拟器复现不出来）。真机对照
                 //   09:05（去毛玻璃）比 22:37 笔电（有毛玻璃）更糟：正文太扎眼 ⇒ 恢复毛玻璃。
                 "bwAlpha(sb,exp&&window.innerWidth<=1023);}" +
+                // ★ v1.33.29（用户 m02568）：悬浮鲸鱼钮。收起态侧栏整个隐藏后它是唯一入口；
+                //   展开态钮仍在（z-120 压在浮层上），再点一下收起。图标克隆页面自己的
+                //   侧栏 logo（原本那个鲸鱼图标），克隆不到退回 🐳。点击=给页面自己的
+                //   sidebar toggle 派发完整 pointer/mouse/click 事件序列——「点浮层外收起」
+                //   在生产已证明对这个钮 .click() 有效；展开态那个钮随收起轨道 display:none，
+                //   合成事件不看 isTrusted/可见性，只看冒泡。
+                "function bwToggle(){var b=document.querySelectorAll('button,[role=button],a');" +
+                "for(var i=0;i<b.length;i++){var a=(b[i].getAttribute('aria-label')||'')+' '+(b[i].title||'');" +
+                "if(/right|右/i.test(a))continue;" +
+                "if(/Open sidebar|Collapse sidebar|Toggle sidebar|展开侧边栏|收起侧边栏|打开侧边栏|切换侧边栏/i.test(a)){" +
+                "var el=b[i],r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2;" +
+                "var o={bubbles:true,cancelable:true,composed:true,clientX:x,clientY:y," +
+                "screenX:x,screenY:y,button:0,pointerId:1,pointerType:'touch',isPrimary:true};" +
+                "try{el.dispatchEvent(new PointerEvent('pointerdown',Object.assign({buttons:1},o)));}catch(e1){}" +
+                "try{el.dispatchEvent(new MouseEvent('mousedown',Object.assign({buttons:1},o)));}catch(e2){}" +
+                "try{el.dispatchEvent(new PointerEvent('pointerup',Object.assign({buttons:0},o)));}catch(e3){}" +
+                "try{el.dispatchEvent(new MouseEvent('mouseup',Object.assign({buttons:0},o)));}catch(e4){}" +
+                "el.dispatchEvent(new MouseEvent('click',Object.assign({detail:1},o)));return true;}}" +
+                "return false;}" +
+                "function bwFab(){var f=document.getElementById('bw-whale-fab');" +
+                "if(!f&&document.body){f=document.createElement('button');f.id='bw-whale-fab';" +
+                "f.type='button';f.setAttribute('aria-label','Toggle sidebar');" +
+                "f.textContent='🐳';" +
+                "f.style.cssText='position:fixed;left:10px;top:50%;transform:translateY(-50%);" +
+                "z-index:120;width:44px;height:44px;border-radius:50%;padding:0;" +
+                "border:1px solid rgba(255,255,255,.25);background:rgba(18,24,40,.55);" +
+                "color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;" +
+                "-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);" +
+                "box-shadow:0 4px 16px rgba(0,0,0,.35)';" +
+                "f.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();bwToggle();});" +
+                "document.body.appendChild(f);}" +
+                //   logo 可能比注入晚渲染：每轮 bwPanelBg 试克隆一次，成功为止（img/svg 都整节点克隆）。
+                "if(f&&!f.__bwLogo){var sc=document.querySelector(\"[class*='_sidebarCol']\");" +
+                "var lg=sc?(sc.querySelector('img')||sc.querySelector('svg')):null;" +
+                "if(lg){f.textContent='';var c=lg.cloneNode(true);" +
+                "c.removeAttribute('class');c.removeAttribute('style');" +
+                "c.style.width='24px';c.style.height='24px';c.style.display='block';" +
+                "c.style.pointerEvents='none';f.appendChild(c);f.__bwLogo=1;}}" +
+                "if(f){f.style.display=window.innerWidth>1023?'none':'flex';}}" +
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
                 "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
@@ -774,6 +818,9 @@ class WebActivity : Activity() {
                 "if(window.__bwPanelClose)return;window.__bwPanelClose=1;" +
                 "document.addEventListener('pointerdown',function(e){" +
                 "if(window.innerWidth>1023)return;" +
+                // v1.33.29：点悬浮鲸鱼钮本身不算「点浮层外」——钮自己的 click 负责切换；
+                // 不豁免会「本处理器收起 + 钮再展开」双切换互相抵消。
+                "if(e.target&&e.target.closest&&e.target.closest('#bw-whale-fab'))return;" +
                 "var sb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
                 "if(!sb){sb=window.__bwSbEl;if(!sb)return;" +
                 "if(getComputedStyle(sb).position!=='fixed')return;}" +

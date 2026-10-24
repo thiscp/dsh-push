@@ -2060,3 +2060,23 @@ i2v raw 480x864 (绿底)
 **交付**：六套 `pose_anim_*.webp`（422x760 / 33帧 / 84ms / 四角 alpha=0），总量 9.4MB→11.5MB。`SUMMARY: 10/10`，在线 `?v=134` Content-Length 16598932 与新 APK 一致。
 
 **发版流水线的坑**：`release.ps1` **只做构建+部署，不提交**；`export-public.ps1` 在 `$ErrorActionPreference=Stop` 下会被 git 的 CRLF stderr 警告终止（`git add -A` 后中断，commit 没发生）。修法：`git config core.autocrlf false`，或暂存后手动 commit+push（三远端：gitee master / github master / github master:main --force-with-lease）。
+
+### 7.12 窄屏侧栏改「悬浮鲸鱼钮」（1.33.29 / 135，2026-10-24）
+
+**用户诉求**（m02568）：别人远程 dsh web 时左侧栏整个消失，只剩原本侧栏上的鲸鱼图标当悬浮钮——平时对话满屏，点钮展开侧栏，再点变回悬浮钮。「下一版就这么改」。
+
+**实现**（全在 `WebActivity.kt` 窄屏注入段，零原生布局改动）：
+1. 收起态：`[class*='_frame']:has([class*='_sidebarCol'])` 的 grid 轨道 `56px`→**`0px`**，并加 `[class*='_sidebarCol'] [class*='_root'][class*='_collapsed']{display:none!important}`——侧栏彻底没了，对话列占满 360 CSS。展开态不变（侧栏根仍是 fixed 280px 浮层，聊天列保持满宽）。
+2. 注入 body 级 `button#bw-whale-fab`：fixed left:10px top:50% translateY(-50%)、44px 圆钮、z-120、bg rgba(18,24,40,.55)+blur(8px)；图标**克隆页面自己 `*_sidebarCol` 里第一个 img/svg**（就是原鲸鱼 logo，24px，克隆成功一次即定稿），兜底 🐳；vw>1023 隐藏。`bwFab()` 每轮 `bwPanelBg()` 调用（React 重建 DOM 时补建、logo 未渲染时重试）。
+3. 点钮 = `bwToggle()`：扫 button/[role=button]/a，aria+title 排除 `/right|右/i`，匹配 `/Open|Collapse|Toggle sidebar|展开|收起|打开|切换侧边栏/i`，对目标派发 **pointerdown→mousedown→pointerup→mouseup→click** 完整合成序列（bubbles+composed+clientX/Y）。**实测完整序列能触发 React 展开**——旧结论「CDP element.click() 不触发 React」只针对裸 click，别被吓退。
+4. 「点浮层外收起」的 pointerdown 处理器加 `closest('#bw-whale-fab')` 豁免，否则点钮会被判成「点外面」再收起，双切换互相抵消。
+5. `geom-matrix.mjs` 同步改（否则发布第 10 项必红）：`toggle()` 优先坐标点 FAB 中心（真事件），找不到退回旧路径；**collapsed 断言从 alpha∈[0.4,0.5] 改为 `o.fab` 存在 + `o.colW`（`*_sidebarCol` 实测宽）<8**——display:none 后 bwAlpha 早退不写值，且 PROBE 的 `_root` fallback 会抓到 left=0 的聊天根；expanded 断言不变（alpha [0.87,0.97]）。
+
+**实测终值**（冷跑，1.33.29 已装）：笔电 collapsed 聊天列 360 / 侧栏轨道 0 / FAB 在；expanded 360 / 280 / 0.92。VM1 collapsed 360 / 轨道 0 / FAB 在；expanded 360 / 280 / 0.92。**VERDICT PASS states=4 fails=0**。
+
+**本轮踩的坑**：
+- 往 Kotlin 字符串拼接里插 `bwFab` 函数时漏了收尾 `}`，`extract-injected-js.mjs` + `node --check` 当场抓到（`Unexpected token ')'`）——**改注入段必跑这道闸**，否则要到装机才暴露。
+- 装完新 APK 后矩阵首跑冷跑挂死 ~20 分钟（node 活着、adb 命令队列卡住，日志停在 hostsFromPrefs 后）；杀进程重跑即好。流水线内矩阵又撞 240s ENV 超时（rc 仍 10/10，该项标 ENV not blocking），**补跑一次拿到真 PASS 才算数**（同 7.10 ⑤ 规律：装机后瞬时负载）。
+- `release.ps1` 不 commit 导致 `export-public` 报 "public already up to date"——先 commit 再导。
+
+**交付**：1.33.29 / 135，APK 16,599,760 B，在线 `?v=135` 确认，更新推送 id `JtUFHoI7RDbV`。
