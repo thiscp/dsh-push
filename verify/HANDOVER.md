@@ -2306,3 +2306,30 @@ node --check C:\Temp\bw-narrow.js
 - 对照组测「新点通知」必须带 `-f 0x30000000`（= `NEW_TASK|SINGLE_TOP`，与 `PushService.kt:353` 一致），否则任务只被「brought to front」而走既有实例，会误判成 FAIL。
 - `input tap 1310 108` 会点到 GMS 的 add-account 报错页（标题栏「关闭」真坐标由 uiautomator 取：**`(1296,183)`**）；`uiautomator dump` 的中文在 PowerShell 里是 GBK 乱码但 `bounds` 可用。
 - 模拟器偶发掉线（`device not found` → 自动重启 → `offline` → 约 12s 后 boot_completed=1）；探针里对 `json/list` 拿不到要有重试。
+
+## 7.20 两轮制发布流程 + verify 工具箱（2026-10-25，用户 m08061/m08106）
+
+**用户改的流程（从这一版起生效）**
+> 「首轮你只改代码，编译发包我自己去下载测试，如果有问题第二轮你再开模拟器去验证复现，还有你自己想办法优化时间提高效率，现在的时间长得难以接受」
+> 随后纠正：「是你改代码编译发包，我去下载测试」
+
+⇒ 首轮 = 改码 + 构建 + **上传发包**（用户自己装真机测）；用户报问题才进第二轮开模拟器。首轮**不跑** install / push / assert / screenshot / geom-matrix。
+
+原因：`dsh-app-verify.ps1 -Deploy` 是**全量闸**（起模拟器→安装→推测试通知→断言 prefs→截图→四态几何矩阵），每轮 120–250s，而且验的是注入层、不是用户真机。首轮根本不需要。
+
+**新脚本 `verify\release-fast.ps1`（首轮用这个）**
+四步：幂等版本同步 → vm1 `gradle assembleDebug` 并取回 apk → scp 到 aliyun dl 目录 + `?v=<versionCode>` SHA256 比对 → ntfy update 通知 → `export-public.ps1`。
+参数：`-Version -VersionCode -DeployNote -NoNotify -NoPublish -SkipExport -SkipOnlineCheck -DryRun -BuildTimeoutSec`。
+实测（2026-10-25，1.33.41/147）：**构建+取回 16 秒**（全量链 120–250 秒）。
+坑：脚本内所有 ssh/scp 一律走 `cmd /c "..."`——PS 5.1 把 ssh 输出管道进 Out-String 会**永久挂死**（2026-10-13 实测 34 分钟）；`-Deploy` 会被前缀匹配成 `-DeployNote` 而吞掉参数，本脚本用 `-NoPublish` 避开这个词。
+
+**新工具箱 `verify\{cdp,state,ui}.mjs`（第二轮用这个，别再写一次性 C:\Temp 脚本）**
+- `cdp.mjs`：唯一的 CDP 连接器。此前 21 个 verify/*.mjs 各抄一份 adb forward + /json/list + WebSocket，其中一份还吞掉了 CDP 真实错误只报 `Error: cdp`（某轮烧掉约 40 分钟）。导出 `connect()`（返回 `{ws,ev,evOr,send,close,pid,port}`）、`sleep`、`adb`、`adbTry`、`shot`。失败消息一律带真实原因（pid / json list / ws error）。
+- `state.mjs`：`snapshot(c)` 一次拿全状态（url/hash/sess/sessCount/fab/side/rows/sessRows/innerW/innerH/nodes/title/hidden），`waitFor(c,pred,ms)`、`waitReady`、`waitSess`。此前为同一个问题（页面停在哪个会话）写了 6 个脚本。
+- `ui.mjs`：按**语义**驱动原生 UI——`dump()` 解析 uiautomator XML（bounds 本来就是物理像素，`input tap` 直接吃），`waitText/tapText/tapDesc/pickInstance/closeWeb/openDshEntry/focus/waitFocus`。此前 19 次手算 `input tap` + 5 次 uiautomator 重算 + 9 次截图肉眼确认。
+- `smoke-kit.mjs`：自检（connect/snapshot/dump/waitText 正负例/shot）。2026-10-25 实测：connect 0.2s、snapshot 0.2s、dump 2.6s、waitText 命中 2.5s、shot 830KB。
+- 硬事实：`uiautomator dump` 的中文在 PowerShell 里是 GBK 乱码，但**在 Node 里按 utf8 读 XML 就正常**；`adb pull` 的 "1 file pulled" 进度行在 stderr，会触发 PS 的 NativeCommandError，必须吞掉 stderr。
+
+**当轮自查（用户问「为什么用了两个多小时」）**
+第三段需求 149.0 分钟 / 272 模型步 / 271 工具调用，拆分：模型往返 **89.3min（59.9%）**、on-device 取证 34.4min（23%）、构建发布 4.6min（3.1%）、读码 3.0min、**改码 0.13min**。最贵的浪费：①同一问题写了 6 个探针脚本、全程 38 个 C:\Temp\*.mjs / 跑 31 个；②像素坐标驱动 UI；③同一 bug 误判两次（差别只在读 pref 的时刻）。
+⇒ 约束：**首轮 e2e ≤15min 出结论、临时脚本 ≤3 个、工具调用 ≤120 次**。可达水位：同类需求 40–55min。
