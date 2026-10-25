@@ -1063,6 +1063,68 @@ class WebActivity : Activity() {
                 //   现在用几何事实判断：`_tools` 与 `_trailing` 的垂直区间不再重叠 ⇒ 已经折成两行。
                 //   折行才动手，然后按「图标化插件按钮 → 收窄模型 pill → 单行兜底」三级让步。
                 //   因为 bwCmpFix 每 700ms 跑一次，弹窗开关/换模型引起的再次折行会自动被收拾。
+                // ★ v1.33.50（用户 m11246「再打开语音输入的插件，这种情况又出现了……有什么根本上的
+                //   解决方案吗，不然之后又开一点又会出现，或者说最开始的自动换行就是最优的方案了吗」）：
+                //   根本矛盾 —— **工具栏宽度固定，插件数量无上限**。只要靠"压宽度"（图标化、
+                //   收窄模型名）就一定会再撞墙：每多装一个插件就多 28px，迟早不够。
+                //   桌面浏览器里这行本来就是 flex-wrap:wrap（自动换行），换行在电脑上没感觉；
+                //   手机窄屏上换行就把输入框卡片顶高，这才是"输入框变大"。
+                //   ⇒ 正解不是继续挤，而是给工具栏一个**溢出机制**：
+                //     能放几个放几个，放不下的收进一个「⋯」按钮，点开是列表，
+                //     点列表项就转发一次原按钮的 click()。这样插件再多，卡片恒为单行 98px。
+                //   ⇒ 实现上**不移动 DOM**（React 事件委托挂在根节点，搬走节点会失效），
+                //     只把多余按钮 display:none，点列表时对原按钮调 .click()
+                //     —— 与 FAB 点侧栏开关同一招，实测有效。
+                "function bwOvList(tl){var a=[];for(var i=0;i<tl.children.length;i++){" +
+                "var k=tl.children[i];if(!k||k.nodeType!==1)continue;" +
+                "if(k.getAttribute('data-bwov')==='chip')continue;" +
+                "var cn=String(k.className||'');" +
+                "if(cn.indexOf('_add')>=0||cn.indexOf('_modes')>=0)continue;" +
+                "var b=(k.tagName==='BUTTON')?k:(k.querySelector?k.querySelector('button'):null);" +
+                "if(!b)continue;" +
+                // 注意：这里**不要求有 svg**。纯文字按钮无法图标化，但仍然必须能被收进「⋯」，
+                // 否则它会把整行撑到折行（用户装的可能就是这种插件）。
+                "a.push({k:k,b:b});}return a;}" +
+                "function bwOvClose(){var p=document.getElementById('bw-ovpanel');" +
+                "if(p&&p.parentElement)p.parentElement.removeChild(p);}" +
+                "function bwOvToggle(chip){var p=document.getElementById('bw-ovpanel');" +
+                "if(p){bwOvClose();return;}" +
+                "var tl=chip.parentElement;if(!tl)return;var it=bwOvList(tl),rows=[];" +
+                "for(var i=0;i<it.length;i++){if(it[i].k.getAttribute('data-bwoverflow')!=='1')continue;" +
+                "var lb=it[i].b.getAttribute('title')||it[i].b.getAttribute('aria-label')||" +
+                "(it[i].b.textContent||'').replace(/\\s+/g,' ').trim()||'插件';" +
+                "rows.push({b:it[i].b,lb:lb});}" +
+                "if(!rows.length)return;" +
+                "p=document.createElement('div');p.id='bw-ovpanel';" +
+                "p.style.cssText='position:fixed;z-index:2147483000;min-width:156px;max-width:250px;" +
+                "border-radius:12px;padding:6px;background:rgba(30,36,50,.97);" +
+                "box-shadow:0 10px 30px rgba(0,0,0,.42);';" +
+                "for(var j=0;j<rows.length;j++){(function(rw){var d=document.createElement('div');" +
+                "d.textContent=rw.lb;d.style.cssText='padding:9px 12px;font-size:13px;line-height:1.2;" +
+                "color:#e9eefb;border-radius:8px;cursor:pointer;white-space:nowrap;overflow:hidden;" +
+                "text-overflow:ellipsis;';" +
+                "d.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();" +
+                "try{rw.b.click();}catch(e2){}bwOvClose();});" +
+                "p.appendChild(d);})(rows[j]);}" +
+                "var r=chip.getBoundingClientRect();" +
+                "p.style.left=Math.max(6,Math.min(r.left,window.innerWidth-258))+'px';" +
+                "p.style.bottom=Math.max(6,window.innerHeight-r.top+8)+'px';" +
+                "document.body.appendChild(p);" +
+                "if(!window.__bwOvDoc){window.__bwOvDoc=1;" +
+                "document.addEventListener('pointerdown',function(e){" +
+                "var p2=document.getElementById('bw-ovpanel');if(!p2)return;" +
+                "if(e.target&&(e.target===p2||p2.contains(e.target)))return;" +
+                "if(e.target&&e.target.id==='bw-ovchip')return;bwOvClose();},true);}}" +
+                "function bwOvChip(tl){var c=document.getElementById('bw-ovchip');" +
+                "if(c&&c.parentElement!==tl){if(c.parentElement)c.parentElement.removeChild(c);c=null;}" +
+                "if(!c){c=document.createElement('div');c.id='bw-ovchip';c.setAttribute('data-bwov','chip');" +
+                "c.textContent='\\u22ef';" +
+                "c.style.cssText='width:28px;height:28px;min-width:28px;border-radius:8px;display:flex;" +
+                "align-items:center;justify-content:center;font-size:15px;line-height:1;cursor:pointer;" +
+                "flex:0 0 auto;opacity:.72;';" +
+                "c.addEventListener('click',function(ev){ev.preventDefault();ev.stopPropagation();" +
+                "bwOvToggle(c);});}" +
+                "if(c.parentElement!==tl)tl.appendChild(c);return c;}" +
                 "function bwRowFix(){var t=bwCmpBox();if(!t)return;var cb=bwCmpCard(t);if(!cb)return;" +
                 "var row=cb.querySelector('[class*=\"_row\"]');if(!row)return;" +
                 "var tl=row.querySelector('[class*=\"_tools\"]'),tr=row.querySelector('[class*=\"_trailing\"]');if(!tl||!tr)return;" +
@@ -1105,6 +1167,35 @@ class WebActivity : Activity() {
                 "sc.style.removeProperty('flex');sc.style.removeProperty('max-width');" +
                 "sc.style.removeProperty('overflow');sc.style.removeProperty('white-space');" +
                 "sc.style.removeProperty('text-overflow');}}" +
+                // 3) 溢出收纳：压完还放不下，就把最右边的插件按钮收进「⋯」。
+                //    这一级是**真正的根治**——插件数量无上限，只有"能收起来"才不会再撞墙。
+                //    收纳后卡片恒为单行；释放时要求留够 36px（28 按钮 + 8 间距）再放回，
+                //    否则会在「收起↔放回」之间每轮翻面抖动。
+                "var it=bwOvList(tl),hidN=0,i2;" +
+                "for(i2=0;i2<it.length;i2++){if(it[i2].k.getAttribute('data-bwoverflow')==='1')hidN++;}" +
+                // 先尝试放回一个：只有明显有余量（≥36px）才放，放完若仍不折行才算数
+                "if(hidN&&!wr()&&(av()-(tl.scrollWidth+tr.offsetWidth+12))>=36){" +
+                "for(var i6=0;i6<it.length;i6++){var k6=it[i6].k;" +
+                "if(k6.getAttribute('data-bwoverflow')!=='1')continue;" +
+                "k6.removeAttribute('data-bwoverflow');k6.style.removeProperty('display');" +
+                "if(wr()){k6.setAttribute('data-bwoverflow','1');" +
+                "k6.style.setProperty('display','none','important');}break;}}" +
+                // 再按需收起：每轮收一个最右的可见插件，最多 8 个
+                "for(var pass=0;pass<8;pass++){" +
+                "var itp=bwOvList(tl),hn=0,j;" +
+                "for(j=0;j<itp.length;j++){if(itp[j].k.getAttribute('data-bwoverflow')==='1')hn++;}" +
+                "if(hn>0){bwOvChip(tl);}else{var c9=document.getElementById('bw-ovchip');" +
+                "if(c9&&c9.parentElement)c9.parentElement.removeChild(c9);}" +
+                "if(!wr())break;" +
+                "var hit=0;for(j=itp.length-1;j>=0;j--){var kj=itp[j].k;" +
+                "if(kj.getAttribute('data-bwoverflow')==='1')continue;" +
+                "kj.setAttribute('data-bwoverflow','1');" +
+                "kj.style.setProperty('display','none','important');hit=1;break;}" +
+                "if(!hit)break;}" +
+                "var itf=bwOvList(tl),hf=0,j2;" +
+                "for(j2=0;j2<itf.length;j2++){if(itf[j2].k.getAttribute('data-bwoverflow')==='1')hf++;}" +
+                "if(hf>0){bwOvChip(tl);}else{var c8=document.getElementById('bw-ovchip');" +
+                "if(c8&&c8.parentElement)c8.parentElement.removeChild(c8);bwOvClose();}" +
                 // 释放 nowrap 必须留 8px 余量：否则会在「刚好卡在临界」的宽度上来回翻面，
                 // 每 700ms 抖一次（v1.33.49 实测 320css + 2 个插件 + 宽模型名时出现过）。
                 "if(wr()){row.style.flexWrap='nowrap';tl.style.minWidth='0px';tl.style.flex='1 1 auto';" +
