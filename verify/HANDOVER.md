@@ -2333,3 +2333,24 @@ node --check C:\Temp\bw-narrow.js
 **当轮自查（用户问「为什么用了两个多小时」）**
 第三段需求 149.0 分钟 / 272 模型步 / 271 工具调用，拆分：模型往返 **89.3min（59.9%）**、on-device 取证 34.4min（23%）、构建发布 4.6min（3.1%）、读码 3.0min、**改码 0.13min**。最贵的浪费：①同一问题写了 6 个探针脚本、全程 38 个 C:\Temp\*.mjs / 跑 31 个；②像素坐标驱动 UI；③同一 bug 误判两次（差别只在读 pref 的时刻）。
 ⇒ 约束：**首轮 e2e ≤15min 出结论、临时脚本 ≤3 个、工具调用 ≤120 次**。可达水位：同类需求 40–55min。
+
+## §7.21 悬浮鲸鱼钮吸附露出比例 1/3 → 1/2（v1.33.42 / versionCode 148，2026-10-25）
+
+**需求**：用户 m08310「试试把左边侧边栏的悬浮按钮在吸附时之前只露出 1/3 改为露出 1/2，因为 1/3 有时候点不到」。
+根因：1.33.31 定的「露 1/3」= 44px 钮只露 **15px**、藏 29px，真机手指点屏边 15px 宽的半圆容易落空（模拟器上点带内 x=4 还能中，真机不行）。
+
+**改动（唯一一处逻辑，`WebActivity.kt` 的 `bwFabPlace`）**
+- 左吸附 `left: -29 → -22`；右吸附 `left: vw-15 → vw-22`；初始 `cssText` 的 `left:-18px → -22px`。
+- 44px 钮 ⇒ 露 22px = **正好一半**；半透明 `.5`、拖动、吸附判定、localStorage 持久化全不变。
+- 注释里钉死版本溯源（v1.33.31 定 1/3、v1.33.42 改 1/2），避免以后再被当成 bug 改回去。
+
+**连带要改的测试断言（几何变了就必改，否则自测假 FAIL）**
+- `verify/fab-drag-test.mjs`：四处坐标 `-29 → -22`、`vw-15 → vw-22`；点钮的 x 从 `r.x+4` 改成 `r.x+8`（露出带更宽，取带内靠里一点更稳）。
+- `verify/newchat-test.mjs`：两处 `r.left+4` 改为 `Math.min(Math.max(r.left+8,8),window.innerWidth-8)`（吸附态钮右缘可能越界，必须夹进屏内）。
+- `verify/geom-matrix.mjs`：`toggle()` 的钳位逻辑本身不用改（本来就把 cx 夹进 `[4, vw-4]`），只更新注释。
+
+**验收与发布（首轮流程，没开模拟器）**
+- 注入 JS 语法闸：`node verify/extract-injected-js.mjs > C:\Temp\bw-narrow.js 2>C:\Temp\bw-extract.err; node --check` → **3 段、语法错 0 段**。
+- `verify\release-fast.ps1 -Version 1.33.42 -VersionCode 148 -DeployNote "fab edge reveal 1/2"` → 构建 32s、**全链 51s**；`publish: OK ?v=148 (200 16606404, sha256 matches)`；update-notify id `h2nR7RwsOBIA`。
+- 私有仓 `ed910d5` 已推 gitee；公开镜像四端 `4aa8111`。
+- 待用户真机验收（首轮流程：我发包，用户自己测）。
