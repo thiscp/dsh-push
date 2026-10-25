@@ -169,9 +169,11 @@ class WebActivity : Activity() {
         //   壁纸色上、关闭钮单独一颗胶囊——既没有底板也和主页的卡片语言脱节。
         //   改成**浮动卡片条**：与消息卡片同源（80% 卡底色 + 1dp 主题描边 + 18dp 圆角），
         //   左侧补一枚主题色鲸鱼标（对应主页顶部头像的位置），右侧关闭钮收进同一条卡片里。
-        //   ⚠ 动画：setBarShown 是把 topBar 的 height 收/放到 0。外边距**不能写在外层**
-        //   （收到 0 后 margin 还留着，会剩一条空档），所以外层 barBox 无内边距、由 bar 自己
-        //   带 margin —— margin 在 FrameLayout 内部，外层高度 0 时整块被裁掉。
+        //   ★ v1.33.44（用户 m09845「顶部栏还有一圈灰色的背景」）：首版做成「浮动圆角卡片 +
+        //   四周 10dp 外边距」，实机上一圈灰 = 外边距露出的**壁纸**（浅色主题壁纸 #EEEDF3，
+        //   而下方网页玻璃是 #F8F7FC，差一档就成了一道灰框）。⇒ 改**通栏**：左右顶到屏幕边、
+        //   零外边距，只留 1dp 底部细线。没有缝就没有灰。
+        //   ⚠ 动画：setBarShown 是把 topBar 的 height 收/放到 0，通栏后 barBox 仍只做这件事。
         val barBox = FrameLayout(this)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -181,8 +183,9 @@ class WebActivity : Activity() {
             // 标题 16sp→13sp，关闭钮去默认 minHeight（实测原 bar 390px=97.5css，其中
             // Button 默认 48dp minHeight + 10/6 padding 占大头）。
             setBackgroundResource(R.drawable.bg_bar)
-            elevation = dp(2).toFloat()
-            setPadding(dp(10), dp(5), dp(5), dp(5))
+            // v1.33.44：去掉 elevation —— 圆角卡片那版留下的投影在浅色壁纸上就是一圈灰；
+            // 通栏 + 1dp 底线已经足够分层，不需要影子。
+            setPadding(dp(14), dp(6), dp(8), dp(6))
         }
         // 主题色鲸鱼标：纯粹的身份标记，和主页顶部那只头像呼应（不吃点击）
         bar.addView(ImageView(this).apply {
@@ -217,11 +220,8 @@ class WebActivity : Activity() {
             setPadding(dp(13), dp(4), dp(13), dp(4))
             setOnClickListener { finish() }
         })
-        barBox.addView(bar, FrameLayout.LayoutParams(-1, -2).apply {
-            // 外边距放在卡片自己身上：barBox 收到 0 高度时整块（含 margin）被裁掉，
-            // 不会像「给外层加 padding」那样留下一道收不掉的空档。
-            setMargins(dp(10), dp(5), dp(10), dp(4))
-        })
+        // v1.33.44：通栏——零外边距，bar 自己铺满整行宽度
+        barBox.addView(bar, FrameLayout.LayoutParams(-1, -2))
         content.addView(barBox)
         topBar = barBox
 

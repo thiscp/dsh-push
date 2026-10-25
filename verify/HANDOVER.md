@@ -2373,3 +2373,25 @@ node --check C:\Temp\bw-narrow.js
 - 私有仓 `3450e47` 已推 gitee。
 - 硬坑：`powershell -File verify\release-fast.ps1` 在 **bash** 里跑会被吃掉反斜杠（`verifyrelease-fast.ps1` 找不到），必须用 **pwsh 工具**。
 - 待用户真机验收（首轮流程：我发包，用户自己测）。
+
+### §7.22.1 修正：那圈灰不是卡片背景，是卡片**外边距露出的壁纸**（v1.33.44 / versionCode 150）
+
+**用户反馈**（m09845）：「但是感觉顶部栏还有一圈灰色的背景呢」。
+
+**像素取证**（对用户截图 1380×3036 逐点采样，`System.Drawing`）：
+| 位置 | 颜色 | 含义 |
+|---|---|---|
+| 状态栏条 | `#F3F8FC` | window background |
+| 卡片左右 10dp 外边距 | `#EEEDF3` | **浅色主题壁纸**（day 场景底色） |
+| 卡片内部 | `#FCFCFE` | `dshCardBg`(#CCFFFFFF) 叠壁纸 |
+| 卡片下方网页区 | `#F8F7FC` | 网页玻璃 |
+⇒ `#EEEDF3` 与 `#F8F7FC` 差一档，围着圆角卡片就形成**一道灰框**。不是 `bg_bar` 画错，是**留了缝**。
+
+**改法（`WebActivity.kt` + `drawable/bg_bar.xml`）**
+1. `bg_bar.xml` 由「圆角 18dp + 1dp 四面描边」改为 **`layer-list`：通栏实底 + 仅底部 1dp 细线**。
+2. `bar` 去掉 `elevation`（卡片版留下的投影在浅壁纸上也是一圈灰），内边距 `14/6/8/6dp`。
+3. `barBox.addView(bar, FrameLayout.LayoutParams(-1,-2))` —— **零外边距**，顶到屏幕左右边。
+4. 动画不变：`setBarShown` 仍动画 `topBar.height`；通栏后没有 margin 残留，收起到 0 天然干净。
+
+**发布**：`release-fast.ps1 -Version 1.33.44 -VersionCode 150` → 构建 32s、全链 70s、apk 16,607,181 B、`?v=150` sha256 一致、update-notify `D8ccZ2NCxqaP`。
+**教训**：给原生栏加「浮动卡片」外观时，四个方向的外边距会**露出壁纸**；壁纸色与网页玻璃色不同，就必然出现一圈"不属于任何控件的颜色"。要么通栏、要么让容器背景与页面同色。
