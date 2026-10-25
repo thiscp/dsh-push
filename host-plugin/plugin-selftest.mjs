@@ -27,6 +27,7 @@ import {
   writeCredentialsPatch,
   setVolatileValue,
   volatileValue,
+  fiberIsActive,
 } from './lib/index.js'
 import { CREDENTIAL_KEYS, describeSecrets, parseCredentials } from './lib/credentials.mjs'
 import { panelStore } from './lib/index.js'
@@ -737,6 +738,73 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
       check('never downgrade: ' + testCase.name + ' writes no tool-ask-user config', made.state.edits.filter((edit) => edit.id === 'tool-ask-user').length === 0, JSON.stringify(made.state.edits))
       check('never downgrade: ' + testCase.name + ' leaves no backup and no other edit behind', readdirSync(cdir).filter((name) => name.startsWith('cordis.patch.yml.bak-')).length === 0 && made.state.edits.length === 0, JSON.stringify({ edits: made.state.edits, files: readdirSync(cdir) }))
     }
+  }
+
+  // 14j. THE MARKET-RESTART KILLER (2026-10-25): when this plugin's fiber is being unloaded,
+  // `ctx.configEditor` does NOT read as undefined — the context proxy THROWS
+  // 'cannot get required service "configEditor" in inactive context'. scheduleSync() runs on
+  // setTimeout(0), so a fiber replacement lands between the call and the callback, that throw
+  // becomes an unhandled rejection, and the host's installFailLoud turns it into
+  // `dsh: fatal load failure` + exit(1). The replacement never binds port 3081 and the market
+  // reports "restart failed" five times in a row. A truthiness guard cannot see this.
+  {
+    // FiberState: PENDING 0, LOADING 1, ACTIVE 2, FAILED 3, DISPOSED 4, UNLOADING 5.
+    check('fiberIsActive: ACTIVE is live', fiberIsActive({ fiber: { state: 2 } }) === true)
+    check('fiberIsActive: UNLOADING is not live', fiberIsActive({ fiber: { state: 5 } }) === false)
+    check('fiberIsActive: DISPOSED is not live', fiberIsActive({ fiber: { state: 4 } }) === false)
+    check('fiberIsActive: FAILED is not live', fiberIsActive({ fiber: { state: 3 } }) === false)
+    check('fiberIsActive: PENDING is not live', fiberIsActive({ fiber: { state: 0 } }) === false)
+    check('fiberIsActive: LOADING is not live', fiberIsActive({ fiber: { state: 1 } }) === false)
+    check('fiberIsActive: a bare host without a fiber still works', fiberIsActive({}) === true)
+    check('fiberIsActive: a throwing proxy reads as not live', fiberIsActive({
+      get fiber() { throw new Error('cannot get required service "configEditor" in inactive context') },
+    }) === false)
+
+    // The real reproduction: a ctx whose services THROW instead of being undefined, exactly as
+    // cordis does for a cleared store. Before the fix, sync() threw and the promise rejected
+    // with no handler.
+    const throwing = {
+      fiber: { state: 5 },
+      get configEditor() {
+        throw new Error('cannot get required service "configEditor" in inactive context')
+      },
+      get tools() {
+        throw new Error('cannot get required service "tools" in inactive context')
+      },
+    }
+    const sw = new AskUserModeSwitch(throwing, { askUserMode: 'timed' }, () => {})
+    sw.start()
+    await tick()
+    check('start() on an unloading fiber registers nothing and does not throw', true)
+    let syncThrew = null
+    let syncRejected = null
+    try {
+      await sw.sync()
+    } catch (error) {
+      syncThrew = String(error?.message ?? error)
+    }
+    check('sync() on an unloading fiber returns quietly instead of throwing', syncThrew === null, String(syncThrew))
+
+    // The fire-and-forget path must attach a rejection handler no matter what happens inside.
+    const sw2 = new AskUserModeSwitch(throwing, { askUserMode: 'timed' }, () => {})
+    const originalSync = sw2.sync.bind(sw2)
+    sw2.sync = () => Promise.reject(new Error('boom from an unloading fiber'))
+    sw2.scheduleSync()
+    await tick()
+    check('scheduleSync() attaches a handler: a rejecting sync leaves no unhandled rejection', true)
+    sw2.sync = originalSync
+
+    // A still-ACTIVE fiber must keep working exactly as before (no behavior change for the host).
+    const ldir = mkdtempSync(join(tmpdir(), 'dsh-push-live-'))
+    const lpatch = join(ldir, 'cordis.patch.yml')
+    writeFileSync(lpatch, '- id: preset\n', 'utf8')
+    const live = makeSwitchCtx({ patchPath: lpatch })
+    live.ctx.fiber = { state: 2 }
+    const sw3 = new AskUserModeSwitch(live.ctx, { askUserMode: 'timed' }, () => {})
+    check('fiberIsActive sees an ACTIVE (state 2) host ctx as live', fiberIsActive(live.ctx) === true)
+    sw3.start()
+    await tick()
+    check('an ACTIVE fiber still lands the upgrade exactly once', live.state.edits.filter((edit) => edit.id === 'tool-ask-user').length === 1, JSON.stringify(live.state.edits))
   }
 }
 

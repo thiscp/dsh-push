@@ -570,6 +570,9 @@ class PushHost {
 
   async pollOnce() {
     if (this.polling) return
+    // Same inactive-context rule as the mode switch: the interval is disposed with the fiber,
+    // but a tick already in flight can outlive it and `ctx.userQuestions` would then throw.
+    if (!fiberIsActive(this.ctx)) return
     this.polling = true
     try {
       const items = await this.relay.pending()
@@ -608,6 +611,10 @@ class PushHost {
   async deliver(item) {
     const callId = String(item?.callId ?? '')
     if (callId.length === 0) return
+    // `ctx.userQuestions.answer` below is a service read: on a fiber that is being replaced it
+    // throws instead of returning, and the throw escapes as an unhandled rejection. Bail out so
+    // the relay keeps the answer queued for the replacement fiber's next tick.
+    if (!fiberIsActive(this.ctx)) throw new Error('fiber inactive; keeping the answer queued')
     const answers = this.padAnswers(callId, item)
 
     const waiter = this.waiters.get(callId)
@@ -907,6 +914,27 @@ export function setVolatileValue(container, key, value) {
   container[key] = value
 }
 
+/**
+ * True when this plugin's own fiber is still alive enough to touch its services.
+ *
+ * A cordis plugin fiber clears `fiber.store` (and nulls it out) while it is unloaded —
+ * HMR / replacement / a market-driven restart — but `fiber.inject` stays intact, so the
+ * context proxy THROWS `cannot get required service "..." in inactive context` instead of
+ * handing back `undefined`. Guarding with `if (!ctx.configEditor)` therefore cannot see the
+ * difference: the access itself is what throws. Reading one cheap `ctx` member is itself the
+ * test, because it goes through the same proxy (and `fiber.state` is a plain field, so it does
+ * not). `ACTIVE` is 2; UNLOADING is 5 — anything but 2 means "do not touch services".
+ */
+export function fiberIsActive(ctx) {
+  try {
+    const fiber = ctx && ctx.fiber
+    if (!fiber) return true // a bare test host without fibers: behave as before
+    return fiber.state === 2
+  } catch {
+    return false
+  }
+}
+
 /** Whether one tool definition is the timed `ask_user_question` (dsh-user-questions projection.js:89). */
 export function isTimedAskUserQuestion(tool) {
   if (!tool || tool.name !== 'ask_user_question') return false
@@ -983,7 +1011,9 @@ export class AskUserModeSwitch {
     this.scheduled = true
     setTimeout(() => {
       this.scheduled = false
-      void this.sync()
+      // A rejected promise with no handler is a fatal load failure in the host process
+      // (installFailLoud -> unhandledRejection -> exit(1)). Never leave one unattached.
+      Promise.resolve(this.sync()).catch(() => {})
     }, 0)
   }
 
@@ -991,6 +1021,11 @@ export class AskUserModeSwitch {
   async sync() {
     if (this.busy) return
     const ctx = this.ctx
+    // The unload race is the real killer: scheduleSync() runs `setTimeout(0)`, so a fiber
+    // replacement between the call and the callback leaves `this.ctx` pointing at a fiber
+    // whose store is already gone. Test liveness FIRST (cheap, and it is the same proxy), and
+    // still catch: an unhandled rejection here is a fatal load failure in the host process.
+    if (!fiberIsActive(ctx)) return
     if (!ctx.configEditor || !ctx.tools) return
     this.busy = true
     try {
@@ -1062,6 +1097,10 @@ export class AskUserModeSwitch {
   /** Wire the triggers: volatile desire changes, tool registration changes, and boot. */
   start() {
     const ctx = this.ctx
+    // A dead/inactive fiber makes `ctx.configEditor` THROW (not return undefined) — the old
+    // `!ctx.configEditor` test never fired on that path, which is how a market restart killed
+    // the whole host process. Also guards the two listeners below, which fire asynchronously.
+    if (!fiberIsActive(ctx)) return
     if (!ctx.configEditor || !ctx.tools) return
     ctx.on('loader/volatile-update', (paths) => {
       const touched = Array.isArray(paths) && paths.some((path) => Array.isArray(path) && path[0] === 'askUserMode')
@@ -1254,7 +1293,9 @@ export class PassProvisioner {
     this.scheduled = true
     setTimeout(() => {
       this.scheduled = false
-      void this.run()
+      // Same rule as AskUserModeSwitch: never leave an unhandled rejection behind (the host
+      // turns one into a fatal load failure and the whole process exits).
+      Promise.resolve(this.run()).catch(() => {})
     }, 0)
   }
 
