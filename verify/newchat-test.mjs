@@ -67,7 +67,7 @@ await sleep(800);
 ok('下滑收起顶栏', (await IH()) >= H0 + 12, 'H0=' + H0 + ' IH=' + await IH());
 
 // 2) 点 FAB 开侧栏，找「新建对话」钮（真 touch 点它）
-const fab = await ev("(function(){var r=document.getElementById('bw-whale-fab').getBoundingClientRect();return {x:Math.round(r.left+4),y:Math.round(r.top+r.height/2)}})()");
+const fab = await ev("(function(){var r=document.getElementById('bw-whale-fab').getBoundingClientRect();return {x:Math.round(Math.min(Math.max(r.left+8,8),window.innerWidth-8)),y:Math.round(r.top+r.height/2)}})()");
 await tap(fab.x, fab.y);
 await sleep(900);
 const nb = await ev(`(function(){var b=document.querySelectorAll('button,[role=button],a');for(var i=0;i<b.length;i++){var s=(b[i].getAttribute('aria-label')||'')+'|'+(b[i].title||'')+'|'+(b[i].textContent||'');if(/新建|新会话|新对话|New (chat|conversation|session)/i.test(s)){var r=b[i].getBoundingClientRect();if(r.width>0&&r.left<300)return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2),label:s.slice(0,40)};}}return null})()`);
@@ -96,7 +96,7 @@ const scrollable = await ev('(function(){var all=document.querySelectorAll("*"),
 ok('新对话确实不可滚（场景成立）', scrollable === 0, 'scrollable=' + scrollable);
 
 // 4) 复位后再进长对话下滑，仍能正常收起（看门狗不干扰正常 QR）
-const fab2 = await ev("(function(){var r=document.getElementById('bw-whale-fab').getBoundingClientRect();return {x:Math.round(r.left+4),y:Math.round(r.top+r.height/2)}})()");
+const fab2 = await ev("(function(){var r=document.getElementById('bw-whale-fab').getBoundingClientRect();return {x:Math.round(Math.min(Math.max(r.left+8,8),window.innerWidth-8)),y:Math.round(r.top+r.height/2)}})()");
 await tap(fab2.x, fab2.y); await sleep(800);
 const sess = await ev(`(function(){var a=document.querySelectorAll('[class*=sidebarCol] a,[class*=sidebarCol] [role=button],button');for(var i=0;i<a.length;i++){var r=a[i].getBoundingClientRect();if(r.width>0&&r.left<300&&r.top>140&&/2026|对话|session|chat/i.test(a[i].textContent||'')){return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)}}}return null})()`);
 if (sess) { await tap(sess.x, sess.y); await sleep(2500); }

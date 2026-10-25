@@ -124,6 +124,8 @@ async function toggle() {
   // 优先点 FAB 中心（真事件，走用户路径）；找不到 FAB 再退回旧路径（兼容旧包热跑）。
   // v1.33.31：吸附态钮露出不足一半，中心点可能落在屏外（左吸附 left=-29 时 cx=-7），
   //   坐标点屏外无效。点「可见区内的点」：cx 钳进 [4, vw-4]（真用户也是点露出的那条带）。
+  // v1.33.42：露出比例改 1/2（左吸附 left=-22、右吸附 vw-22），可见带 22px 宽；
+  //   钮几何中心 cx 仍恰在屏边（左=0 / 右=vw），照样要夹到带内，钳位放宽到 [4, vw-4] 仍适用。
   const fp = await ev("(function(){var f=document.getElementById('bw-whale-fab');if(!f)return null;var r=f.getBoundingClientRect();if(r.width<=0)return null;return JSON.stringify([Math.round(r.left+r.width/2),Math.round(r.top+r.height/2),Math.round(r.left),Math.round(r.right)])})()");
   if (fp) {
     const q = JSON.parse(fp);
