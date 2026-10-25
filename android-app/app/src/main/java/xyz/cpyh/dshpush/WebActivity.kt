@@ -79,6 +79,18 @@ class WebActivity : Activity() {
     private var lastUrl: String = ""
     // 网页文件选择的回调（v1.19.0）：onActivityResult 里喂结果
     private var fileCb: ValueCallback<Array<Uri>>? = null
+    // ★ v1.33.41（用户 m07251）：本次进入要落到的会话（空 = 不恢复）。
+    //   两个用途：① saveSess 在「还没到位」的窗口里丢弃写盘，防止页面加载初期那个
+    //   过渡会话（服务器默认会话/上一次推送的会话）把存盘值覆盖掉——那正是用户报的
+    //   「手动切了对话，再进来还是标签那个对话」的一种成因（写盘被抢）；
+    //   ② onPageFinished 后复核：时间够久还没落到目标就补一次 `location.hash`，
+    //   让 host-plugin 的 revealFromHash 重新切（片段在 replaceState 前后丢过也能救）。
+    private var restoreTarget: String = ""
+    private var restoreAt: Long = 0L
+    //   ③ 但闸门**最多只拦一次**：页面落定前那个过渡会话只会上报一次；若用户在这几秒里
+    //   自己切了对话（第二次不同的上报），就必须认页面为准——否则会出现「刚进来马上切走、
+    //   结果没存上」的另一半 bug（v1.33.41 实测踩过这一层的设计取舍）。
+    private var restoreSkip: Int = 0
 
     companion object { private const val REQ_FILE = 119 }
 
@@ -213,6 +225,28 @@ class WebActivity : Activity() {
                     try {
                         val v = sid ?: return
                         if (v.isEmpty()) return
+                        // ★ v1.33.41（用户 m07251）：一旦落到目标会话，立刻解除闸门与复核——
+                        //   之后用户再手动切走，写盘必须照常进行（否则会「切了不生效」）。
+                        if (restoreTarget.isNotEmpty() && v == restoreTarget) {
+                            android.util.Log.d("dshsess", "landed v=$v (gate off)")
+                            restoreTarget = ""
+                        }
+                        // ★ v1.33.41（用户 m07251）：本次进入是「恢复到某会话」时，页面落地前的
+                        //   过渡会话**不许覆盖存盘值**。窗口取 8s（页面首屏 + revealFromHash 轮询
+                        //   都在这之内完成）；超过窗口就认页面为准，避免卡死在旧值上。
+                        if (restoreTarget.isNotEmpty() && v != restoreTarget &&
+                            System.currentTimeMillis() - restoreAt < 8000L
+                        ) {
+                            // 只拦第一次（页面自己渲染出来的过渡会话）。用户手动切走属第二次，
+                            // 必须放行，否则「进来后立刻切对话」会存不上（v1.33.41）。
+                            if (restoreSkip == 0) {
+                                restoreSkip = 1
+                                android.util.Log.d("dshsess", "skip save (restoring) v=$v want=$restoreTarget")
+                                return
+                            }
+                            android.util.Log.d("dshsess", "user switch while restoring, accept v=$v")
+                            restoreTarget = ""
+                        }
                         val u = lastUrl
                         val host = if (u.isEmpty()) "" else DshHosts.hostOf(u)
                         if (host.isEmpty()) return
@@ -290,6 +324,8 @@ class WebActivity : Activity() {
                         cancelRetry()
                     }
                     hideError()
+                    // ★ v1.33.41（用户 m07251）：本次是「恢复到某会话」就复核落地，没到就补切。
+                    recheckRestoreTarget()
                     // 断网期间页面重载过 → 横幅要重新挂上（页面 DOM 是新的）
                     if (offline) showNetBanner()
                     // 窄屏（≤1023px）修补（v1.32.5）：
@@ -935,7 +971,19 @@ class WebActivity : Activity() {
                 "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
                 "if(!v||v===__bwLs)return;__bwLs=v;" +
                 "if(window.bwNative&&bwNative.saveSess)bwNative.saveSess(v);}catch(e1){}}" +
-                "setTimeout(bwSess,600);setInterval(bwSess,1000);}}" +
+                // ★ v1.33.41（用户 m07251）：切完马上就关掉窗口时，1s 那一拍还没轮到，
+                //   存盘值就停在上一个会话——再进来自然弹回旧对话。补两件事：
+                //   ① 轮询间隔 1000→400ms（单条 querySelector，实测 <0.1ms，可忽略）；
+                //   ② 页面 hidden / 卸载前**立刻冲一次**（visibilitychange、pagehide、
+                //      beforeunload 三个都挂，任一先到就写），保证「切完即走」也能落盘。
+                "function bwSessFlush(){try{var e=document.querySelector('[data-conversation-session]');" +
+                "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
+                "if(!v||v===__bwLs)return;__bwLs=v;" +
+                "if(window.bwNative&&bwNative.saveSess)bwNative.saveSess(v);}catch(e2){}}" +
+                "document.addEventListener('visibilitychange',function(){if(document.hidden)bwSessFlush();});" +
+                "window.addEventListener('pagehide',bwSessFlush);" +
+                "window.addEventListener('beforeunload',bwSessFlush);" +
+                "setTimeout(bwSess,600);setInterval(bwSess,400);}}" +
                 "})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
@@ -1839,10 +1887,51 @@ class WebActivity : Activity() {
         //   「已有片段」就跳过，必须整段改写——restoreSessUrl 保证只换 fragment。
         //   消息卡片的链接（MainActivity 的另外两处 openWebUrl）不传 revive，精确落点不受影响。
         val revive = intent?.getBooleanExtra("revive", false) == true
-        val url = if (savedInstanceState != null || revive) restoreSessUrl(url0) else url0
+        val wantRestore = savedInstanceState != null || revive
+        val url = if (wantRestore) restoreSessUrl(url0) else url0
+        // ★ v1.33.41（用户 m07251）：把「本次应该落到的会话」记下来，供 saveSess 的写盘
+        //   窗口闸与 onPageFinished 的落地复核使用（见 restoreTarget 定义处）。
+        //   ⚠ 只在「确实要恢复」时设：点推送进来看的是那条消息的会话，用户随后马上切走
+        //   必须立刻能存盘，不能被闸门误拦。
+        restoreTarget = if (wantRestore) sessOfUrl(url) else ""
+        restoreAt = System.currentTimeMillis()
+        restoreSkip = 0
         applyInstanceLabel(url)
         lastUrl = url
         web?.loadUrl(url)
+    }
+
+    /** 从 URL 片段里取出会话 id（v1.33.41）。没有片段/形态不合法返回空串。 */
+    private fun sessOfUrl(url: String): String {
+        val raw = url.substringAfter('#', "").trim()
+        if (raw.isEmpty()) return ""
+        return if (Regex("^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE).matches(raw)) raw else ""
+    }
+
+    /** ★ v1.33.41（用户 m07251）：落地复核与兜底补切。
+     *  场景：本次进入本应落到 restoreTarget，但页面自己先渲染出别的会话（服务器默认会话 /
+     *  上一次推送的会话），且 host-plugin 的 revealFromHash 因片段被抹掉/侧栏判定失败而没切过去。
+     *  做法：两拍（2.5s、7s）读 DOM 的 data-conversation-session；还不是目标就 `location.hash`
+     *  补一次——revealFromHash 挂了 hashchange 监听，片段一变就重新切（切完它自己 replaceState）。
+     *  只在本 Activity 明确要恢复时才动手，正常打开/推送落点完全不受影响。 */
+    private fun recheckRestoreTarget() {
+        val want = restoreTarget
+        if (want.isEmpty()) return
+        val js = "(function(){var e=document.querySelector('[data-conversation-session]');" +
+            "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
+            "if(v==='" + want + "'){return 'ok';}" +
+            "try{location.hash='" + want + "';}catch(e1){}" +
+            "return v||'none';})()"
+        for (delay in longArrayOf(2500L, 7000L)) {
+            ui.postDelayed({
+                try {
+                    web?.evaluateJavascript(js) { r ->
+                        android.util.Log.d("dshsess", "recheck want=$want got=$r")
+                    }
+                } catch (e: Exception) {
+                }
+            }, delay)
+        }
     }
 
     /** 把「上次停留的会话」拼回 URL 片段（v1.33.39，用户 m06190）。
@@ -2013,6 +2102,11 @@ class WebActivity : Activity() {
             //   消息卡片那两处调用不传 revive，精确落点一律不动。
             val revive = intent?.getBooleanExtra("revive", false) == true
             if (revive) u = restoreSessUrl(u)
+            // ★ v1.33.41（用户 m07251）：只有 revive（=从实例选择器进来）才设落地目标，
+            //   窗口复用这条路同样要过写盘闸与落地复核。点消息卡片的精确落点不设闸。
+            restoreTarget = if (revive) sessOfUrl(u) else ""
+            restoreAt = System.currentTimeMillis()
+            restoreSkip = 0
             applyInstanceLabel(u)
             lastUrl = u
             loadErrored = false
