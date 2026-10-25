@@ -2274,3 +2274,35 @@ node --check C:\Temp\bw-narrow.js
 - 私有仓 `a1d5c35`。
 
 **剩余已知限制**：选择器路径恢复的是「那台设备最后一次停留的会话」；如果该会话在宿主侧已被删除（页面打不到），页面会自己回到新会话页并覆盖存盘值——这是预期退化，不会卡死。
+
+## 7.19 v1.33.41 / versionCode 147：切完即走的存盘竞态（用户 m07251）
+
+**需求**：用户报了 1.33.40 之后仍存在的一个窗口——
+> 「我发现手动切换了对话，但是没有在切换的对话里面发送消息，从主页进来还是之前标签那个对话」
+
+即「切到某个对话 → 没发消息 → 直接点关闭回主页 → 再从『DSH 入口』选设备进来」，进来的还是上一个对话。
+
+**为什么两条路径都没命中**（这是整轮真正的收获）
+1. 页面切会话**不改 URL**（DSH Web 无路由，host-plugin 的 `revealFromHash` 还会 `history.replaceState` 抹片段），App 只能靠注入脚本 1s 轮询 `[data-conversation-session]` 回传存盘。用户「切完几百毫秒就走」时，那一拍还没轮到 ⇒ 盘上停在上一个会话 ⇒ 再进来自然弹回旧对话。这是**写盘时机**问题，不是恢复逻辑问题。
+2. 反向也有坑：为了修上面这条而加的「本次要恢复到 X 时，落地前上报的过渡会话不许覆盖存盘」闸门，会把「刚进来（正在恢复 X）就手动切到 Y」的那次上报也吃掉 ⇒ 存盘停在 X，用户切了不生效。**闸门必须只拦第一次**。
+
+**三处改动**（`android-app/app/src/main/java/xyz/cpyh/dshpush/WebActivity.kt`）
+- 注入段（现 :957-976）：轮询 1000→**400ms**；新增 `bwSessFlush()` 并挂 `visibilitychange`（hidden 时）、`pagehide`、`beforeunload` 三个事件——「切完即走 / 退后台 / 页面卸载」任一发生就地冲一次盘。单条 `querySelector` 实测 <0.1ms，加频不影响性能线（§7.16 的滑动指标未变）。
+- `saveSess`（现 :219-252）：写盘闸改为**只拦一次**——`restoreSkip` 计数，第一次「≠ restoreTarget 且在 8s 窗口内」的上报跳过并置 1；第二次直接认页面（`user switch while restoring, accept v=…`）并解除闸门。落到目标时立刻 `landed v=… (gate off)` 解除。
+- `restoreTarget/restoreAt/restoreSkip` 三个字段（现 :82-92）；`onCreate`（现 :1885 附近）与 `onNewIntent`（现 :2098 附近）各设一次、`restoreSkip=0` 复位。**`onNewIntent` 只在 `revive=true` 时设 `restoreTarget`**（点消息卡片精确落点不设闸）。
+
+**验收（模拟器 emulator-5554，cdp 探针 C:\Temp\s41*.mjs / s42a.mjs）**
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 切 B → 等 2s → 关闭 → 选择器进 | 恢复 B | PASS |
+| 切 B → **立刻**关闭（抢在轮询内）→ 选择器进 | 恢复 B | PASS（靠 flush） |
+| 从选择器进入（恢复 X）→ 立刻手动切 Y → 关闭 → 进 | 恢复 Y | PASS（靠「只拦一次」） |
+| 新点通知（带 `-f 0x30000000`）| 仍进推送会话 | PASS（不受影响） |
+
+**发布**：`release.ps1 -Version 1.33.41 -VersionCode 147 -DeployNote "restore last used conversation fixes"` → **SUMMARY: 10/10 passed**、`DBG rows=8 fail=0`、geom-matrix `PASS states=4 fails=0`、apk **16,709,111 B**、在线 `?v=147` Content-Length 一致、update-notify id `yiExPbKsHsaT`；私有仓 `c21a0cd`，公开镜像 `3267fcb`（gitee/github/origin/github main 四处一致）。
+
+**工具坑（本轮新增）**
+- `adb shell am kill` / `run-as … kill -9` 都杀不掉本 App（有常驻前台 Service，am 会拉回来）：要造「进程被回收但任务栈保留」的状态，必须 `input keyevent KEYCODE_HOME` → 等 3.5s → `shell kill -9 <pid>`。
+- 对照组测「新点通知」必须带 `-f 0x30000000`（= `NEW_TASK|SINGLE_TOP`，与 `PushService.kt:353` 一致），否则任务只被「brought to front」而走既有实例，会误判成 FAIL。
+- `input tap 1310 108` 会点到 GMS 的 add-account 报错页（标题栏「关闭」真坐标由 uiautomator 取：**`(1296,183)`**）；`uiautomator dump` 的中文在 PowerShell 里是 GBK 乱码但 `bounds` 可用。
+- 模拟器偶发掉线（`device not found` → 自动重启 → `offline` → 约 12s 后 boot_completed=1）；探针里对 `json/list` 拿不到要有重试。
