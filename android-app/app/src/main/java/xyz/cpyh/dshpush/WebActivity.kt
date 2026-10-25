@@ -1039,7 +1039,28 @@ class WebActivity : Activity() {
                 "function bwCmpCard(t){var z=t.parentElement,g=0;while(z&&g<8){" +
                 "if(String(z.className||'').indexOf('_card')>=0)return z;z=z.parentElement;g++;}return null;}" +
                 "function bwCmpFree(t){if(t&&t.style.maxHeight){t.style.maxHeight='';t.style.overflowY='';}}" +
-                "function bwCmpFix(){var t=bwCmpBox();if(!t)return;if(__bwCmpT){bwCmpFree(t);return;}" +
+                // ★ v1.33.47（用户 m10597「安装最新版后也一样的输入框比之前大，但是我发现我把专家
+                //   那个插件关闭后就正常了」）：真正的主因不是草稿空白，而是**工具栏那一行会换行**。
+                //   输入框卡片 = 文本区 + 一行工具栏（.GRgSLq_row，默认 flex-wrap:wrap）；
+                //   工具栏左侧是「+」「权限」「模型」等按钮，右侧是发送区。
+                //   专家插件（@michengai/dsh-agency-agents）往 slot `conversation.input.left`
+                //   里插一个「专家」按钮 ⇒ 左侧总宽 80→146px，加上右侧 215px 就超过卡片 321px
+                //   ⇒ **整行换行成两行，卡片 98→138px**，看上去就是"输入框变大了"。
+                //   实测（模拟器，往 .GRgSLq_tools 里加一个 150px 按钮复现）：
+                //     加按钮前 card=98 row=42 wrap=wrap；加后 card=138 row=82；
+                //     给 row 设 flex-wrap:nowrap + tools 可收缩横向滚动后 → card=98 row=42。
+                //   ⇒ 强制工具栏单行（nowrap），把溢出的按钮交给 tools 横向滚动，
+                //     右侧发送区固定不缩。这样无论装几个插件，卡片高度恒为单行高度。
+                "function bwRowFix(){var t=bwCmpBox();if(!t)return;var cb=bwCmpCard(t);if(!cb)return;" +
+                "var row=cb.querySelector('[class*=\"_row\"]');if(!row)return;" +
+                "if(row.style.flexWrap!=='nowrap')row.style.flexWrap='nowrap';" +
+                "var tl=row.querySelector('[class*=\"_tools\"]');" +
+                "if(tl&&tl.style.minWidth!=='0px'){tl.style.minWidth='0px';tl.style.flex='0 1 auto';" +
+                "tl.style.overflowX='auto';tl.style.overflowY='hidden';}" +
+                "var tr=row.querySelector('[class*=\"_trailing\"]');" +
+                "if(tr&&tr.style.flex!=='0 0 auto')tr.style.flex='0 0 auto';}" +
+                "function bwCmpFix(){var t=bwCmpBox();if(!t)return;bwRowFix();" +
+                "if(__bwCmpT){bwCmpFree(t);return;}" +
                 "if(String(t.innerText||'').replace(/\\s/g,'')!==''){bwCmpFree(t);return;}" +
                 "if(t.querySelector('img,button,[data-lexical-decorator]')){bwCmpFree(t);return;}" +
                 "var cb=bwCmpCard(t);if(!cb)return;" +
