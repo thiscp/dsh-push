@@ -1567,13 +1567,29 @@ class WebActivity : Activity() {
                         // ★ v1.32.26：键盘态下**输入框的祖先**（输入行/卡片/root/seat…）一律不再走 0.45 通道：
                         //   实测真机键盘弹起后输入行被写成 rgba(灰,0.45) ⇒ 一条灰带（v91 只挡了浮层通道，挡不住这条）。
                         //   卡片自己（cbmEl）仍走 0.15，见下面那两行。
+                        // ★ v1.33.45（用户 m10025「输入框有时候感觉颜色变深了」）：卡片原来 alpha 固定 0.15，
+                        //   于是**卡片实际颜色完全由它背后是什么决定**——背后是浅色页面时接近 248，
+                        //   背后滚到立绘的深蓝头发/裙子时掉到 226，肉眼看就是"输入框时不时变深一块"。
+                        //   笔电实例实测（模拟器 1440x3168，卡片 321x98，5 个滚动位置取卡片下带亮度）：
+                        //     0.15 + blur12            spread 21.9（226~248）
+                        //     0.15 + blur20 bright1.20 spread  6.3
+                        //     0.20 + blur20 bright1.25 spread  5.9  ← 采用
+                        //   两个杠杆缺一不可：抬 alpha 让白底占比变大，backdrop-filter 里加 brightness(>1)
+                        //   把透上来的暗背景整体提亮（只加 blur 没用，实测 12/28/44px 三档 spread 都是 ~16）。
+                        //   目标不是"更白"，而是**让卡片恒定落在它最亮时的样子**，从而不再随滚动忽深忽浅。
+                        //   __dshWhy 仍记 'bg15'（下游清理逻辑按这个标记认卡片，改名会漏清）。
                         "else if(!skipBg&&!(cbmT&&e!==cbmEl&&e.contains&&e.contains(cbmT))){e.__dshGlass=0;" +
                         "var ga=0.45;" +
-                        "if(isCbm){ga=0.15;e.__dshWhy='bg15';}" +
+                        "if(isCbm){ga=0.20;e.__dshWhy='bg15';}" +
                         "e.style.setProperty('background-color','rgba('+" +
                         "m[1]+','+m[2]+','+m[3]+','+ga+')','important');" +
                         "if(e.__dshWhy!=='bg15')e.__dshWhy='bg45';" +
-                        "if(w>vw*0.08&&h>vh*0.03&&" +
+                        "if(isCbm){" +
+                        "e.style.setProperty('backdrop-filter'," +
+                        "'blur(20px) brightness(1.25)','important');" +
+                        "e.style.setProperty('-webkit-backdrop-filter'," +
+                        "'blur(20px) brightness(1.25)','important');}" +
+                        "else if(w>vw*0.08&&h>vh*0.03&&" +
                         "!(/BynINW_(sidebarCol|frame)/.test(cn))){" +
                         "e.style.setProperty('backdrop-filter','blur(12px)'," +
                         "'important');e.style.setProperty('-webkit-backdrop-" +
