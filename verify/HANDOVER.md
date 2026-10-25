@@ -2192,3 +2192,39 @@ i2v raw 480x864 (绿底)
 **回归**：`dsh-app-verify.ps1` 两次 **8/8**，发布 **10/10**（geom-matrix PASS states=4 fails=0）。注入 JS 语法闸：`node verify/extract-injected-js.mjs > C:/Temp/bw-narrow.js 2>C:/Temp/bw-extract.err; node --check`（进度行走 stderr，否则合进 JS 报 SyntaxError）。
 
 **交付**：1.33.38 / versionCode 144，APK **16,603,608 B**，在线 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=144` Content-Length 16,603,608（逐字节一致），update-notify id `tY6Zgk0CeX5e`。
+
+### 7.17 重进 WebActivity 恢复到「最后手动进入的对话」（1.33.39 / 145，2026-10-25）
+
+**需求**（用户 m06190）：从通知点开进的是推送那个会话；之后手动切到别的会话，退出再进，进的**还是推送那个**。应该回到「我最后使用的那一个」。
+
+**为什么不能存 URL**：DSH Web 没有会话路由，切会话只改 DOM；`host-plugin/lib/client.js:294` 的 `revealFromHash` 在到位后还会 `history.replaceState(null,"",pathname+search)` 把 `#session-…` 抹掉。⇒ 唯一可读的会话钩子是 DOM：`[data-conversation-session]`（含 `session-` 前缀，全页仅 1 个）。
+
+**三处改动**
+1. `DshHosts.kt`：`SESS_PREFIX="sess:"`、`lastSess(ctx, hostId)`、`saveLastSess(ctx, hostId, sid)`，都走 `PushService.PREF`（`"dshpush"`）；按 `host:port` 分开存（三台宿主会话 id 互不相干）。
+2. `WebActivity.kt` 的 `bwNative` 桥新增 `@JavascriptInterface fun saveSess(sid:String?)` → `DshHosts.hostOf(lastUrl)` → `saveLastSess`，log tag `dshsess`。
+3. `WebActivity.kt` 注入段（QR 的 `setInterval(bwQrChk,800);` 之后、`})();` 之前）：`__bwSess` 守卫 + `bwSess()` 读 `[data-conversation-session]`，`document.hidden` 直接 return，值变了才 `bwNative.saveSess(v)`；`setTimeout(600)` + `setInterval(1000)`。
+
+**恢复判据（关键设计）**：`onCreate` 里 `savedInstanceState != null` 才用存盘会话重写 URL 的 fragment（`restoreSessUrl`，正则校验 `^session-[0-9a-f]{8}-…{12}$`，只换 `#` 段、绝不动 path/query 因为 token 在路径里）。三路都不误伤：新点通知（进程已死也是新任务栈）`savedInstanceState == null` → 尊重 intent；活着点通知走 `onNewIntent` 不经过这里；只有「进程被回收后由任务快照重建」才重写。
+
+**注入段坑**：`if` 块的 `}` 与 IIFE 的 `})();` 之间必须是 `}}`——写成单个 `}` 会让 `node --check` 报 `SyntaxError: Unexpected token ')'`（看起来像别的错）。
+
+**怎么才真能杀掉进程（整轮最大的坑）**
+- `adb shell am kill <pkg>` **无效**（pid 不变）：只杀「可安全回收」的后台进程，且我们有常驻 PushService。
+- `adb shell run-as <pkg> kill -9 <pid>` **也无效**：pid 立刻变了（服务把它拉起），activity 栈已清 ⇒ 测不到目标状态。
+- 正确：adbd 已 root 时 `input keyevent KEYCODE_HOME` → 等 3.5s → `adb shell kill -9 <pid>` → 等 2.5s。此时 Activity 销毁但任务栈保留（`Task{...#1190 sz=2}`，Hist#1=WebActivity，`visible=false`），正是「进程被回收后由任务快照重建」。
+- PowerShell 里 `(& $adb ...).Trim()` 遇到空输出会抛「不能对 Null 值表达式调用方法」⇒ 先赋变量再判空。
+
+**对照组必须带 flags**：裸 `am start -n .../.WebActivity --es url` 测「新点通知」会 FAIL（停在旧会话），因为任务被 brought-to-front 走既有实例。要加 `-f 0x30000000`（= `NEW_TASK|SINGLE_TOP`，与 `PushService.kt:353` 一致）。
+
+**验收（双路径实测）**
+- 主场景：切到 Y → pref 写成 Y（logcat `save host=… sess=Y`）→ HOME + root `kill -9` → 点图标回任务 → logcat `restore host=<tailnet-vm1>:3080 sess=session-7524e69f-…`、页面实际停在 Y ⇒ **PASS**。
+- 对照：带 `-f 0x30000000` 点通知 → **进 X（推送会话）PASS**。
+
+**发布事故与修复（重要，属于流水线而非 App）**
+首次发布 `screenshot` 报 FAIL、deploy 被静默跳过（在线仍是 16603608 的旧包），而 `SUMMARY` 却打 `8/8`。处理：
+1. drive 模板的 `exec-out screencap` 改成**重试 3 次**并打 `SHOT_TRY=n BYTES=`（`adb root`/模拟器 ladder 刚重启 adb server 时 exec-out 偶发 0 字节；手工复现同形命令 1,062,780 B 正常）。
+2. deploy 闸门与 SUMMARY 改为**共用同一份 `$failRows`**（`:530`），并在其中一方跳过时**显式记一行** `[FAIL] deploy - SKIPPED - earlier failure(s): …`，杜绝「跳过部署却打满居」。
+3. 加诊断行 `DBG rows=N fail=N [...]`。
+重跑：**SUMMARY: 10/10 passed**，`DBG rows=8 fail=0`，deploy `?v=145` 在线 **16,604,700 B** 与本地一致，update-notify id `JDSPyXsUiNjA`。
+
+**交付**：1.33.39 / versionCode 145；私有仓 `d1041c6`；公开镜像 gitee/github/origin/github main 全部 `44bee41`。
