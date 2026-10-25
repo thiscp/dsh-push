@@ -1832,7 +1832,14 @@ class WebActivity : Activity() {
         //   活着时点通知走 onNewIntent，不经过这里，也不受影响。
         //   重写方式沿用 host-plugin 既有的 `#session-<uuid>` 协议（client.js revealFromHash
         //   认这个形态，切完自己 replaceState 抹掉），所以不需要新增页面侧钩子。
-        val url = if (savedInstanceState != null) restoreSessUrl(url0) else url0
+        // ★ v1.33.40（用户 m06924）：「进入哪台 DSH」选择器也要落到该设备上次的对话。
+        //   它与「看这条消息」的区别靠 intent extra revive=true 传递。注意 hosts 里存的
+        //   URL **本来就带 #session-<uuid>**（推送时 host-plugin 的 webUrl(sessionId) 拼的，
+        //   那是「最后一次推送」的会话，不是「最后一次停留」的），所以 revive 时不能因为
+        //   「已有片段」就跳过，必须整段改写——restoreSessUrl 保证只换 fragment。
+        //   消息卡片的链接（MainActivity 的另外两处 openWebUrl）不传 revive，精确落点不受影响。
+        val revive = intent?.getBooleanExtra("revive", false) == true
+        val url = if (savedInstanceState != null || revive) restoreSessUrl(url0) else url0
         applyInstanceLabel(url)
         lastUrl = url
         web?.loadUrl(url)
@@ -1998,8 +2005,14 @@ class WebActivity : Activity() {
         setIntent(intent)
         // 窗口复用：token 换新等直接在同一窗口加载新链接（v1.9.8）
         markMsgRead(intent)
-        val u = intent?.getStringExtra("url") ?: ""
+        var u = intent?.getStringExtra("url") ?: ""
         if (u.isNotEmpty()) {
+            // ★ v1.33.40（用户 m06924）：窗口已活着时从「进入哪台 DSH」切到另一台，
+            //   同样要落到那台设备上次停留的对话。hosts 里的 URL 自带 #session- 片段，
+            //   所以 revive 时无条件改写（restoreSessUrl 只换 fragment）；
+            //   消息卡片那两处调用不传 revive，精确落点一律不动。
+            val revive = intent?.getBooleanExtra("revive", false) == true
+            if (revive) u = restoreSessUrl(u)
             applyInstanceLabel(u)
             lastUrl = u
             loadErrored = false

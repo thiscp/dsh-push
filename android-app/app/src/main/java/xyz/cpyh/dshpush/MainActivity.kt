@@ -360,7 +360,7 @@ class MainActivity : Activity() {
         val labels = hosts.map { "${it.name}\n${it.id} · ${ago(it.lastSeen)}" }.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle(R.string.hosts_title)
-            .setItems(labels) { _, i -> openWebUrl(hosts[i].url) }
+            .setItems(labels) { _, i -> openWebUrl(hosts[i].url, revive = true) }
             .setNeutralButton(R.string.hosts_manage) { _, _ -> showHostManage(hosts) }
             .setPositiveButton(R.string.hosts_add) { _, _ -> showHostInput("") }
             .setNegativeButton("取消", null)
@@ -515,9 +515,15 @@ class MainActivity : Activity() {
 
     // 卡片自带链接直达：各条消息指向自己那台机器的 DSH Web（v1.9.4）；
     // v1.9.8 起落 App 内置 WebActivity 单实例窗口，重复点击复用不叠窗
-    private fun openWebUrl(url: String) {
+    // revive（v1.33.40，用户 m06924）：true = 这次是「进这台设备」而不是「看这条消息」，
+    // WebActivity 要把该设备上次停留的对话拼回 URL 片段。消息卡片的链接自带
+    // #session-<uuid>（host-plugin 的 webUrl(sessionId)），必须保持精确落点，所以只有
+    // 实例选择器传 true。
+    private fun openWebUrl(url: String, revive: Boolean = false) {
         try {
-            startActivity(Intent(this, WebActivity::class.java).putExtra("url", url))
+            startActivity(Intent(this, WebActivity::class.java)
+                .putExtra("url", url)
+                .putExtra("revive", revive))
         } catch (e: Exception) {
             toast("打不开这个链接")
         }

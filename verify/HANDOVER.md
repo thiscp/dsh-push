@@ -2228,3 +2228,49 @@ i2v raw 480x864 (绿底)
 重跑：**SUMMARY: 10/10 passed**，`DBG rows=8 fail=0`，deploy `?v=145` 在线 **16,604,700 B** 与本地一致，update-notify id `JDSPyXsUiNjA`。
 
 **交付**：1.33.39 / versionCode 145；私有仓 `d1041c6`；公开镜像 gitee/github/origin/github main 全部 `44bee41`。
+
+---
+
+### 7.18 实例选择器也恢复「最后手动进入的对话」（1.33.40 / 146，2026-10-25）
+
+**需求**（用户 m06924）：主页「进入哪台 DSH」选择器点某台设备时，也要落到**那台设备**上次停留的对话（7.17 只修了「重进 WebActivity」这一条路，选择器这条没覆盖）。
+
+**新增 revive 开关**
+- `MainActivity.kt:522` `private fun openWebUrl(url: String, revive: Boolean = false)`，`putExtra("revive", revive)`。
+- 只有**实例选择器**（`:363` `.setItems(labels) { _, i -> openWebUrl(hosts[i].url, revive = true) }`）传 true。
+- 消息卡片两处调用（`:941`、`:1001`）不传 ⇒ 保持各自的 `#session-<uuid>` 精确落点。
+
+**★ 关键坑：hosts 里存的 URL 本来就带 `#session-` 片段**
+推送时 `host-plugin` 的 `webUrl(sessionId)` 会把**最后一次推送**的会话 id 拼进链接，`DshHosts` 原样存下来。所以最初判据写成「`revive && url0.indexOf('#') < 0` 才补」**完全不生效**——选择器点进去的 URL 永远有片段，restore 从不触发（logcat 里连 `restore` 行都没有，只有页面自己报的 `save`）。
+正确判据：`revive` 时**无条件** `restoreSessUrl()`（该函数只替换/追加 `#` 段，path 与 query 不动，token 安全）。语义上也该如此：hosts 里那个片段是「最后被推送的」，不是「最后一次停留的」。
+
+**两处调用点**（`WebActivity.kt`）
+- `onCreate`（`:1840`）：`val url = if (savedInstanceState != null || revive) restoreSessUrl(url0) else url0`
+- `onNewIntent`（`:2012`）：`if (revive) u = restoreSessUrl(u)` —— 窗口活着时从选择器切到另一台也生效。
+
+**构建坑：psi2ir StackOverflowError**
+改 `WebActivity.kt` 后构建炸在 `BackendException: Backend Internal error: Exception during psi2ir / Caused by: StackOverflowError`，`File being compiled: WebActivity.kt`。根因是那条 320+ 段的巨型 `"+"` 字符串链（注入用 JS），Kotlin 前端按左结合递归生成二元表达式，默认线程栈（512K~1M）被打穿。
+修法（`android-app/gradle.properties`）：`org.gradle.jvmargs=-Xmx4g -Xss8m` + 新增 `kotlin.daemon.jvmargs=-Xmx3g -Xss16m`。
+注意：**psi2ir 只在「文件变了需要重新编译」时触发**，所以这类炸栈常常在改完代码/升版本号时才冒出来，而不是每次都炸。VM1 上还要先 `gradle --stop` + `pkill -f KotlinCompileDaemon` 清掉旧 daemon（`C:\Temp\vm1_build.sh`）。
+
+**验收（三路径实测，均 logcat tag `dshsess`）**
+| 路径 | 命令形态 | 期望 | 实测 |
+|---|---|---|---|
+| 选择器 → 新进（进程已死） | `--ez revive true`，URL 自带 `#session-9999…` | 覆盖成存盘会话 | `restore host=<tailnet-vm1>:3080 sess=session-2b596205-…` ✅ |
+| 消息卡片（无 revive） | 同 URL，不带 `--ez revive` | 原样，**不出现 restore 行** | 无 restore 行 ✅ |
+| 窗口活着时切另一台 | 先 214.91，再 `--ez revive true` 230.18 | `onNewIntent` 里 restore | `restore host=<tailnet-vm1>:3080 sess=session-2b596205-…` ✅ |
+- UI 实点也验过：主页「DSH 入口」(808,439) → 选择器第二项 (720,1492) → 截图确认真进到测试 VM1 的对话页，标题「DSH 网页 · 测试 VM1」。
+
+**注入 JS 语法闸（每次改注入段必跑）**
+```
+cmd /c "node verify\extract-injected-js.mjs > C:\Temp\bw-narrow.js 2> C:\Temp\bw-extract.err"
+node --check C:\Temp\bw-narrow.js
+```
+⚠ 必须用 `cmd /c` 做重定向：直接在 PowerShell 里 `>` 会写成 **UTF-16**，`node --check` 报 `SyntaxError: Invalid or unexpected token`（看着像 JS 坏了，其实是文件编码）。另 `> /c/Temp/...` 在 PowerShell 下会被解析成 `E:\c\Temp\...`（PS 不认 MSYS 路径）。
+
+**发布**：`release.ps1 -Version 1.33.40 -VersionCode 146 -DeployNote "instance picker restores last used conversation"`
+- **SUMMARY: 10/10 passed**，`DBG rows=8 fail=0`，geom-matrix `verdict=PASS; states=4 fails=0`；apk 16,605,000 B。
+- 在线 `?v=146` Content-Length **16,605,000** 与本地一致；update-notify id `f7a2V0xXO8yk`。
+- 私有仓 `a1d5c35`。
+
+**剩余已知限制**：选择器路径恢复的是「那台设备最后一次停留的会话」；如果该会话在宿主侧已被删除（页面打不到），页面会自己回到新会话页并覆盖存盘值——这是预期退化，不会卡死。
