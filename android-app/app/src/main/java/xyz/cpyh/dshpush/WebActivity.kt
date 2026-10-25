@@ -1056,14 +1056,22 @@ class WebActivity : Activity() {
                 //   nowrap + 左侧横向滚动兜底——那是最后手段，正常用户看不到。
                 //   注意：只降级 `_tools` 里**带 svg 的第三方插件按钮**，
                 //   `_add`（+）与 `_modes`（权限/模型）保持原样，避免误伤页面原生控件。
+                // ★ v1.33.49（用户 m11076「最开始是正常的，但是我点一下专家的那个星星图标后又不对了」）：
+                //   判据从「算 need>avail」改成「**直接看这一行到底有没有折行**」。
+                //   原来用宽度求和判断，一旦某次点击让某个控件（例如模型 pill 变成完整模型名）
+                //   临时变宽，求和值就失准，于是漏判 → 折行照旧。
+                //   现在用几何事实判断：`_tools` 与 `_trailing` 的垂直区间不再重叠 ⇒ 已经折成两行。
+                //   折行才动手，然后按「图标化插件按钮 → 收窄模型 pill → 单行兜底」三级让步。
+                //   因为 bwCmpFix 每 700ms 跑一次，弹窗开关/换模型引起的再次折行会自动被收拾。
                 "function bwRowFix(){var t=bwCmpBox();if(!t)return;var cb=bwCmpCard(t);if(!cb)return;" +
                 "var row=cb.querySelector('[class*=\"_row\"]');if(!row)return;" +
-                "var tl=row.querySelector('[class*=\"_tools\"]');" +
-                "var tr=row.querySelector('[class*=\"_trailing\"]');if(!tl||!tr)return;" +
-                "var cs=getComputedStyle(row);" +
-                "var av=row.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);" +
-                "function nd(){return tl.scrollWidth+tr.offsetWidth+12;}" +
-                "if(nd()>av+1){for(var i=0;i<tl.children.length;i++){" +
+                "var tl=row.querySelector('[class*=\"_tools\"]'),tr=row.querySelector('[class*=\"_trailing\"]');if(!tl||!tr)return;" +
+                "var sc=tr.querySelector('[class*=\"_standardControls\"]');" +
+                "function wr(){var a=tl.getBoundingClientRect(),b=tr.getBoundingClientRect();" +
+                "return (a.bottom<=b.top+2)||(b.bottom<=a.top+2);}" +
+                "function av(){var cs=getComputedStyle(row);" +
+                "return row.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);}" +
+                "if(wr()){for(var i=0;i<tl.children.length;i++){" +
                 "var k=tl.children[i];if(!k||k.nodeType!==1)continue;" +
                 "var cn=String(k.className||'');" +
                 "if(cn.indexOf('_add')>=0||cn.indexOf('_modes')>=0)continue;" +
@@ -1076,12 +1084,33 @@ class WebActivity : Activity() {
                 "b.style.setProperty('min-width','28px','important');" +
                 "b.style.setProperty('padding','0','important');" +
                 "b.style.setProperty('gap','0','important');" +
-                "b.style.setProperty('justify-content','center','important');}}" +
-                "if(nd()>av+1){if(row.style.flexWrap!=='nowrap'){row.style.flexWrap='nowrap';" +
-                "tl.style.minWidth='0px';tl.style.flex='1 1 auto';" +
-                "tl.style.overflowX='auto';tl.style.overflowY='hidden';" +
-                "tr.style.flex='0 0 auto';}}" +
-                "else if(row.style.flexWrap==='nowrap'){row.style.flexWrap='';" +
+                "b.style.setProperty('justify-content','center','important');" +
+                "var w=b.parentElement;while(w&&w!==tl){" +
+                "if(w.offsetWidth>40){w.style.setProperty('width','28px','important');" +
+                "w.style.setProperty('min-width','28px','important');" +
+                "w.style.setProperty('flex','0 0 auto','important');break;}w=w.parentElement;}}}" +
+                "if(sc){var sib=0;for(var q=0;q<tr.children.length;q++){" +
+                "var kq=tr.children[q];if(!kq||kq.nodeType!==1||kq===sc)continue;" +
+                "if(kq.getBoundingClientRect().width<1)continue;sib+=kq.offsetWidth;}" +
+                "var gp=parseFloat(getComputedStyle(tr).columnGap)||8;sib+=(tr.children.length-1)*gp;" +
+                "var want=Math.floor(av()-tl.offsetWidth-12-sib);" +
+                "if(want>sc.scrollWidth)want=sc.scrollWidth;if(want<56)want=56;" +
+                "if(want<sc.scrollWidth){if(sc.offsetWidth!==want){sc.setAttribute('data-bwclamp','1');" +
+                "sc.style.setProperty('flex','0 0 auto','important');" +
+                "sc.style.setProperty('max-width',want+'px','important');" +
+                "sc.style.setProperty('overflow','hidden','important');" +
+                "sc.style.setProperty('white-space','nowrap','important');" +
+                "sc.style.setProperty('text-overflow','ellipsis','important');}}" +
+                "else if(sc.getAttribute('data-bwclamp')==='1'&&!wr()){sc.removeAttribute('data-bwclamp');" +
+                "sc.style.removeProperty('flex');sc.style.removeProperty('max-width');" +
+                "sc.style.removeProperty('overflow');sc.style.removeProperty('white-space');" +
+                "sc.style.removeProperty('text-overflow');}}" +
+                // 释放 nowrap 必须留 8px 余量：否则会在「刚好卡在临界」的宽度上来回翻面，
+                // 每 700ms 抖一次（v1.33.49 实测 320css + 2 个插件 + 宽模型名时出现过）。
+                "if(wr()){row.style.flexWrap='nowrap';tl.style.minWidth='0px';tl.style.flex='1 1 auto';" +
+                "tl.style.overflowX='auto';tl.style.overflowY='hidden';tr.style.flex='0 0 auto';}" +
+                "else if(row.style.flexWrap==='nowrap'&&" +
+                "(av()-(tl.scrollWidth+tr.offsetWidth+12))>=8){row.style.flexWrap='';" +
                 "tl.style.minWidth='';tl.style.flex='';" +
                 "tl.style.overflowX='';tl.style.overflowY='';tr.style.flex='';}}" +
                 "function bwCmpFix(){var t=bwCmpBox();if(!t)return;bwRowFix();" +

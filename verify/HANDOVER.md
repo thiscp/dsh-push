@@ -2456,3 +2456,46 @@ card 全部收敛到 98（360/393 本来就不用动）。**关键**：不把视
 
 **发布**：`release-fast.ps1 -Version 1.33.48 -VersionCode 154`，apk 16,608,361 B，
 `?v=154` sha256 一致，update-notify `QXaCBaXRgMY7`；公开镜像四端 `14bf119`；私有仓 `ff9e3e6`。
+
+### §7.23 输入框卡片再次变高（v1.33.49）：判据改成「看几何折行」而不是「算宽度和」
+
+**用户反馈**（m11076）：「最开始是正常的，但是我点一下专家的那个星星图标后又不对了」+ 两张 1380x3036 截图。
+点星标只是**打开专家面板**（`.aag-menu`，绝对定位 321x168，不是行内元素），
+但同一时刻模型 pill（`_standardControls`）从 46px 展开成完整模型名 137px
+⇒ `_tools` 168 + `_trailing` 187 + 12 = 367 > avail 290 ⇒ 折行 ⇒ 卡片 138。
+
+**1.33.48 为什么漏判**：判据是 `need = tools.scrollWidth + trailing.offsetWidth + 12 > avail`。
+问题有两层：
+1. `_tools` 里插件的包裹层是 `display:contents`，`scrollWidth` 与子项宽度之和不一致，算出来的 need 时大时小；
+2. 更关键的是**折行之后 `_trailing` 的宽度会变**（它被挤到下一行反而变宽），
+   用「宽度和」推断「是否折行」在状态切换时会自相矛盾 ⇒ 漏判 / 抖动。
+
+**1.33.49 的判据**：直接问几何事实 ——
+```js
+function wr(){var a=tl.getBoundingClientRect(),b=tr.getBoundingClientRect();
+  return (a.bottom<=b.top+2)||(b.bottom<=a.top+2);}   // 垂直区间不重叠 = 已折成两行
+```
+**必须用「底边 <= 另一块顶边」判断**，不能用 `Math.abs(a.top-b.top)>2`：
+折行后两块各自垂直居中，top 差只有 20px 左右，用 top 差会漏判（实测 `top` 差 20px、`bottom<=top` 才成立）。
+
+三级让步（每级做完再量一次 `wr()`）：
+1. **图标化** `_tools` 里带 svg 的第三方按钮（`_add`/`_modes` 跳过），
+   同时把它的**包裹层**也压到 28px —— 专家插件的结构是
+   `div(display:contents) > div.aag-btn-wrap(80px) > span > button.aag-btn(80px)`，
+   只压 button 不管 wrap，`_tools` 仍是 168px（实测）。
+2. **收窄模型 pill**：`want = avail - tools.offsetWidth - 12 - siblings - gaps`，下限 56px，
+   `max-width + overflow:hidden + text-overflow:ellipsis`。
+3. **单行兜底**：`nowrap` + `_tools` 横向滚动。
+
+**释放条件必须留余量**（否则 700ms 一轮会来回翻面抖动）：
+- 撤 pill 夹紧：`!wr()` 且 `want >= scrollWidth`
+- 撤 nowrap：`!wr()` 且 `avail - (tools.scrollWidth + trailing.offsetWidth + 12) >= 8`
+
+**验证**（真机宽度 345css + `Emulation.setDeviceMetricsOverride`）：
+- 强制模型 pill 变宽 → 卡片 138 → **98**，图标化生效（`data-bwicon=1`、chip 80→28px），8 次采样全稳。
+- 320css + 2 个插件 + 宽模型名（最恶劣）→ 98 稳定，走 nowrap 兜底。
+- 360/393 本来不折行 → 不动（`ok`），不误伤。
+- 真实点击星标（`Input.dispatchMouseEvent` 打真坐标）：卡片全程 98，弹窗正常打开。
+
+**发布**：`release-fast.ps1 -Version 1.33.49 -VersionCode 155`，apk 16,608,825 B，
+`?v=155` sha256 一致；私有仓 `47fec7d`。
