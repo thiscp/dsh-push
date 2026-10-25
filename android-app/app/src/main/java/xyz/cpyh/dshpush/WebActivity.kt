@@ -164,6 +164,15 @@ class WebActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             // targetSdk 34 = 传统 inset：DecorView 已把状态栏让掉，这里**不能**再 fitsSystemWindows（会双份）。
         }
+        // v1.33.43（用户 m08435「顶部的标签栏风格和我们整体有点不搭」+ m08451 圈定
+        //   「显示 DSH 网页·笔电 和 关闭按钮那个标签栏」）：旧顶栏是一行裸文字直接浮在
+        //   壁纸色上、关闭钮单独一颗胶囊——既没有底板也和主页的卡片语言脱节。
+        //   改成**浮动卡片条**：与消息卡片同源（80% 卡底色 + 1dp 主题描边 + 18dp 圆角），
+        //   左侧补一枚主题色鲸鱼标（对应主页顶部头像的位置），右侧关闭钮收进同一条卡片里。
+        //   ⚠ 动画：setBarShown 是把 topBar 的 height 收/放到 0。外边距**不能写在外层**
+        //   （收到 0 后 margin 还留着，会剩一条空档），所以外层 barBox 无内边距、由 bar 自己
+        //   带 margin —— margin 在 FrameLayout 内部，外层高度 0 时整块被裁掉。
+        val barBox = FrameLayout(this)
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -171,13 +180,26 @@ class WebActivity : Activity() {
             // 状态栏 inset 改由 root 的 fitsSystemWindows 承担（bar 不再被顶到状态栏下方），
             // 标题 16sp→13sp，关闭钮去默认 minHeight（实测原 bar 390px=97.5css，其中
             // Button 默认 48dp minHeight + 10/6 padding 占大头）。
-            setPadding(dp(12), 0, dp(10), 0)
+            setBackgroundResource(R.drawable.bg_bar)
+            elevation = dp(2).toFloat()
+            setPadding(dp(10), dp(5), dp(5), dp(5))
         }
+        // 主题色鲸鱼标：纯粹的身份标记，和主页顶部那只头像呼应（不吃点击）
+        bar.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_stat_whale)
+            setColorFilter(c(R.attr.dshAccent))
+            alpha = 0.9f
+            layoutParams = LinearLayout.LayoutParams(dp(17), dp(17)).apply {
+                rightMargin = dp(8)
+            }
+        })
         val tv = TextView(this).apply {
             text = "DSH 网页"
-            textSize = 13f
+            textSize = 13.5f
             setTextColor(c(R.attr.dshTextPrimary))
             setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
             layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
         }
         titleView = tv
@@ -192,11 +214,16 @@ class WebActivity : Activity() {
             minimumHeight = 0
             minWidth = 0
             minimumWidth = 0
-            setPadding(dp(14), dp(4), dp(14), dp(4))
+            setPadding(dp(13), dp(4), dp(13), dp(4))
             setOnClickListener { finish() }
         })
-        content.addView(bar)
-        topBar = bar
+        barBox.addView(bar, FrameLayout.LayoutParams(-1, -2).apply {
+            // 外边距放在卡片自己身上：barBox 收到 0 高度时整块（含 margin）被裁掉，
+            // 不会像「给外层加 padding」那样留下一道收不掉的空档。
+            setMargins(dp(10), dp(5), dp(10), dp(4))
+        })
+        content.addView(barBox)
+        topBar = barBox
 
         // 深色三档：仅所选主题为深色时开，浅色主题保持亮页（v1.12.0）
         val dark = ThemePrefs.KEYS[ThemePrefs.current(this)] in setOf("night", "starry")

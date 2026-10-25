@@ -2354,3 +2354,22 @@ node --check C:\Temp\bw-narrow.js
 - `verify\release-fast.ps1 -Version 1.33.42 -VersionCode 148 -DeployNote "fab edge reveal 1/2"` → 构建 32s、**全链 51s**；`publish: OK ?v=148 (200 16606404, sha256 matches)`；update-notify id `h2nR7RwsOBIA`。
 - 私有仓 `ed910d5` 已推 gitee；公开镜像四端 `4aa8111`。
 - 待用户真机验收（首轮流程：我发包，用户自己测）。
+
+## §7.22 网页原生顶栏改为浮动卡片条（v1.33.43 / versionCode 149，2026-10-25）
+
+**需求**：用户 m08435「接下来优化一下顶部的标签栏，感觉风格和我们整体有点不搭呢」，随后 m08451 圈定「显示 DSH 网页 · 笔电 和 关闭按钮那个标签栏」——指 `WebActivity` 的**原生顶栏**，不是网页里的会话标签。
+
+**改前形态（根因）**：标题「DSH 网页 · 笔电」是一行裸 13.5sp 文字直接浮在壁纸色上（`barBox` 无背景、无内边距），右侧「关闭」单独一颗 `bg_pill` 胶囊。既没有底板，也和主页的消息卡片语言脱节。
+
+**改动（`WebActivity.kt` + 新 drawable）**
+1. 新增 `android-app/app/src/main/res/drawable/bg_bar.xml`：`?attr/dshCardBg` 实底 + 18dp 圆角 + 1dp `?attr/dshCardStroke` 描边——与消息卡片同源，深浅六主题自动跟随（`themes.xml` 12 处均已定义这两个 attr）。
+2. `bar`（LinearLayout）：`setBackgroundResource(R.drawable.bg_bar)` + `elevation=2dp`，内边距 `10/5/5/5dp`。
+3. 左侧新增 17dp `ic_stat_whale` 图标，`setColorFilter(c(R.attr.dshAccent))`、`alpha=0.9`、`rightMargin=8dp`——和主页顶部头像位置呼应。
+4. 关闭钮保持 `bg_pill`（13/4 内边距），仍在同一条卡片右端。
+5. **动画关键坑**：`setBarShown` 是动画 `topBar.height → 0`。外边距**必须放在 `bar` 自己身上**（`FrameLayout.LayoutParams.setMargins(10,5,10,4)`），**不能给外层 `barBox` 加 padding** —— 后者收到 0 高度后 padding 还在，会留一道收不掉的空档（Quick Return 就废了）。
+
+**验收与发布（首轮流程，没开模拟器）**
+- `verify\release-fast.ps1 -Version 1.33.43 -VersionCode 149 -DeployNote "web top bar card style"` → 构建 32s（apk 16,607,313 B）、**全链 53s**；`publish: OK ?v=149 (200 16607313, sha256 matches)`；update-notify id `xoQRiyUZIDne`；`export: public already up to date`。
+- 私有仓 `3450e47` 已推 gitee。
+- 硬坑：`powershell -File verify\release-fast.ps1` 在 **bash** 里跑会被吃掉反斜杠（`verifyrelease-fast.ps1` 找不到），必须用 **pwsh 工具**。
+- 待用户真机验收（首轮流程：我发包，用户自己测）。
