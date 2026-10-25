@@ -2538,3 +2538,38 @@ function wr(){var a=tl.getBoundingClientRect(),b=tr.getBoundingClientRect();
 apk **16,716,011 B**，`?v=156` sha256 一致，update-notify `6pIReAq6t8Ks`。
 
 **遗留**：面板是深色固定配色，不随六套主题变化（浅色主题下对比度仍够，但不是主题色）。
+
+## 7.24 回滚工具栏改造（v1.33.52 / 158）
+
+**用户决定**（m11901）：`算了，还是回退到之前会自动换行导致输入框变大的版本吧，越来越不对劲了`
+
+### 回滚范围
+`WebActivity.kt` 里 v1.33.47 → v1.33.51 累积的五轮工具栏改造（共 167 行新增）**全部撤掉**，
+恢复成 v1.33.46 的形态：
+
+    git diff a3e8820 -- android-app/app/src/main/java/xyz/cpyh/dshpush/WebActivity.kt
+    # 输出为空 = 与 1.33.46 逐字节一致
+
+保留的部分（不属工具栏改造，仍在生效）：
+- v1.33.45 输入框卡片恒定亮度（`rgba(255,255,255,0.15)` alpha 的问题）
+- v1.33.46 纯空白草稿归一（`bwCmpClean` + `max-height:36px` 钳制）
+- 会话恢复（`bwSess` / `saveSess` / `restoreSessUrl` / `recheckRestoreTarget`）
+- 原生顶栏通栏、FAB 露 1/2、滚动性能优化
+
+### 撤掉的具体机制（供以后判断是否值得再做）
+1. `bwRowFix()`：几何判折行（`wr()` 垂直区间不重叠）→ 图标化插件按钮 → 收窄模型 pill → nowrap+滚动。
+2. `bwOvList / bwOvRes / bwOvPark / bwOvUnpark / bwOvFire / bwOvClose / bwOvToggle / bwOvChip`：
+   「⋯」溢出收纳（停车 = `position:fixed` 钉位 + 自身 `visibility:hidden`，点项时临时显形并派发完整指针序列）。
+3. `bwCmpFix()` 里对 `bwRowFix()` 的调用与 700ms 轮询联动。
+
+### 教训
+- 插件的弹层**就地渲染在自己的包裹层里**（专家菜单 `.aag-menu` 是 `.aag-btn-wrap` 的子节点），
+  任何「藏父节点」的做法都会连坐弹层；`.click()` 也触发不了它们（只听 pointerdown/mousedown）。
+- 只要想在**不改变插件 DOM 归属**的前提下压缩工具栏，就必然踩进这两条；
+  而改变 DOM 归属会破坏 React 事件委托。⇒ 这条路的产品收益（输入框矮 40px）
+  抵不上复杂度与回归风险，用户已判定回退。
+
+### 发布
+`release-fast.ps1 -Version 1.33.52 -VersionCode 158`：apk **16,607,865 B**，
+`?v=158` sha256 一致，update-notify `y5Lk1IYDkHIR`。
+私有仓 `f2d4144`；公开镜像四端 `ece4054`。
