@@ -1014,6 +1014,46 @@ class WebActivity : Activity() {
                 "window.addEventListener('pagehide',bwSessFlush);" +
                 "window.addEventListener('beforeunload',bwSessFlush);" +
                 "setTimeout(bwSess,600);setInterval(bwSess,400);}}" +
+                // ★ v1.33.46（用户 m10371「为什么当前对话输入框变大了呢，其他对话是正常的」）：
+                //   DSH 网页把每个会话的草稿存 localStorage `dsh.conversation.<sid>`
+                //   （形如 {"draft":{"text":"\n\n\n",...}}）。**text 是纯空白（多个 \n）时
+                //   输入框按行数把卡片撑高**——实测 1 行 98px、2 行 114、3 行 138、4 行 162，
+                //   而占位文字只有一行，看起来就是"这个对话的输入框莫名变大了"。
+                //   实测复现链：`Input.insertText("\n\n\n")` → 卡片 162；刷新后仍 162（草稿已落盘）。
+                //   修法双保险（都实测过）：
+                //   ① 启动时把**所有**纯空白草稿的 text 归一成 ""（治本，刷新后不再复发）；
+                //   ② 当前输入框是纯空白且卡片 >110px 时，给编辑器上 max-height:36px 钳回单行
+                //      （治标，兜住本拍 DOM 还没重新量高的情形；一碰键盘/输入就 release）。
+                //   注意：①只认"非空但全是空白"的 text——真正的空串别动（那是正常态）；
+                //   ②只在不含图片/按钮/装饰节点时才钳（有附件时高度是合理的）。
+                "if(!window.__bwCmp){window.__bwCmp=1;var __bwCmpT=0;" +
+                "function bwCmpClean(){var n=0;try{for(var i=0;i<localStorage.length;i++){" +
+                "var k=localStorage.key(i);if(!k||k.indexOf('dsh.conversation.')!==0)continue;" +
+                "var raw=localStorage.getItem(k);if(!raw)continue;var o=null;" +
+                "try{o=JSON.parse(raw);}catch(e){continue;}if(!o||!o.draft)continue;" +
+                "var d=o.draft,txt=(typeof d==='string')?d:(d.text||'');" +
+                "if(typeof txt!=='string')continue;" +
+                "if(txt!==''&&txt.replace(/\\s/g,'')===''){if(typeof d==='string'){o.draft='';}" +
+                "else{d.text='';}localStorage.setItem(k,JSON.stringify(o));n++;}}}catch(e){}return n;}" +
+                "function bwCmpBox(){return document.querySelector('[contenteditable=true]');}" +
+                "function bwCmpCard(t){var z=t.parentElement,g=0;while(z&&g<8){" +
+                "if(String(z.className||'').indexOf('_card')>=0)return z;z=z.parentElement;g++;}return null;}" +
+                "function bwCmpFree(t){if(t&&t.style.maxHeight){t.style.maxHeight='';t.style.overflowY='';}}" +
+                "function bwCmpFix(){var t=bwCmpBox();if(!t)return;if(__bwCmpT){bwCmpFree(t);return;}" +
+                "if(String(t.innerText||'').replace(/\\s/g,'')!==''){bwCmpFree(t);return;}" +
+                "if(t.querySelector('img,button,[data-lexical-decorator]')){bwCmpFree(t);return;}" +
+                "var cb=bwCmpCard(t);if(!cb)return;" +
+                "if(cb.getBoundingClientRect().height>110){if(t.style.maxHeight!=='36px'){" +
+                "t.style.maxHeight='36px';t.style.overflowY='hidden';}}else{bwCmpFree(t);}}" +
+                "function bwCmpMark(){__bwCmpT=1;bwCmpFree(bwCmpBox());}" +
+                "document.addEventListener('pointerdown',function(e){var t=bwCmpBox();" +
+                "if(t&&e.target&&(e.target===t||t.contains(e.target)))bwCmpMark();},true);" +
+                "document.addEventListener('keydown',function(e){var t=bwCmpBox();" +
+                "if(t&&e.target&&(e.target===t||t.contains(e.target)))bwCmpMark();},true);" +
+                "document.addEventListener('input',function(e){var t=bwCmpBox();" +
+                "if(t&&e.target&&(e.target===t||t.contains(e.target)))bwCmpMark();},true);" +
+                "bwCmpClean();bwCmpFix();setTimeout(bwCmpFix,400);setTimeout(bwCmpFix,1500);" +
+                "setInterval(bwCmpFix,700);}" +
                 "})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
