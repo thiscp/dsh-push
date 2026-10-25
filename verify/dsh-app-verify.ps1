@@ -406,9 +406,18 @@ while (((Get-Date) - $rt).TotalSeconds -lt 8) {
   Start-Sleep -Milliseconds 400
 }
 "FOCUS=" + $fc + " WAIT=" + [int]((Get-Date) - $rt).TotalSeconds
-cmd /c "`"$adb`" -s $serial exec-out screencap -p > G:\Android\verify-shot.png"
+# 2026-10-25 incident: exec-out screencap intermittently produced a 0-byte file (adb server had just
+# been bounced by `adb root` / the emulator ladder), which FAILED the screenshot row and silently
+# skipped the deploy. Retry up to 3x and require a plausible PNG size.
 $sl = 0
-if (Test-Path "G:\Android\verify-shot.png") { $sl = (Get-Item "G:\Android\verify-shot.png").Length }
+for ($si = 1; $si -le 3; $si++) {
+  cmd /c "`"$adb`" -s $serial exec-out screencap -p > G:\Android\verify-shot.png"
+  $sl = 0
+  if (Test-Path "G:\Android\verify-shot.png") { $sl = (Get-Item "G:\Android\verify-shot.png").Length }
+  "SHOT_TRY=" + $si + " BYTES=" + $sl
+  if ($sl -gt 100000) { break }
+  Start-Sleep -Milliseconds 1200
+}
 "SHOT_BYTES=" + $sl
 "### DRIVE DONE rc=0"
 '@
@@ -511,7 +520,16 @@ if (-not $gmNode -or -not (Test-Path $gmScript)) {
 }
 
 # ---------- 6. optional deploy ----------
-if ($Deploy -and @($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
+# 2026-10-25 incident: the screenshot row FAILed (0-byte png) so the deploy was silently skipped,
+# yet this run still printed "SUMMARY: 8/8 passed" and the release script's online check compared
+# against the PREVIOUS build (16603608 vs the fresh 16604700). Two lessons are baked in here:
+#   a) the deploy gate and the summary now read the SAME computed failure list - they can never
+#      disagree again;
+#   b) a skipped deploy is recorded as its own row, so "nothing was uploaded" is visible in the
+#      results table instead of being an absence nobody notices.
+$failRows = @($script:results | Where-Object { $_.Ok -ne $true })
+Write-Host ("DBG rows=" + $script:results.Count + " fail=" + $failRows.Count + " [" + (($script:results | ForEach-Object { [string]$_.Name + "=" + [string]$_.Ok }) -join " ") + "]")
+if ($Deploy -and $failRows.Count -eq 0) {
   $vc = [regex]::Match((Get-Content "$Repo\android-app\app\build.gradle.kts" -Raw), 'versionCode\s*=\s*(\d+)').Groups[1].Value
   Invoke-Watched "deploy" ("scp " + $SSH_OPTS + " `"$localApk`" `"${Aliyun}:/var/www/certbot/dl/dsh-push.apk`"") $SshTimeoutSec $null | Out-Null
   $chkH = Invoke-Watched "deploy" ("curl.exe -s -o `"$OutDir\dl-check.apk`" -w `"%{http_code} %{size_download}`" `"$Ntfy/dl/dsh-push.apk?v=$vc`"") $SshTimeoutSec $null
@@ -534,13 +552,15 @@ if ($Deploy -and @($script:results | Where-Object { -not $_.Ok }).Count -eq 0) {
     $nid = try { ($r | ConvertFrom-Json).id } catch { "?" }
     Report "update-notify" ($r -match '"title":"dsh-push update') "id: $nid"
   }
+} elseif ($Deploy) {
+  Report "deploy" $false ("SKIPPED - earlier failure(s): " + (($failRows | ForEach-Object { $_.Name }) -join ", ") + " (APK was NOT uploaded and NO update notification was sent)")
 }
 
 # ---------- summary ----------
 # PS 5.1 硬坑（2026-10-17 实测）：管道只命中一个对象时 (... | Where-Object {…}).Count 返回 $null，
 # 而 $null 在算术里当 0 → 明明有一项 FAIL 也打出「N/N passed」（v1.33.0 那轮 screenshot 就是这样被
-# 报成 8/8 的）。闸门侥幸是对的（$null -eq 0 为假），但总结会骗人，故用 @() 强制成数组。
-$fail = @($script:results | Where-Object { -not $_.Ok }).Count
-Write-Host ""
+# 报成 8/8 的）。故用 @() 强制成数组；2026-10-25 起直接复用第 6 步算好的 $failRows，
+# 闸门与总结读同一份数据，不可能再出现「跳过部署却打满居」。
+$fail = $failRows.Count
 Write-Host ("SUMMARY: {0}/{1} passed" -f ($script:results.Count - $fail), $script:results.Count)
 Finish $(if ($fail) { 1 } else { 0 })

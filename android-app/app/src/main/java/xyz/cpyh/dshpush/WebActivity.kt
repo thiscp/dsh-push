@@ -204,6 +204,23 @@ class WebActivity : Activity() {
                 fun barShow(show: Boolean) {
                     runOnUiThread { setBarShown(show) }
                 }
+
+                // v1.33.39（用户 m06190）：页面把「当前停留的对话」报上来，按宿主存盘，
+                // 供下次进程被杀后恢复。DSH Web 切会话**不写 URL**（无路由，且 revealFromHash
+                // 会 replaceState 抹掉片段），所以只能由页面侧读 DOM 再回传。
+                @android.webkit.JavascriptInterface
+                fun saveSess(sid: String?) {
+                    try {
+                        val v = sid ?: return
+                        if (v.isEmpty()) return
+                        val u = lastUrl
+                        val host = if (u.isEmpty()) "" else DshHosts.hostOf(u)
+                        if (host.isEmpty()) return
+                        DshHosts.saveLastSess(this@WebActivity, host, v)
+                        android.util.Log.d("dshsess", "save host=$host sess=$v")
+                    } catch (e: Exception) {
+                    }
+                }
             }, "bwNative")
             // 去掉 Mobile 标记，DSH Web 按桌面版渲染（v1.9.8）
             settings.userAgentString =
@@ -905,7 +922,21 @@ class WebActivity : Activity() {
                 // 看门狗（用户 m03906）：新建对话没有内容 → 页面不可滚 → 没有"上滑"手势，
                 // 栏一旦收起就永远回不来。每 800ms 查一次：全页找不到可滚的主容器
                 // （clientHeight≥400 且 scrollHeight>clientHeight+50）而栏正收起 → 立刻复位。
-                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);function bwQrChk(){if(!hidden)return;if(Date.now()<window.__dshScrolling)return;qrT=(qrT||0)+1;if(qrT%4)return;var c=window.__bwScroller;if(c&&c.isConnected&&c.clientHeight>=400&&c.scrollHeight>c.clientHeight+50)return;var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.clientHeight>=400&&e.scrollHeight>e.clientHeight+50&&(!best||e.clientHeight>best.clientHeight))best=e;}window.__bwScroller=best;if(!best)setBar(true);}setInterval(bwQrChk,800);}})();", null)
+                "try{bwNative.barShow(true);}catch(e){}document.addEventListener('scroll',function(e){var t=e.target;if(!t||t.nodeType!==1)return;if(t.clientHeight<400)return;var y=t.scrollTop,p=lastPos.get(t),pd=p===undefined?0:y-p,prev=lastD.get(t)||0;lastPos.set(t,y);lastD.set(t,pd);if(p===undefined)return;if(Date.now()-t0<2500||Date.now()<lock)return;if(y>p+12&&prev>12&&y>120)setBar(false);else if(y<p-12&&prev<-12)setBar(true);},true);function bwQrChk(){if(!hidden)return;if(Date.now()<window.__dshScrolling)return;qrT=(qrT||0)+1;if(qrT%4)return;var c=window.__bwScroller;if(c&&c.isConnected&&c.clientHeight>=400&&c.scrollHeight>c.clientHeight+50)return;var all=document.querySelectorAll('*'),best=null;for(var i=0;i<all.length;i++){var e=all[i];if(e.clientHeight>=400&&e.scrollHeight>e.clientHeight+50&&(!best||e.clientHeight>best.clientHeight))best=e;}window.__bwScroller=best;if(!best)setBar(true);}setInterval(bwQrChk,800);" +
+                // ★ v1.33.39（用户 m06190）：把「用户当前停留的对话」回报给原生，供下次恢复。
+                //   DSH Web 切会话**不改 URL**（没有路由；host-plugin 的 revealFromHash 还会
+                //   replaceState 把片段抹掉），所以唯一可靠钩子是 DOM：DSH 客户端在会话容器上
+                //   挂了 data-conversation-session="session-<uuid>"（全页唯一一个）。
+                //   1s 轮询一次单条 querySelector（实测 1237 节点页 <0.1ms），值变了才上报；
+                //   页面 hidden 时跳过，不烧后台 CPU。首屏 600ms 另补一拍——属性在首渲染后才出现。
+                "if(!window.__bwSess){window.__bwSess=1;var __bwLs='';" +
+                "function bwSess(){try{if(document.hidden)return;" +
+                "var e=document.querySelector('[data-conversation-session]');" +
+                "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
+                "if(!v||v===__bwLs)return;__bwLs=v;" +
+                "if(window.bwNative&&bwNative.saveSess)bwNative.saveSess(v);}catch(e1){}}" +
+                "setTimeout(bwSess,600);setInterval(bwSess,1000);}}" +
+                "})();", null)
                     // 网页玻璃化（v1.25.1）：全屏画布全透，卡片/侧栏/气泡降为 45% 半透
                     // 注意（v1.32.6）：大容器(>50%视口)必须走 else 的**互斥**分支设 transparent——
                     // 这是壁纸能透出来的唯一原因。v1.32.5 重构 skipBg 时丢了 else，
@@ -1790,11 +1821,39 @@ class WebActivity : Activity() {
         setContentView(root)
         watchNetwork()
 
-        val url = intent?.getStringExtra("url") ?: ""
-        if (url.isEmpty()) { finish(); return }
+        val url0 = intent?.getStringExtra("url") ?: ""
+        if (url0.isEmpty()) { finish(); return }
+        // ★ v1.33.39（用户 m06190）：重新进入时回到「用户最后手动进入的对话」。
+        //   旧行为：进程被系统回收后由任务快照重建（savedInstanceState != null），
+        //   onCreate 拿到的还是**当初那条推送通知**的 intent ⇒ 总是弹回推送的会话，
+        //   把用户后来自己切过去的那个对话丢掉。
+        //   判据只用 savedInstanceState：!= null ⇒ 这是「回来」，用存盘的会话重写片段；
+        //   == null ⇒ 新点一次通知（进程已死也是新任务栈）⇒ 必须尊重 intent，仍进推送会话。
+        //   活着时点通知走 onNewIntent，不经过这里，也不受影响。
+        //   重写方式沿用 host-plugin 既有的 `#session-<uuid>` 协议（client.js revealFromHash
+        //   认这个形态，切完自己 replaceState 抹掉），所以不需要新增页面侧钩子。
+        val url = if (savedInstanceState != null) restoreSessUrl(url0) else url0
         applyInstanceLabel(url)
         lastUrl = url
         web?.loadUrl(url)
+    }
+
+    /** 把「上次停留的会话」拼回 URL 片段（v1.33.39，用户 m06190）。
+     *  只换/加 fragment，绝不动 path 与 query（DSH Web 的 token 在路径里）。
+     *  取不到存盘值或形态不合法就原样返回——退化为旧行为，不会打不开页面。 */
+    private fun restoreSessUrl(url: String): String {
+        return try {
+            val host = DshHosts.hostOf(url)
+            val sid = DshHosts.lastSess(this, host)
+            if (sid.isEmpty() || !Regex("^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOption.IGNORE_CASE).matches(sid))
+                return url
+            val base = url.substringBefore('#')
+            android.util.Log.d("dshsess", "restore host=$host sess=$sid")
+            // 已有片段就整段替换（DSH 页面常态是无片段，这里只是兜底）
+            base + "#" + sid
+        } catch (e: Exception) {
+            url
+        }
     }
 
     /** 标题栏与最近任务标签带上实例名（v1.30.0）：

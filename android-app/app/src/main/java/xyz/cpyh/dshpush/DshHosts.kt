@@ -102,6 +102,32 @@ object DshHosts {
         mutate(ctx) { o -> o.optString("id") == id }
     }
 
+    // ── 最后使用过的会话（v1.33.39，用户 m06190）──────────────────────────────
+    // 网页切会话**不写 URL**（DSH Web 没有路由，revealFromHash 还会把片段抹掉），
+    // 所以「用户最后停在哪个对话」只能由页面侧读出、经 App 的 bwNative.saveSess 落盘。
+    // 按 host:port 分开存：三台宿主的会话 id 互不相干。
+    private const val SESS_PREFIX = "sess:"
+
+    fun lastSess(ctx: Context, hostId: String): String {
+        if (hostId.isEmpty()) return ""
+        return try {
+            ctx.getSharedPreferences(PushService.PREF, Context.MODE_PRIVATE)
+                .getString(SESS_PREFIX + hostId, "") ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
+    fun saveLastSess(ctx: Context, hostId: String, sid: String) {
+        if (hostId.isEmpty() || sid.isEmpty()) return
+        try {
+            val p = ctx.getSharedPreferences(PushService.PREF, Context.MODE_PRIVATE)
+            if (p.getString(SESS_PREFIX + hostId, "") == sid) return
+            p.edit().putString(SESS_PREFIX + hostId, sid).apply()
+        } catch (e: Exception) {
+        }
+    }
+
     private fun mutate(ctx: Context, f: (JSONObject) -> Boolean) {
         try {
             val p = ctx.getSharedPreferences(PushService.PREF, Context.MODE_PRIVATE)
