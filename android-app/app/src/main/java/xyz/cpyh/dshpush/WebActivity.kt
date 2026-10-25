@@ -1042,23 +1042,48 @@ class WebActivity : Activity() {
                 // ★ v1.33.47（用户 m10597「安装最新版后也一样的输入框比之前大，但是我发现我把专家
                 //   那个插件关闭后就正常了」）：真正的主因不是草稿空白，而是**工具栏那一行会换行**。
                 //   输入框卡片 = 文本区 + 一行工具栏（.GRgSLq_row，默认 flex-wrap:wrap）；
-                //   工具栏左侧是「+」「权限」「模型」等按钮，右侧是发送区。
+                //   工具栏左侧是「+」「权限」「模型」等按钮（原宽 80px），右侧是发送区（124px）。
                 //   专家插件（@michengai/dsh-agency-agents）往 slot `conversation.input.left`
-                //   里插一个「专家」按钮 ⇒ 左侧总宽 80→146px，加上右侧 215px 就超过卡片 321px
+                //   里插一个带文字的「专家」按钮（80px）⇒ 左侧 80→168px，一行放不下
                 //   ⇒ **整行换行成两行，卡片 98→138px**，看上去就是"输入框变大了"。
-                //   实测（模拟器，往 .GRgSLq_tools 里加一个 150px 按钮复现）：
-                //     加按钮前 card=98 row=42 wrap=wrap；加后 card=138 row=82；
-                //     给 row 设 flex-wrap:nowrap + tools 可收缩横向滚动后 → card=98 row=42。
-                //   ⇒ 强制工具栏单行（nowrap），把溢出的按钮交给 tools 横向滚动，
-                //     右侧发送区固定不缩。这样无论装几个插件，卡片高度恒为单行高度。
+                // ★ v1.33.48（用户 m10852「虽然可以左右滑，但是区域太小都挤一堆了」）：
+                //   1.33.47 只做 nowrap + 左侧横向滚动是**错的方向**。实测（模拟器缩到 345css，
+                //   即用户那台 1380px/dpr4 的宽度）：右侧发送区因为 row 的 space-between 会
+                //   吃掉全部空余宽度，长到 209px，左侧只剩 70px 可见 ⇒ 挤成一堆。
+                //   正解是**先把插件按钮降级成纯图标**（80→28px）：345css 下 tools 168→116px，
+                //   一行完全放得下，card 138→98、row 82→42，**不需要滚动**。
+                //   只有当图标化之后仍然放不下（装了两三个插件、或屏幕更窄）才退到
+                //   nowrap + 左侧横向滚动兜底——那是最后手段，正常用户看不到。
+                //   注意：只降级 `_tools` 里**带 svg 的第三方插件按钮**，
+                //   `_add`（+）与 `_modes`（权限/模型）保持原样，避免误伤页面原生控件。
                 "function bwRowFix(){var t=bwCmpBox();if(!t)return;var cb=bwCmpCard(t);if(!cb)return;" +
                 "var row=cb.querySelector('[class*=\"_row\"]');if(!row)return;" +
-                "if(row.style.flexWrap!=='nowrap')row.style.flexWrap='nowrap';" +
                 "var tl=row.querySelector('[class*=\"_tools\"]');" +
-                "if(tl&&tl.style.minWidth!=='0px'){tl.style.minWidth='0px';tl.style.flex='0 1 auto';" +
-                "tl.style.overflowX='auto';tl.style.overflowY='hidden';}" +
-                "var tr=row.querySelector('[class*=\"_trailing\"]');" +
-                "if(tr&&tr.style.flex!=='0 0 auto')tr.style.flex='0 0 auto';}" +
+                "var tr=row.querySelector('[class*=\"_trailing\"]');if(!tl||!tr)return;" +
+                "var cs=getComputedStyle(row);" +
+                "var av=row.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);" +
+                "function nd(){return tl.scrollWidth+tr.offsetWidth+12;}" +
+                "if(nd()>av+1){for(var i=0;i<tl.children.length;i++){" +
+                "var k=tl.children[i];if(!k||k.nodeType!==1)continue;" +
+                "var cn=String(k.className||'');" +
+                "if(cn.indexOf('_add')>=0||cn.indexOf('_modes')>=0)continue;" +
+                "var b=(k.tagName==='BUTTON')?k:(k.querySelector?k.querySelector('button'):null);" +
+                "if(!b||b.getAttribute('data-bwicon')==='1')continue;" +
+                "if(!b.querySelector('svg'))continue;" +
+                "b.setAttribute('data-bwicon','1');" +
+                "b.style.setProperty('font-size','0px','important');" +
+                "b.style.setProperty('width','28px','important');" +
+                "b.style.setProperty('min-width','28px','important');" +
+                "b.style.setProperty('padding','0','important');" +
+                "b.style.setProperty('gap','0','important');" +
+                "b.style.setProperty('justify-content','center','important');}}" +
+                "if(nd()>av+1){if(row.style.flexWrap!=='nowrap'){row.style.flexWrap='nowrap';" +
+                "tl.style.minWidth='0px';tl.style.flex='1 1 auto';" +
+                "tl.style.overflowX='auto';tl.style.overflowY='hidden';" +
+                "tr.style.flex='0 0 auto';}}" +
+                "else if(row.style.flexWrap==='nowrap'){row.style.flexWrap='';" +
+                "tl.style.minWidth='';tl.style.flex='';" +
+                "tl.style.overflowX='';tl.style.overflowY='';tr.style.flex='';}}" +
                 "function bwCmpFix(){var t=bwCmpBox();if(!t)return;bwRowFix();" +
                 "if(__bwCmpT){bwCmpFree(t);return;}" +
                 "if(String(t.innerText||'').replace(/\\s/g,'')!==''){bwCmpFree(t);return;}" +

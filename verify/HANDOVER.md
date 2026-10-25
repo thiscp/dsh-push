@@ -2429,3 +2429,30 @@ node --check C:\Temp\bw-narrow.js
 
 **教训**：给会动的背景上的元素写半透明底色时，**必须同时约束它透出什么**（提亮/降饱和/加实底），
 否则"同一个控件在不同滚动位置呈现不同颜色"是必然结果，用户只会描述成"有时候颜色变深了"。
+
+### §7.22 输入框卡片变高（v1.33.48）：工具栏换行 → 插件按钮降级成图标
+
+**用户反馈链**
+- m10371「为什么当前对话输入框变大了呢，其他对话是正常的」→ 1.33.46 修了「草稿纯空白行撑高」，无效。
+- m10597「安装最新版后也一样的输入框比之前大，但是我发现我把专家那个插件关闭后就正常了」→ 指向 `@michengai/dsh-agency-agents`。
+- m10852（看过 1.33.47）「虽然可以左右滑，但是区域太小都挤一堆了」→ 1.33.47 的 nowrap 方向被否。
+
+**结构**：`_card` = 文本区 + `_row`（`flex-wrap:wrap`、`justify-content:space-between`），
+`_row` 下左 `_tools` / 右 `_trailing`。专家插件经 slot `conversation.input.left` 往 `_tools` 插
+一个 80px 带文字的按钮 ⇒ `_tools` 80→168 ⇒ 一行放不下 ⇒ 折两行 ⇒ 卡片 98→138、行高 42→82。
+
+**1.33.47（错）**：`_row{flex-wrap:nowrap}` + `_tools` 横向滚动。345css 下 `space-between`
+把空余宽度全给了 `_trailing`（124→209），`_tools` 只剩 70px 可见 ⇒ 用户说"挤一堆"。
+
+**1.33.48（对）**：两级。
+1. 量 `need=_tools.scrollWidth+_trailing.offsetWidth+12` vs `avail=_row.clientWidth-padding`；
+   超了就把 `_tools` 里**带 svg 的第三方按钮**降级为纯图标（`font-size:0`+`width/min-width:28px`
+   +`padding:0`+`gap:0`+`justify-content:center`），80→28。跳过 `_add` / `_modes`（原生控件）。
+2. 仍超才 `nowrap` + `_tools` 滚动 + `_trailing{flex:0 0 auto}` 兜底；恢复时清内联样式。
+
+**验证矩阵**（模拟器 + `Emulation.setDeviceMetricsOverride`）：320/345/360/393 css × 0/1/2 个假插件，
+card 全部收敛到 98（360/393 本来就不用动）。**关键**：不把视口压到 345 就复现不出来——
+默认 360css 一行放得下，会误判"已修好"。
+
+**发布**：`release-fast.ps1 -Version 1.33.48 -VersionCode 154`，apk 16,608,361 B，
+`?v=154` sha256 一致，update-notify `QXaCBaXRgMY7`；公开镜像四端 `14bf119`；私有仓 `ff9e3e6`。
