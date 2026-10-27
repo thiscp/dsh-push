@@ -54,7 +54,7 @@
     "url": "git+https://github.com/thiscp/dsh-push.git",
     "directory": "host-plugin"
   },
-  "homepage": "https://github.com/thiscp/dsh-push/tree/master/host-plugin#readme",
+  "homepage": "https://github.com/thiscp/dsh-push/tree/main/host-plugin#readme",
   "bugs": {
     "url": "https://github.com/thiscp/dsh-push/issues"
   },
