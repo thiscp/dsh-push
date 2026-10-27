@@ -2573,3 +2573,56 @@ apk **16,716,011 B**，`?v=156` sha256 一致，update-notify `6pIReAq6t8Ks`。
 `release-fast.ps1 -Version 1.33.52 -VersionCode 158`：apk **16,607,865 B**，
 `?v=158` sha256 一致，update-notify `y5Lk1IYDkHIR`。
 私有仓 `f2d4144`；公开镜像四端 `ece4054`。
+
+## §7.25 host 插件发布到 npm + 投稿 DSH 插件市场（2026-10-27）
+
+需求（用户 m11975）：插件能发 npm，让别人直接从 DSH 插件市场装。
+
+### 已落地
+- **npm：`dsh-push-host@0.3.1` 已发布** → `https://registry.npmjs.org/dsh-push-host`，
+  `latest` = 0.3.1，10 文件 / 64.2 kB 包 / 173.2 kB 展开，tarball sha1
+  `5e2cab2d1faea276e8cd7221aa2921b3c5de87c9`，与本地 `npm pack` 逐字节一致。
+  空目录 `npm install dsh-push-host` 冒烟通过，`dsh.bundle` / `cordis.patch.yml` / `dsh.client` 齐全。
+- **一键发布脚本** `verify/npm-publish-host.ps1 -Token npm_xxx`：往 `C:\Users\<user>\.npmrc` 写**一行**
+  registry 作用域 authToken（先备份 `.bak-publish`，清掉旧 token 行，不动其它配置）→
+  `npm publish --access public` → 回读 `registry.npmjs.org/<name>` 与 `/latest` 确认落地。
+- **`host-plugin/package.json`**：`homepage` 从 `tree/master/...` 改为 `tree/main/...`（仓库默认分支是 main）。
+- **投稿材料**：`deploy/market/thiscp__dsh-push--host-plugin.yml` + `PR.md` + `NPM-PUBLISHED.md`。
+  条目已用 awesome 仓自带的 `scripts/lib/entries.mjs` 跑全量校验（**7212 条，problems=0**）。
+
+### 发布 npm 的两个坑（按顺序踩的）
+1. granular token 权限选成 **No access** → 一切 403。必须 `Read and write (publish and stage)`；
+   包还没发布过时搜不到包名，直接选 `All packages`。
+2. 账号开了 2FA → 纯 publish 报
+   `Two-factor authentication or granular access token with bypass 2fa enabled is required`。
+   必须回 token 页面**勾 "Bypass two-factor authentication (2FA)"** 再生成。
+   **`npm whoami` 能过不代表能发布**——发布是单独一道 2FA 闸。
+
+### 两个会误导人的现象
+- registry 会先冒一个 `0.0.0-stage`（`Temporary package placeholder for staged publishing`），
+  且 `dist-tags.latest` 一度指向它 ⇒ 必须 `npm dist-tag add dsh-push-host@0.3.1 latest`。
+  这个占位版本用 bypass-2FA token **删不掉**（unpublish 被 `gh.io/npm-gat-bypass2fa-deprecation` 拦），
+  要么网页手工删，要么留着（不影响安装）。
+- `https://www.npmjs.com/package/<name>` 用 curl 访问**恒 403** 是 bot 防护，不是包不存在；
+  验证一律走 `registry.npmjs.org`。
+
+### 市场收录规则（实测自 contributing.md + 仓内脚本）
+- 真源 = GitHub `awesome-dsh-plugin/awesome-dsh-plugin` 的 `data/plugins/<owner>__<repo>.yml`，
+  一插件一文件，提 PR；README 由脚本生成，手改会被打回；一 PR 最多 3 条。
+- 文件名由 `slugFor(url)` 决定：`<owner>__<repo>`，带 `/tree/<branch>/<sub>` 时追加 `--<sub，斜杠换 ->`。
+- 硬性：仓库 `package.json` 必须声明 `dsh.bundle`（只有 `dsh.client` 会被拒）；仓库建满 **1 天**；
+  加 `dsh-plugin` topic；描述必须与代码一致、不带营销词；`description.en` 必填。
+- **不允许手写 `npm:` 字段**（会被校验拒），npm 关联由 registry 按 `repository` 字段自动采集——
+  我们 `repository.directory = host-plugin` 已就位，实测 linkage `LINKED = true`，
+  市场会显示 `dsh-push-host@0.3.1`。
+- 分类选 **notify**。单行描述里含 `: ` 必须加引号（YAML 会当嵌套键）。
+- 发 npm 是可选但推荐：预构建安装免 `allowBuilds` 构建授权。
+
+### 仍未完成（需要 GitHub 写权限）
+- `thiscp/dsh-push` 加 `dsh-plugin` topic。
+- 向 awesome 仓提 PR（文件与 PR 正文已备好）。
+  本机只有 SSH 部署密钥：能推代码，**改不了 topics、开不了 PR**；`thiscp/awesome-dsh-plugin` fork 不存在。
+
+### 长期
+官方横幅：bypass-2FA token 自 **2027-01** 起不能再直接发布，应迁到 **Trusted Publishing**
+（GitHub Actions OIDC + `npm publish --provenance`，无需 token）。
