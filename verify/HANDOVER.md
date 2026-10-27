@@ -2685,3 +2685,45 @@ ntfy 的 **JSON body** 只接受整数 1–5，字符串会被判成非法请求
 3. **0.2.5/0.1.1 每次启动都在 `web.log` 打 `fatal load failure: cannot get required service
    "configEditor" in inactive context`**（`AskUserModeSwitch.sync` 缺 `fiberIsActive` 守卫，
    `lib/index.js:964`）。0.3.x 的 `sync()` 首行有守卫，换上来后 fatal 计数为 0 —— 这是 npm 化的附带收益。
+
+---
+
+## §7.27 host 插件正式投稿 DSH 插件市场（2026-10-27，用户 m12376/m12902）
+
+**需求**：把 npm 上已发布的 `dsh-push-host` 也收进 DSH 插件市场，让别人能直接
+`dsh plugin --profile web add dsh-push-host`。市场投稿需要 **GitHub API 写权限**
+（SSH 部署密钥只能推代码，改不了 topics、开不了 PR），用户为此生成了一枚
+classic PAT（只勾 `public_repo`）。
+
+**三个动作，全部走 `C:\Temp\gh_submit.ps1`（参数 `-Token`）**
+
+1. **给仓库打 topic**：`PUT /repos/thiscp/dsh-push/topics`。该接口是**整体替换**，
+   必须先把现有 topics 读出来合并再 PUT，否则会清空原有 topic。本次原本是 `[]`，
+   打上后 `["dsh-plugin"]`（市场收录的硬性要求之一）。
+2. **fork 目录仓**：`POST /repos/awesome-dsh-plugin/awesome-dsh-plugin/forks`
+   → `thiscp/awesome-dsh-plugin`（ready 后 size=227415）。fork 刚建时立即写文件会 404
+   （GitHub 内部还在复制），脚本用轮询 probe 等到可用再提交。
+3. **在 fork 上开分支并提 PR**：分支 `market/dsh-push-host`，只加一个文件
+   `data/plugins/thiscp__dsh-push--host-plugin.yml`（6 行），PR
+   **#9779 → https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/9779**。
+
+**投稿文件内容**（`deploy/market/thiscp__dsh-push--host-plugin.yml`，已进私有仓）：
+```yaml
+url: https://github.com/thiscp/dsh-push/tree/main/host-plugin
+name: thiscp/dsh-push#host-plugin
+category: notify
+description:
+  en: 'Phone push for DeepSeek Harness: hooks the question seam in-process so a pending question is delivered to your phone through an ntfy relay, and the answer you send from the phone is fed back to the agent as a user message even after it has stopped waiting.'
+  zh: 'DSH 手机推送：进程内挂载提问 seam，把待答问题经 ntfy relay 推到手机；手机作答在该问题已超时后仍会以 user 消息回灌给 agent。'
+```
+
+**PR 状态（实测）**：`state=open`、`mergeable=True`、`mergeable_state=clean`、
+CI `check=completed/success`（run 40463880999）、0 条 review 评论。等维护者合并。
+
+**三个可复用的坑**
+1. `PUT /topics` 是**整表替换**而不是追加 —— 先把旧 topics 读出来合并。
+2. `GET .../contents/<path>?ref=<branch>` 在 fork 刚建时返回 404，不是文件路径写错，
+   是 fork 还没 ready；用 `GET /repos/<fork>` 的 `size>0` 轮询即可。
+3. 市场收录要求仓库 `package.json` 声明 **`dsh.bundle`**（只有 `dsh.client` 会被拒），
+   且 `url` 必须精确到 monorepo 的子目录（`tree/main/host-plugin`），
+   安装命令由官方脚本生成成 `dsh plugin --profile web add github:thiscp/dsh-push#path:/host-plugin`。
