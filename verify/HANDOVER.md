@@ -2727,3 +2727,54 @@ CI `check=completed/success`（run 40463880999）、0 条 review 评论。等维
 3. 市场收录要求仓库 `package.json` 声明 **`dsh.bundle`**（只有 `dsh.client` 会被拒），
    且 `url` 必须精确到 monorepo 的子目录（`tree/main/host-plugin`），
    安装命令由官方脚本生成成 `dsh plugin --profile web add github:thiscp/dsh-push#path:/host-plugin`。
+
+---
+
+## §7.28 PR 守望：每天检查市场投稿并只在「有结果」时推手机（2026-10-27，用户 m13078）
+
+**需求**：User said (m13078): 「每天定时看一下，有结果就推送到我手机」。PR #9779 的合并权在社区维护者手里，
+本地没有可加速的通道，所以做成一个**静默守望**：状态没变就一声不出，变了才推。
+
+**落地三件**
+
+| 件 | 位置 | 说明 |
+|---|---|---|
+| 守望脚本 | `verify/pr-watch.ps1` | 纯 ASCII + CRLF + UTF-8 BOM，无 token 硬编码 |
+| 包装器 | `C:\Users\<user>\bin\dsh-pr-watch.cmd` | `powershell -File …pr-watch.ps1 >> %LOCALAPPDATA%\dsh-pr-watch\cron.log 2>&1` |
+| 计划任务 | `DshPrWatch` | 每天 **10:05**，`-UserId <user> -LogonType S4U -RunLevel Limited`，`StartWhenAvailable`，限 10 分钟 |
+
+**参数**：`-PrNumber`（默认 9779）、`-DryRun`（不推不发、不改 state）、`-Force`（无视「无变化」强行推）。
+**状态文件**：`%LOCALAPPDATA%\dsh-pr-watch\state.json`（存 `fp` 指纹 + comments + ci）。
+**日志**：`watch.log`（自截断到 200 行）与 `cron.log`。
+
+**只在四种情况推送**（优先级从高到低判定，宁缺勿滥）
+
+| 情形 | title | priority |
+|---|---|---|
+| `merged=true` | dsh-push 上架 DSH 插件市场了 | 5 |
+| `state=closed` 且未合并 | dsh-push 市场投稿被关闭了 | 5 |
+| 评论数比上次多 | 市场投稿有新留言（附最新一条 200 字） | 4 |
+| CI 从绿变红 | 市场投稿 CI 失败了 | 4 |
+| 首次运行（无 state） | PR 守望已就位 | 3 |
+
+状态指纹 `state|merged|mergeable_state|comments|review_comments|updated_at|ci` 全等 ⇒ 直接退出不推。
+**网络失败不报警**（`fetch failed … will retry tomorrow` 只记日志），避免断网时误报「被关闭」。
+
+**四条分支全部实测过**（`-DryRun`，用真实的其他 PR 造态）
+- 合并态：#9449 → 「上架」prio 5 ✅
+- 关闭未合并：#9709 → 「被关闭」prio 5 ✅
+- 有新留言：#9650（3→4 条）→ 「有新留言」prio 4 ✅
+- CI 变红：#9782（`success` → `failure,success`）→ 「CI 失败了」prio 4 ✅
+- 真发一条：#9779 首次运行 → `pushed id=Ib2nmswblK8p prio=3`（手机确认收到）
+- 幂等：紧接着再跑一次 → `no change since last run -> stay quiet`，state 不动 ✅
+
+**踩到的坑（一次就够）**
+1. **`$Pr` 是 PowerShell 内置自动变量**（当前进程对象），给参数起名 `$Pr` 会让
+   `Invoke-RestMethod` 的入参绑定报
+   `Cannot convert the "@{url=…; number=9779; …}" value of type PSCustomObject to type Int32`
+   —— 报错文本看着像 API 返回怪东西，其实是变量名撞车。改叫 **`$PrNumber`** 即好。
+   （同族坑：`$pid`、`$Host`、`$input`、`$args` 都不能当自己的变量名。）
+2. **匿名 API 就够**：公开仓库的 PR 读操作不需要 token，`User-Agent` 头必须带（否则 403）。
+   所以守望脚本**不保存任何凭据**，只有推送那一步用 `config.local.ps1` 的 `WriteToken`。
+3. ntfy 仍然要 **POST 服务器根路径**、topic 放进 JSON body、`priority` 必须是**整数**（HANDOVER 7.26）。
+4. `.cmd` 包装器必须 **CRLF + 纯 ASCII**（LF 会被 cmd 静默错位）。
