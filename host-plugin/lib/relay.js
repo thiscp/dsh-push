@@ -27,8 +27,16 @@ export class RelayClient {
     try { return JSON.parse(text); } catch { return { ok: false, raw: text.slice(0, 200) }; }
   }
 
-  /** Publish a notification to the phone through ntfy (same JSON body shape the app expects). */
-  async push({ title, body, click, priority = 'default', tags = [] }) {
+  /**
+   * Publish a notification to the phone through ntfy (same JSON body shape the app expects).
+   *
+   * `priority` MUST be an integer 1-5. ntfy's JSON body only accepts numbers here: passing the
+   * string 'default' (which is what ntfy's *header* form uses) makes the server answer
+   * 400 `invalid request: request body must be valid JSON` — a message that points nowhere near
+   * the real cause. Callers inside this plugin always pass 1/3/4; the default used to be the
+   * string 'default', which broke every caller that omitted it.
+   */
+  async push({ title, body, click, priority = 3, tags = [] }) {
     const r = await this.fetchImpl(this.base + '/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + this.ntfyToken },

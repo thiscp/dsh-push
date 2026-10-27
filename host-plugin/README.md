@@ -53,6 +53,18 @@ ask_user_question (工具, 进程内)
    时调用它返回 `false`。此时**不 ack**、留在队列里，等前台等待结束（timed 的 timeout / UI 作答）
    下一轮再投。
 
+## 发布后从 npm 装回来时踩的坑（2026-10-27，第六个）
+
+1. **`priority` 只能是整数 1–5，字符串 `'default'` 会被 relay 判成非法 JSON。**
+   `RelayClient.push()` 的默认值原来是字符串 `'default'`（那是 ntfy **请求头**写法里的取值），
+   而 ntfy 的 **JSON body** 只接受数字 ⇒ 服务端回
+   `400 {"code":40024,"error":"invalid request: request body must be valid JSON"}`。
+   这条报错把人往"body 不是合法 JSON"上引，实际 body 完全合法，只是 `priority` 类型不对。
+   插件内部三个调用点都显式传了 `4 / 1 / 3`，所以线上一直没暴露；**只有"没传 priority"的外部
+   调用方（自己写脚本验证、第三方集成）会踩**。0.3.2 起默认值改成整数 `3`。
+   同一条规则也解释了为什么 `priority: 'high'`、`priority: '4'` 都 400，而 `3`、`4`、`"4"` 之外
+   的数字全 200 —— **别把请求头的取值抄进 JSON body。**
+
 ## 生产切换踩过的坑（2026-10-12/13，五个，都在这份代码里修掉了）
 
 1. **schema 校验后的空默认值会盖掉凭据文件。** `apply()` 拿到的 `config` 已经过 schema 校验，
