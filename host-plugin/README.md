@@ -158,14 +158,17 @@ timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 
 
 本包按可发布的 npm 包组织（`package.json` 带 `repository` / `homepage` / `bugs` / `author` /
 `publishConfig.access: public` / `engines` / `files` 白名单，MIT `LICENSE` 随包）。
-发布由仓库维护者做（`npm publish`，本机没有 npm，见下），用户侧只需 `dsh plugin add`：
+用户侧只需 `dsh plugin add`：
+
+**已发布到 npm：`dsh-push-host@0.3.1`（2026-10-27）** — https://registry.npmjs.org/dsh-push-host
+（`latest` 即最新版；`repository.directory = host-plugin`，市场据此自动关联 npm 包）
 
 ```powershell
-# 从 npm 装（发布后）
+# 从 npm 装（推荐，免 allowBuilds 构建授权）
 & $dsh plugin --profile <profile> add dsh-push-host
 
 # 从 tarball 装（离线/内网，等价路径，已实测）
-& $dsh plugin --profile <profile> add ./dsh-push-host-0.2.1.tgz
+& $dsh plugin --profile <profile> add ./dsh-push-host-0.3.1.tgz
 
 # 从本地目录装（开发期，改完立即生效）
 & $dsh plugin --profile <profile> add "link:<仓库>/host-plugin"
@@ -174,12 +177,12 @@ timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 
 三种方式在 profile 里的落点完全相同：`package.json` 的 `dependencies` 多一项、`dsh.profile.bundles`
 多一项（DSH 读到本包的 `dsh.bundle.patch` 自动登记 bundle 层）。
 
-**打包**：有 npm 的机器直接 `npm pack`（`files` 白名单已配好）；本机没装 npm（DSH 只带 pnpm），
-所以仓库里配了等价工具，输出同样的 `npm notice` 清单与 sha1：
+**打包**：有 npm 的机器直接 `npm pack`（`files` 白名单已配好）。
+DSH 运行时只带 pnpm 的机器上，仓库里配了等价工具，输出同样的 `npm notice` 清单与 sha1：
 
 ```powershell
 & $node tools/pack-npm-tarball.mjs host-plugin --dry-run   # 只看清单，不落盘
-& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.2.1.tgz
+& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.3.1.tgz
 ```
 
 实测产物 9 个文件：`LICENSE`、`README.md`、`cordis.patch.yml`、`package.json`、
@@ -202,7 +205,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 & $dsh --profile pushdist --from-default-profile headless --dump-config
 
 # 2. 把包（或 tarball）装进去
-& $dsh plugin --profile pushdist add ./dsh-push-host-0.2.1.tgz
+& $dsh plugin --profile pushdist add ./dsh-push-host-0.3.1.tgz
 
 # 3. 验收挂载：看 dump-config 尾部
 & $dsh --profile pushdist --dump-config | Select-Object -Last 3
@@ -224,7 +227,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 ```powershell
 & powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-user.ps1 `
     -Profile <profile> -DshCli "<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" `
-    -Source .\dsh-push-host-0.2.1.tgz
+    -Source .\dsh-push-host-0.3.1.tgz
 # 成功后照打印的 next steps 走：重启 DSH（工具注册是冷的）→ 用新会话（变体钉在会话创建时）
 ```
 
