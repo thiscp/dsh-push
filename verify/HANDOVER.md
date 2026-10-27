@@ -2626,3 +2626,62 @@ apk **16,716,011 B**，`?v=156` sha256 一致，update-notify `6pIReAq6t8Ks`。
 ### 长期
 官方横幅：bypass-2FA token 自 **2027-01** 起不能再直接发布，应迁到 **Trusted Publishing**
 （GitHub Actions OIDC + `npm publish --provenance`，无需 token）。
+
+## §7.26 host 插件 0.3.2：ntfy JSON body 的 priority 必须是整数（2026-10-27）
+
+### 怎么发现的
+发布 0.3.1 后，为回答用户「有试过实际把 VM1 或者 VM 上的插件卸载，然后通过 npm 安装来做功能验收吗」，
+在两台真实宿主上做「卸本地 tarball → npm 装 0.3.1 → 重启 → 功能验收」闭环。
+结构层全绿（插件加载、`relay ready`、客户端 bundle 200、版本/依赖/元数据全对），
+**但手工用 `RelayClient` 发一条通知始终 400**：
+
+```
+{"status":400,"code":40024,"http":400,"error":"invalid request: request body must be valid JSON"}
+```
+
+### 真因
+`host-plugin/lib/relay.js` 的
+`async push({ title, body, click, priority = 'default', tags = [] })`
+把默认 `priority` 写成了**字符串** `'default'` —— 那是 ntfy **请求头**（`Priority: default`）的取值。
+ntfy 的 **JSON body** 只接受整数 1–5，字符串会被判成非法请求。
+
+`40024 "request body must be valid JSON"` 这条报错极具误导性：body 结构完全合法，
+只是某个字段类型不对，服务端却回"不是合法 JSON"。
+
+### 同一条规则的正交证据（同一 relay、同一 token、逐项对照）
+| payload | 结果 |
+|---|---|
+| `{topic,title,message}` | **200** |
+| `+ tags: []` | 200 |
+| `+ priority: 3` / `4` | 200 |
+| `+ priority: 'default'` | **400 40024** |
+| `+ priority: 'high'` | **400 40024** |
+| `+ priority: '4'`（字符串数字） | **400 40024** |
+| `+ click: 'https://a.b'` 且 priority 合法 | 200 |
+
+⇒ 判据只有一条：**请求头取值不能抄进 JSON body。**
+
+### 为什么线上一直没坏
+插件内部三个调用点都显式传整数：`lib/index.js:351` `priority: 4`（等你选择）、
+`:734` `priority: 1`（已答）、任务结束 `priority: 3`。默认值只在**外部调用方**
+（自己写脚本验证、第三方集成）不传 priority 时生效 —— 所以是真 bug 但被巧合掩盖。
+
+### 修法（0.3.2）
+`priority = 3`（整数），并在 JSDoc 里钉死这条规则与误导性报错原文。
+`npm publish` → `latest` = 0.3.2，tarball sha1 `23ea68ddce0741dbb46498a22c809c2c2e6513ca`。
+
+### 验收（两台真实宿主，均 200）
+- VM1 `user@<tailnet-vm1>`：`0.2.5`(tarball) → `0.3.2`，`relay ready host=vm1 topic=dsh poll=3000ms`，
+  无 `priority` 的 push → **200 `ScTYqWm0cUIl`**。
+- 工作VM `work@<tailnet-work>`：`0.1.1`(tarball) → `0.3.2`，`claimForeground=on`，push → **200 `JmJEZIuzXKOP`**。
+
+### 三个可复用的教训
+1. **`dsh plugin --profile web add <name>`（裸名）不会升级**：按 lockfile 解析，已有 `^0.3.1`
+   满足约束时输出 `Lockfile is up to date, resolution step is skipped` 并原地不动。
+   **升版本必须写全 `name@version`。**
+2. **工作VM 的 systemd 单元是系统级**（`User=work`，`sudo systemctl restart dsh-net` 需要密码）；
+   用户态直接 `bash /home/work/work/learn/vmware/cp_learn_vmware/deepseek-harness/dsh-net.sh restart` 即可。
+   VM1 没有这个问题。
+3. **0.2.5/0.1.1 每次启动都在 `web.log` 打 `fatal load failure: cannot get required service
+   "configEditor" in inactive context`**（`AskUserModeSwitch.sync` 缺 `fiberIsActive` 守卫，
+   `lib/index.js:964`）。0.3.x 的 `sync()` 首行有守卫，换上来后 fatal 计数为 0 —— 这是 npm 化的附带收益。
