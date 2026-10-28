@@ -265,6 +265,11 @@ class MainActivity : Activity() {
                     setOnClickListener { saveToken() }
                 })
                 addView(pill(Button(context)).apply {
+                    text = "扫码配对"
+                    setOnClickListener { startScan() }
+                    layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) }
+                })
+                addView(pill(Button(context)).apply {
                     text = "清空凭证"
                     setOnClickListener { confirmClearToken() }
                     layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) }
@@ -496,6 +501,16 @@ class MainActivity : Activity() {
         val raw = tokenInput.text.toString().trim()
         val (cfg, err) = PushService.parsePass(raw)
         if (cfg == null) { toast(err); return }
+        applyPass(cfg)
+    }
+
+    /**
+     * 把一条已经解析好的通行证落盘（v1.33.53 从 saveToken 里抽出来，扫码和手输共用一条路径）。
+     *
+     * 扫码那条路会多带 web/name：直接塞进实例列表，用户点「DSH 入口」就能看到这台机器并进去，
+     * 不用再去网页里的设置页找链接。
+     */
+    private fun applyPass(cfg: PassCfg) {
         val oldTopic = PushService.topicOf(this)
         val ed = prefs().edit()
         ed.putString(PushService.KEY_TOKEN, cfg.token)
@@ -505,12 +520,41 @@ class MainActivity : Activity() {
         if (cfg.topic == null) ed.remove(PushService.KEY_TOPIC) else ed.putString(PushService.KEY_TOPIC, cfg.topic)
         val newTopic = cfg.topic ?: PushService.DEFAULT_TOPIC
         if (newTopic != oldTopic) ed.remove("lastTs")  // 换频道就别带旧游标，免得漏掉新频道最近的消息
+        // 扫码配对的额外两项：网页入口直接进实例列表（与推送里的 #web 走同一条路），
+        // 这样「DSH 入口」里马上就有这台机器可选。
+        val web = cfg.web
+        if (!web.isNullOrEmpty()) {
+            DshHosts.upsert(this, web, cfg.name)
+            ed.putString(PushService.KEY_WEB, web)
+        }
         ed.apply()
         tokenCardPinned = false
         tokenCard.visibility = View.GONE
         startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
         toast(if (newTopic != PushService.DEFAULT_TOPIC) "通行证收好，大肥鱼盯着 " + newTopic else "通行证收好，大肥鱼出发")
         refresh()
+    }
+
+    // 扫码配对（v1.33.53）：拿回来的是一条完整的 dshpush:// 载荷，走与手输完全相同的落盘路径。
+    // 扫到不相干的二维码时 ScanPairActivity 已经拦下来了，这里只处理合法的。
+    private fun startScan() {
+        try {
+            startActivityForResult(Intent(this, ScanPairActivity::class.java), REQ_SCAN)
+        } catch (e: Exception) {
+            toast("打不开扫码界面")
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_SCAN || resultCode != RESULT_OK) return
+        val raw = data?.getStringExtra(ScanPairActivity.EXTRA_PASS)?.trim().orEmpty()
+        if (raw.isEmpty()) return
+        val (cfg, err) = PushService.parsePass(raw)
+        if (cfg == null) { toast(err); return }
+        // 让用户在通行证框里看见到底收下了什么（扫错机器时能立刻发现）。
+        tokenInput.setText(raw)
+        applyPass(cfg)
     }
 
     // 卡片自带链接直达：各条消息指向自己那台机器的 DSH Web（v1.9.4）；
@@ -805,6 +849,8 @@ class MainActivity : Activity() {
     companion object {
         // 兜底标志：进程级只弹一次——换主题 recreate 不再重复弹旧记录（v1.7.3）
         private var crashChecked = false
+        /** 扫码配对的请求码（v1.33.53）。 */
+        private const val REQ_SCAN = 907
     }
 
     override fun onResume() {

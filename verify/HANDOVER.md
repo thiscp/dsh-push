@@ -3117,3 +3117,82 @@ ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugi
 - 插件列表很长（14+ 个），`Emulation` 视口 390x844 下我们那一行在列表第 10 位左右；**必须 `scrollIntoView`**，
   靠 `mouseWheel` 累加滚动会在中途停住，点到的是别的插件（第一次就点进了「Agent 循环」，`data-plugin-config` 有内容
   但三行文案全 false —— 这个「hasSection=true 但 ask/pass/remote 全 false」正是点错卡片的指纹）。
+
+## §7.33 扫码配对：插件出二维码，App 扫一下同时配好推送与网页入口（2026-10-28，用户 m17555）
+
+**需求（User said (m17555)）**
+> 「无论是tailscale的方式，或者是公网隧道的方式，能够在使用时直接创建个二维码，然后我们手机app直接扫码就能自动匹配上，
+> 能正常接收消息，也能通过app进入配对的dsh网页，也不用手动填什么通行证了。」
+
+在此之前配一台新手机要三步人工：App 里粘 `dshpush://v1?...` 通行证、把网页地址存进 `DshHosts`、远程访问还要记口令。
+本版把它们收进**一个二维码**。
+
+### 载荷格式（向后兼容，旧 App 不会坏）
+
+```
+dshpush://v1?base=<relay>&topic=<topic>&token=<readToken>&web=<网页入口>&name=<实例名>
+```
+
+- `base` / `topic` / `token` **保持原文不编码**（旧版 `parsePass` 只认这三个 key，编码了反而不认）。
+- `web` / `name` 做 `encodeURIComponent` —— `web` 里必然带 `?k=`，不编码会把 query 截断。
+- 旧 App 忽略多出来的两项，行为不变；新 App 见到 `web` 就顺手 `DshHosts.upsert()`，见到 `name` 就用它当实例名。
+- `web` 按 `linkMode` 分叉：tailnet ⇒ `webUrl()`（tailnet IP 直连）；隧道 ⇒ `remoteUrl + '/?k=' + 口令`（含口令，扫完点开就是已授权会话，不用再输）。
+
+### 关键设计：**二维码只走点阵，不走 SVG/data-URL**
+
+最初把 `pairQrSvg()` 的 data URL（实测 57,482 B）塞进 volatile 暴露给前端，被否掉：volatile 字段会落进
+profile 的 `cordis.patch.yml`（0.3.0 已实测），几十 KB 的 base64 会把补丁文件撑起来，而且每次重算都写盘。
+
+⇒ `lib/pairqr.mjs` 改为导出点阵：
+
+- `pairPayload({ relayBase, topic, readToken, web, name })` → 上面的 URI
+- `pairQrMatrix(payload, { ec })` → `{ count, bits }`，`bits` 是**行优先位图的 base64**（57×57 ⇒ 544 字符）
+- `pairQrSvg()` / `pairQrDataUrl()` 仍保留（非 volatile 场合与测试用）
+- `PAIR_WEB_MAX = 512`
+
+浏览器半边拿到 `count` + `bits` 后自己用 canvas 画；宿主侧只多出几百字节的 volatile。
+纠错等级取 **M**（15%）：手机屏反光/指纹常见，L 太小扫不动；Q/H 把点阵撑大反而更难扫。
+出码选型 **`qrcode-generator@2.0.4`**（零依赖、`main=dist/qrcode.js`、ESM 可直接 `import qrcode from`）。
+
+### App 侧选型：**zxing core + 自绘 Camera2**，不用 zxing-android-embedded
+
+- `com.journeyapps:zxing-android-embedded:4.3.0` 的 AAR 只有 151,839 B，但 `CaptureActivity` 继承
+  `AppCompatActivity`，jar 里 `androidx/` 命中 5 个类 ⇒ 会把整条 androidx 依赖链拖进来（本 App 只有 okhttp，
+  **一个 androidx 都没有**）。**弃用**。
+- `com.google.zxing:core:3.5.3`（607,650 B，纯 Java 无 Android 依赖）已确认含
+  `PlanarYUVLuminanceSource` / `MultiFormatReader` / `HybridBinarizer` / `DecodeHintType` / `BarcodeFormat` 等。
+- 落地 `ScanPairActivity.kt`：`Camera2` + `ImageReader`(YUV_420_888) → `PlanarYUVLuminanceSource` →
+  `MultiFormatReader`（`DecodeHintType.POSSIBLE_FORMATS = [QR_CODE]` 减少开销）。
+
+### 坑一：相机初始化放主线程 ⇒ ANR
+
+首版在 `TextureView.onSurfaceTextureAvailable` 里同步 `open()`，而 `getCameraIdList()` /
+`getCameraCharacteristics()` / `openCamera()` 都是跨进程调用，模拟器上直接 ANR（界面黑住，日志 `ANR in xyz.cpyh.dshpush`）。
+
+**修法**：`onSurfaceTextureAvailable` 只记下 `surface`，把「列相机 → 选后置 → 查特性 → setRepeatingRequest」
+整条链路丢到 `HandlerThread`；`ImageReader` 的 `OnImageAvailableListener` 也在同一后台线程，
+解码完再 `runOnUiThread` 回主线程。**同一把相机不能被两个线程碰**，所以开相机与解码共用一条 HandlerThread。
+
+### 坑二：模拟器预览是合成场景，必须验「同 jar 解码」
+
+模拟器相机是虚拟场景（绿底网格图），拿它当靶子只能证明「能出图」，证明不了「能解出正确载荷」。
+真正的闭环验证：**宿主侧 `pairQrMatrix()` 生成点阵 → 展开成 zxing 能吃的亮度数组 → 用 App 里同一个
+`com.google.zxing:core:3.5.3` 解码 → 比对解出的字符串与 `pairPayload()` 逐字节相同**。
+这一步过了，才说明「插件出的码，App 一定认得」。
+
+### 坑三：ntfy 发中文通知必须显式 UTF-8
+
+`curl -d "中文"` 在中文 Windows 的 bash 里会被按 GBK 发出去，ntfy 收到的消息是乱码。
+**必须**先把正文写进 `.txt`（以 utf-8 编码），再
+`curl --data-binary "@msg.txt" -H "Content-Type: text/plain; charset=utf-8"`。
+校验时也别看终端输出（终端按 GBK 解 UTF-8 一样是乱码），要 `json.loads(open(f,'rb').read().decode('utf-8'))` 再比字符。
+
+### 交付
+
+- **host-plugin 0.6.0**：`lib/pairqr.mjs`（新）、`lib/index.js` 的 `PairBox`、`lib/client.js` 的二维码面板、
+  `selftest-pair.mjs`。
+- **android-app 1.33.53 / versionCode 159**：`ScanPairActivity.kt`（新）、`AndroidManifest.xml` 加 `CAMERA` 权限、
+  `MainActivity` 入口、`PushService.parsePass()` 认 `web`/`name`。
+- APK **17,018,716 B**，在线 `?v=159` sha256 与本地逐字节一致
+  （`98d383af83bb5a5421e12b131000e82871bd6e514553e4fc658ee31001b9890e`）；更新通知 id `UDILwIISxHTy`。
+- 私有仓 `63d47a0`。

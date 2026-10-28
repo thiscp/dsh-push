@@ -15,6 +15,10 @@
         android:maxSdkVersion="28" />
     <!-- 下载完 APK 自动拉安装器需要声明此权限，否则"安装未知应用"名单里没有我们（v1.20.1） -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- 扫码配对（v1.33.53）：只用 Camera2，不引入 CameraX/appcompat -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:name=".App"
@@ -55,6 +59,13 @@
             android:exported="false"
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|density" />
+        <!-- 扫码配对（v1.33.53）：对着插件设置页的二维码扫一下，通行证 + 网页入口一次收下 -->
+        <activity
+            android:name=".ScanPairActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
         <!-- 全路径作答成功立绘（v1.27.0）：全屏透明悬浮，1.4s 自动关闭 -->
         <activity
             android:name=".SuccessPoseActivity"

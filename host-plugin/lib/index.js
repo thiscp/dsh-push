@@ -48,6 +48,7 @@ import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { RelayClient } from './relay.js'
 import { RemoteAccess, newRemoteSecret, remoteMessage } from './remote.js'
+import { pairPayload, pairQrMatrix, PAIR_WEB_MAX } from './pairqr.mjs'
 import { credentialsPath, loadCredentials } from './credentials.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -223,6 +224,23 @@ export const Config = z.object({
    * 空串在代码里一律按 tailnet 处理（见 RemoteAccessor.readMode）。
    */
   linkMode: z.union(['', 'tailnet', 'tunnel']).default('').volatile(),
+
+  // ── 扫码配对（v0.6.0，用户 m17555）──────────────────────────────────────────────
+  /**
+   * 请求号：设置行按一次「生成二维码」写一个新值，宿主据此重算点阵。
+   * 不把二维码本体（几百字符的 base64）当常驻字段：只在点了才写，点完留着也不占地方。
+   */
+  pairSeq: z.string().default('').volatile(),
+  /** 点阵尺寸（每边模块数，0 = 还没生成）。 */
+  pairCount: z.number().step(1).min(0).max(200).default(0).volatile(),
+  /** 点阵本体：行优先位图的 base64（深色=1）。浏览器半自己用 canvas 画。 */
+  pairBits: z.string().default('').volatile(),
+  /** 载荷原文（`dshpush://v1?...`）：让用户能看见、能手动复制（App 也吃这个串）。 */
+  pairText: z.string().default('').volatile(),
+  /** 生成失败时给人看的原因（'' = 正常）。 */
+  pairStatus: z.string().default('').volatile(),
+  /** 宿主处理完的请求号回写（设置行据此清 busy）。 */
+  pairDone: z.string().default('').volatile(),
 })
 
 /** `[{label, description?}]` (service vocabulary) → `[label]` (what the relay/phone render). */
@@ -1795,6 +1813,203 @@ export class RemoteAccessor {
   }
 }
 
+// ---------------------------------------------------------------------------
+// 扫码配对（v0.6.0）
+//
+// 网页设置行点「生成二维码」→ 浏览器写一个随机串进 volatile `pairSeq` → 这里算出配对载荷
+//
+//   dshpush://v1?base=&topic=&token=&web=&name=
+//
+// 再把「点阵」镜像回 volatile（pairCount / pairBits / pairText / pairStatus / pairDone），
+// 设置行用 canvas 画出来。手机 App 扫这一张，就同时拿到推送通行证**和**网页入口，不用手抄。
+//
+// 三条设计约束（都是踩过的坑换来的）：
+//
+// 1. **只回点阵，不回 SVG / data URL**。volatile 写入会持久化进 profile 的 `cordis.patch.yml`
+//    （0.3.0 的通行证面板实测过），几十 KB 的 data URL 会把用户的补丁文件撑起来；57×57 点阵的
+//    行优先位图 base64 只有 544 字节。
+// 2. **改 volatile 会热重启本插件 fiber** ⇒ 结果挂进程级 store，新 fiber 启动时回灌，否则设置行
+//    里的二维码会闪一下就消失（与 PassProvisioner / RemoteAccessor 同款做法）。
+// 3. **绝不阻塞推送**：任何异常只落到 `pairStatus`，不抛。
+//
+// 载荷里 `web` 是「这台机器手机可达的网页入口」：隧道模式 = 公网地址 + 口令，tailnet / 自定义
+// 模式 = web.log 里那条本机地址。取不到就留空，App 会退化成分开填，绝不产出打不开的链接。
+const PAIR_SEQ_RE = /^[A-Za-z0-9_-]{0,64}$/
+
+/** 配对面板的进程级暂存（同 remoteStore 的理由：volatile 写入会热重启 fiber）。 */
+export const PAIR_STORE_KEY = '__DSHPUSH_PAIR__'
+
+export function pairStore() {
+  const g = globalThis
+  if (!g[PAIR_STORE_KEY]) g[PAIR_STORE_KEY] = {}
+  return g[PAIR_STORE_KEY]
+}
+
+/** 认领「当前 fiber」的配对面板（只用来给热重启后的新 fiber 判活）。 */
+const PAIR_ACTIVE = new Map()
+
+export class PairBox {
+  constructor(ctx, config, resolved, host, log, deps = {}) {
+    this.ctx = ctx
+    this.config = config
+    this.resolved = resolved
+    this.host = host
+    this.log = log
+    /** RemoteAccessor：隧道模式下从它那里取公网地址与口令。 */
+    this.accessor = deps.accessor || null
+    this.credentialsPath = deps.credentialsPath || ''
+    this.lastSeq = ''
+    this.busy = false
+    this.scheduled = false
+    this.mirroring = false
+  }
+
+  read(key) { return volatileValue(this.config[key], '') }
+
+  /** 与 RemoteAccessor.readAny 同义：volatile 优先，其次凭据文件解析出来的 resolved。 */
+  readAny(key) {
+    const live = this.read(key)
+    if (live !== '' && live !== undefined && live !== null && live !== false) return live
+    const saved = this.resolved ? this.resolved[key] : undefined
+    return saved === undefined || saved === null ? '' : saved
+  }
+
+  write(key, value) { setVolatileValue(this.config, key, value) }
+
+  storeKey() {
+    return 'pair|' + String(this.resolved?.host || '') + '|' + String(this.credentialsPath || '')
+  }
+
+  mirror(key, value) {
+    if (this.read(key) === value) return
+    this.mirroring = true
+    try { this.write(key, value) } finally { this.mirroring = false }
+  }
+
+  applyStore() {
+    const saved = pairStore()[this.storeKey()]
+    if (!saved) return
+    this.mirror('pairCount', Number(saved.count) || 0)
+    this.mirror('pairBits', String(saved.bits || ''))
+    this.mirror('pairText', String(saved.text || ''))
+    this.mirror('pairStatus', String(saved.status || ''))
+    this.mirror('pairDone', String(saved.done || ''))
+  }
+
+  /**
+   * 手机可达的网页入口。
+   *
+   * 隧道模式必须带上口令（`?k=`），否则手机上打开只有 401；tailnet / 自定义地址走 web.log
+   * 里那条本机地址（手机在同一 tailnet 里可直接访问）。
+   */
+  webEntry() {
+    try {
+      if (this.accessor && typeof this.accessor.read === 'function') {
+        const mode = String(this.accessor.readAny ? this.accessor.readAny('linkMode') : '').trim()
+        const url = String(this.accessor.read('remoteUrl') || '').replace(/\/+$/, '')
+        const secret = String(this.accessor.readAny ? this.accessor.readAny('remoteSecret') : '' || '')
+        if (mode !== 'tailnet' && url && secret) return url + '/?k=' + encodeURIComponent(secret)
+      }
+    } catch { /* 取不到就走下面的本机地址 */ }
+    try {
+      return this.host.webUrl('')
+    } catch {
+      return ''
+    }
+  }
+
+  payload() {
+    return pairPayload({
+      relayBase: String(this.readAny('relayBase') || ''),
+      topic: String(this.readAny('topic') || ''),
+      readToken: String(this.readAny('phoneToken') || ''),
+      web: this.webEntry(),
+      name: String(this.resolved?.host || ''),
+    })
+  }
+
+  /** 生成一次二维码并把点阵镜像回 volatile（同步、无 IO 之外的重活）。 */
+  refresh() {
+    if (this.busy) { this.scheduled = true; return }
+    this.busy = true
+    try {
+      const payload = this.payload()
+      const web = this.webEntry()
+      // 空载荷（relayBase/topic/token 都没配）也会拼出 `dshpush://v1?`：扫出来是个「什么都没配」
+      // 的方形，比不画更坏。所以这里按「能真正配对」判：topic 与手机只读令牌缺一不可。
+      const topic = String(this.readAny('topic') || '')
+      const token = String(this.readAny('phoneToken') || '')
+      if (!payload || payload.length < 12 || topic === '' || token === '') {
+        this.mirror('pairCount', 0)
+        this.mirror('pairBits', '')
+        this.mirror('pairText', '')
+        this.mirror('pairStatus', '凭据不完整：先配好 relay / topic / readToken 再生成二维码')
+        return
+      }      if (web.length > PAIR_WEB_MAX) {
+        this.mirror('pairCount', 0)
+        this.mirror('pairBits', '')
+        this.mirror('pairText', '')
+        this.mirror('pairStatus', '网页入口过长（' + web.length + ' 字符，上限 ' + PAIR_WEB_MAX + '），已跳过')
+        return
+      }
+      const matrix = pairQrMatrix(payload)
+      const status = web
+        ? '已生成：手机扫这一张就完成配对（推送通行证 + 网页入口都带上）'
+        : '已生成：手机扫这一张可完成推送配对。注意：本机暂时取不到网页入口（web.log 里没有 token，或隧道还没起来），网页地址仍需手工填'
+      const done = String(Date.now())
+      this.mirror('pairCount', matrix.count)
+      this.mirror('pairBits', matrix.bits)
+      this.mirror('pairText', payload)
+      this.mirror('pairStatus', status)
+      this.mirror('pairDone', done)
+      pairStore()[this.storeKey()] = {
+        count: matrix.count, bits: matrix.bits, text: payload, status, done,
+      }
+      this.log('配对二维码已生成：载荷 ' + payload.length + ' 字节 / ' + matrix.count + ' 模块' + (web ? '' : '（无网页入口）'))
+    } catch (error) {
+      try { this.mirror('pairStatus', '生成失败：' + String(error?.message ?? error)) } catch { /* 连写都失败就只剩日志 */ }
+      this.log('配对二维码生成失败：' + String(error?.message ?? error))
+    } finally {
+      this.busy = false
+      if (this.scheduled) {
+        this.scheduled = false
+        Promise.resolve().then(() => { try { this.refresh() } catch { /* 上面已记 */ } })
+      }
+    }
+  }
+
+  /** volatile-update 发生在 settings RPC 的事务里 ⇒ 挪到下一个宏任务再跑（同 PassProvisioner）。 */
+  schedule() {
+    if (this.scheduled) return
+    this.scheduled = true
+    setTimeout(() => {
+      this.scheduled = false
+      if (!fiberIsActive(this.ctx)) return
+      this.refresh()
+    }, 0)
+  }
+
+  start() {
+    if (!fiberIsActive(this.ctx)) return
+    PAIR_ACTIVE.set(this.storeKey(), this)
+    this.applyStore()
+    this.ctx.on('loader/volatile-update', (paths) => {
+      const touched = Array.isArray(paths) && paths.some((path) =>
+        Array.isArray(path) && path[0] === 'pairSeq')
+      if (!touched) return
+      const seq = String(this.read('pairSeq') || '').trim()
+      if (seq === this.lastSeq) return
+      if (!PAIR_SEQ_RE.test(seq)) return
+      this.lastSeq = seq
+      this.schedule()
+    })
+  }
+
+  stop() {
+    if (PAIR_ACTIVE.get(this.storeKey()) === this) PAIR_ACTIVE.delete(this.storeKey())
+  }
+}
+
 /** 远程访问镜像的进程级暂存（同 panelStore 的理由：volatile 写入会热重启 fiber）。 */
 export const REMOTE_STORE_KEY = '__DSHPUSH_REMOTE__'
 
@@ -1829,8 +2044,16 @@ export function apply(ctx, config = {}) {
   }).start()
   // 远程访问（v0.4.0）：默认关。开着就走「内层改写网关 + cloudflared 快速隧道」，
   // 把公网域名换成 30 天口令链接；隧道换了域名会自动重推给手机。
-  new RemoteAccessor(ctx, config, resolved, host, (message) => host.log(message), {
+  const accessor = new RemoteAccessor(ctx, config, resolved, host, (message) => host.log(message), {
     credentialsPath: file.path,
+  })
+  accessor.start()
+  // 扫码配对（v0.6.0）：网页点「生成二维码」→ volatile pairSeq 变 → 这里算出
+  // `dshpush://v1?base=&topic=&token=&web=&name=` 的载荷与点阵，镜像回 volatile 给设置行画。
+  // 隧道模式下网页入口从 accessor 现取（要带 `?k=` 口令），tailnet 模式取 web.log 里的地址。
+  new PairBox(ctx, config, resolved, host, (message) => host.log(message), {
+    credentialsPath: file.path,
+    accessor,
   }).start()
 }
 

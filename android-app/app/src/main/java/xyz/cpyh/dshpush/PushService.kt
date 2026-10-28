@@ -31,7 +31,15 @@ interface MsgListener { fun onNewMsg() }
  * base/topic 为 null 表示通行证里没写 —— 一律退回老行为（默认中继 + topic dsh），
  * 这样老的一串 tk_… 粘贴进来和 v1.32.x 完全一致，不会把已经用着的手机搞坏。
  */
-data class PassCfg(val base: String?, val topic: String?, val token: String)
+data class PassCfg(
+    val base: String?,
+    val topic: String?,
+    val token: String,
+    /** 插件「扫码配对」带上的网页入口（v1.33.53）：手机直接能打开的那台 DSH。 */
+    val web: String? = null,
+    /** 那台机器的名字，用来在实例列表里显示（可空）。 */
+    val name: String? = null,
+)
 
 class PushService : Service() {
     companion object {
@@ -120,7 +128,20 @@ class PushService : Service() {
                 if (base.isNotEmpty() && !base.startsWith("http://") && !base.startsWith("https://")) {
                     return null to "这条通行证的中继地址不对（要以 http:// 或 https:// 开头）"
                 }
-                return PassCfg(base.ifEmpty { null }, topic.ifEmpty { null }, token) to ""
+                // 扫码配对（v1.33.53）多带 web / name：老版通行证没有这两项，仍然为 null。
+                // 插件侧对 web/name 做了 percent-encoding（里面有 ?k= 与 /），这里必须解码。
+                val web = java.net.URLDecoder.decode(parts["web"] ?: "", "UTF-8")
+                if (web.isNotEmpty() && !web.startsWith("http://") && !web.startsWith("https://")) {
+                    return null to "这条通行证里的网页地址不对（要以 http:// 或 https:// 开头）"
+                }
+                val name = java.net.URLDecoder.decode(parts["name"] ?: "", "UTF-8")
+                return PassCfg(
+                    base.ifEmpty { null },
+                    topic.ifEmpty { null },
+                    token,
+                    web.ifEmpty { null },
+                    name.ifEmpty { null },
+                ) to ""
             }
             if (s.startsWith("tk_")) return PassCfg(null, null, s) to ""
             return null to "看不懂这条通行证：要么整串以 tk_ 开头，要么粘插件面板给的 dshpush:// 链接"

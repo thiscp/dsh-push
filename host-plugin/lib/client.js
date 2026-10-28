@@ -110,9 +110,108 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.7 } },
 					"手机推送的全部设置都在这一页；改完即时生效，不需要重启宿主。"),
+				PairRow(scope, listeners, notify),
 				AskUserModeRow(scope, listeners, notify),
 				PassPanelRow(scope, listeners, notify),
 				RemoteRow(scope, listeners, notify));
+		}
+
+
+		/**
+		* 扫码配对行（v0.6.0）：点一下让宿主算二维码，画在 canvas 上，手机 App 扫一下就同时拿到
+		* 推送通行证与网页入口（隧道模式带 `?k=` 口令），不用手抄任何东西。
+		*
+		* 点阵以 **base64 位图**（57×57 只有 544 B）从 volatile 传过来，不走 SVG / data URL：
+		* volatile 写入会持久化进用户的 profile `cordis.patch.yml`，几十 KB 的 data URL 会把
+		* 那个文件撑起来（0.3.0 实测过）。
+		* @param scope - 绑定了 `dsh-push-host` 的配置表单。
+		* @param listeners - 订阅回调集合（宿主配置文档变化时唤醒）。
+		* @param notify - 唤醒全部订阅者。
+		*/
+		function PairRow(scope, listeners, notify) {
+			const [snapshot, setSnapshot] = react.useState(() => scope.getSnapshot());
+			const [busy, setBusy] = react.useState(false);
+			const canvasRef = react.useRef(null);
+			react.useEffect(() => {
+				const update = () => setSnapshot(scope.getSnapshot());
+				listeners.add(update);
+				update();
+				return () => {
+					listeners.delete(update);
+				};
+			}, []);
+			const ready = snapshot.status === "ready";
+			const value = snapshot.value ?? {};
+			const num = (key) => (typeof value[key] === "number" ? value[key] : 0);
+			const text = (key) => (typeof value[key] === "string" ? value[key] : "");
+			const count = num("pairCount");
+			const bits = text("pairBits");
+			const status = text("pairStatus");
+			const payload = text("pairText");
+			const done = text("pairDone");
+			const seq = text("pairSeq");
+			react.useEffect(() => {
+				if (busy && done !== "" && done === seq) setBusy(false);
+			}, [done, seq, busy]);
+			const writable = ready && snapshot.writable === true && !busy;
+			const generate = () => {
+				if (!writable) return;
+				const nextSeq = String(Date.now()) + "-" + Math.floor(Math.random() * 1e6).toString(36);
+				setBusy(true);
+				setTimeout(() => setBusy(false), 30000);
+				Promise.resolve()
+					.then(() => scope.mutate([{ op: "set", path: ["pairSeq"], value: nextSeq }], snapshot.revision))
+					.catch(() => setBusy(false))
+					.then(() => notify());
+			};
+			// 点阵 → canvas：行优先位图，最高位先。留 4 格静区，每格 4px（清晰又不占地方）。
+			react.useEffect(() => {
+				const canvas = canvasRef.current;
+				if (!canvas) return;
+				const ctx = canvas.getContext("2d");
+				if (!count || bits === "") {
+					if (ctx) ctx.clearRect(0, 0, canvas.width || 0, canvas.height || 0);
+					return;
+				}
+				let raw = "";
+				try {
+					raw = atob(bits);
+				} catch {
+					return;
+				}
+				const scale = 4;
+				const quiet = 4;
+				const size = (count + quiet * 2) * scale;
+				canvas.width = size;
+				canvas.height = size;
+				ctx.fillStyle = "#ffffff";
+				ctx.fillRect(0, 0, size, size);
+				ctx.fillStyle = "#000000";
+				for (let i = 0; i < count * count; i++) {
+					const byte = raw.charCodeAt(i >> 3);
+					if (!(byte & (128 >> (i & 7)))) continue;
+					const row = Math.floor(i / count);
+					const col = i % count;
+					ctx.fillRect((col + quiet) * scale, (row + quiet) * scale, scale, scale);
+				}
+			}, [count, bits]);
+			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" } },
+				react.createElement("div", { style: { fontWeight: 600 } }, "扫码配对"),
+				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
+					"点一下生成二维码，用手机 App 扫它即可同时配好推送通行证与网页入口（隧道模式会自动带上口令），不用手填。"),
+				react.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
+					react.createElement("button", {
+						type: "button", disabled: !writable, onClick: generate,
+						style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: !writable ? 0.5 : 1 },
+					}, busy ? "生成中…" : count > 0 ? "重新生成二维码" : "生成配对二维码")),
+				count > 0 ? react.createElement("canvas", {
+					ref: canvasRef,
+					style: { width: 228, height: 228, borderRadius: 10, background: "#ffffff", imageRendering: "pixelated", alignSelf: "flex-start" },
+				}) : null,
+				status !== "" ? react.createElement("div", { style: { fontSize: 12, opacity: 0.7 } }, status) : null,
+				payload !== "" ? react.createElement("details", { style: { fontSize: 12, opacity: 0.7 } },
+					react.createElement("summary", { style: { cursor: "pointer" } }, "配对内容（扫码失败时可手工复制）"),
+					react.createElement("code", { style: { display: "block", wordBreak: "break-all", marginTop: 4 } }, payload)) : null);
 		}
 
 
