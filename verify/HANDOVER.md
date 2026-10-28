@@ -3196,3 +3196,79 @@ profile 的 `cordis.patch.yml`（0.3.0 已实测），几十 KB 的 base64 会�
 - APK **17,018,716 B**，在线 `?v=159` sha256 与本地逐字节一致
   （`98d383af83bb5a5421e12b131000e82871bd6e514553e4fc658ee31001b9890e`）；更新通知 id `UDILwIISxHTy`。
 - 私有仓 `63d47a0`。
+
+## §7.34 插件页补上 App 下载入口（2026-10-28，用户 m19307）
+
+### 需求
+
+> 「还有一点，我们插件上是不是也要有我们app的下载连接或者下载二维码才行，方便用户下载」
+
+动机很实际：扫码配对（§7.33）的前提是**手机上已经有 App**。没有的话，用户卡在第一步，
+而插件页此前只有「生成配对二维码」，没告诉人去哪装 App。
+
+### 落地
+
+`host-plugin/lib/client.js` 新增 `AppDownloadRow`，排在 `PluginConfigPage` 的第一位
+（在「扫码配对」之前——先装 App，才谈得上配对）：
+
+```
+手机 App 下载
+还没装 App？手机扫下面的二维码直接下载最新版 APK（安卓，约 17 MB），
+装好后回这里点「生成配对二维码」即可。
+
+[185×185 二维码]   https://blog.cpyh.xyz/dsh-push-latest.apk
+                   插件介绍页与更新日志
+                   下载页上的包永远是最新版；装好后系统还会在发版时收到更新推送。
+```
+
+### 为什么点阵写死在浏览器半，不走 volatile
+
+这是本次唯一的设计判断，值得记下来：
+
+- 下载地址是**与安装者无关的常量**——谁的插件都指向同一个下载页，不像通行证/隧道地址那样每台机器不同。
+- volatile 写入会**持久化进 profile 的 `cordis.patch.yml`**，还会**热重启本插件 fiber**（这是 §7.33 踩过的坑）。
+  为一个永远不变的常量付这两样代价毫无意义。
+- 写成常量后，设置页一打开就能看见码，不必先点「生成」。
+
+所以：
+
+```js
+const APP_DOWNLOAD_URL  = "https://blog.cpyh.xyz/dsh-push-latest.apk";
+const APP_DOWNLOAD_PAGE = "https://blog.cpyh.xyz";
+const APP_QR_COUNT = 29;   // 29×29 模块，纠错 M
+const APP_QR_BITS  = "/gxj/BbUUG66Drt1LLXbp8kuwS9xB/...";  // base64 行优先位图，144 字符
+```
+
+点阵由 `lib/pairqr.mjs` 的 `pairQrMatrix(APP_DOWNLOAD_URL)` 生成后抄进常量；画法照抄 `PairRow`
+（每格 5px、静区 4 格、`imageRendering: pixelated`）。
+
+### 关键约束：不要写死版本号
+
+下载页上的 APK 由 `verify/release-fast.ps1` 的**步骤 3b**每次发布覆盖（见 §7.35），
+所以文案只写「永远是最新版」，**绝不写 `1.33.53` 这类版本号**——写死了下次发版就开始骗人。
+
+### 验收（三层，全部实测）
+
+1. **点阵自解码**：把常量位图展开成亮度数组，用 `jsqr` 解 → `"https://blog.cpyh.xyz/dsh-push-latest.apk"`，逐字相同。
+2. **真实浏览器渲染后再解码**：无头 Chrome 打开插件详情页 → 抓 `canvas.toDataURL()` → `jsqr` 解
+   → `size=185x185`、`decoded` 与常量一致。**这一步才算数**——常量对不代表画出来对。
+3. **链接可达**：`curl -sSL` 这个地址 → `http=200 size=17018716 ct=application/octet-stream`，
+   sha256 `98d383af…` = 当时最新的 1.33.53。
+
+页面级断言（VM1 无头 Chrome 390×844）：
+`{"hasSection":true,"hasDl":true,"hasUrl":true,"hasPair":true,"qr":{"w":185,"h":185},"canvases":1}`
+
+### 交付
+
+- **host-plugin 0.6.1**：npm 已发布（99.8 kB / 13 文件，shasum `0de4b37f18259bc6bc2f08d4a47cc57168d7370b`），
+  `dist-tags.latest = 0.6.1`。
+- 笔电 profile 与 VM1 均升到 0.6.1（VM1 重启后服务端取到的模块 42,902 B，`AppDownloadRow` 命中 2 处）。
+- 自测：`plugin-selftest.mjs` **149/149**、`selftest-pair.mjs` **34/34**。
+- 私有仓 `7564567`。
+
+### 顺手记下的环境坑
+
+- **VM1 上 `ssh ... "含 pnpm 与重定向的长命令"` 会静默失效**（返回空、rc=0，命令根本没跑）。
+  可靠形态：`scp` 脚本到 `/tmp` → `bash /tmp/x.sh > /tmp/o.log 2>&1` → 单独 `cat` 日志。
+- 笔电 `pnpm add dsh-push-host@0.6.1` 会把 profile `package.json` 里的
+  `file:E:/.../dsh-push-host-0.6.0.tgz` 改写为 `"0.6.1"`，属正常（之后走 registry 而不是本地 tgz）。

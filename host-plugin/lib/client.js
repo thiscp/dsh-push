@@ -110,10 +110,82 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.7 } },
 					"手机推送的全部设置都在这一页；改完即时生效，不需要重启宿主。"),
+				AppDownloadRow(),
 				PairRow(scope, listeners, notify),
 				AskUserModeRow(scope, listeners, notify),
 				PassPanelRow(scope, listeners, notify),
 				RemoteRow(scope, listeners, notify));
+		}
+
+
+		/**
+		* App 下载行（v0.6.1）：把手机 App 的下载地址与二维码直接放在插件设置页里。
+		*
+		* 为什么地址写死而不是由宿主算：这是一个**与安装者无关的常量**（谁的插件都指向同一个
+		* 下载页），走 volatile 反而要多两个字段、多一次热重启 fiber。点阵同样写死——二维码
+		* 内容不变，没必要每次点开都现算。
+		*
+		* 二维码内容是 `APP_DOWNLOAD_URL`，纠错等级 M（与 `lib/pairqr.mjs` 的默认一致）：
+		* 手机屏反光/指纹很常见，L 太小容易扫不出。29×29 模块、144 字符位图。
+		*
+		* 下载页上的 APK 永远是**最新版**（发布流水线 `verify/release-fast.ps1` 的步骤 3b 每次
+		* 都覆盖它），所以这里不需要、也不应该写死版本号——写死了下次发版就会骗人。
+		*/
+		const APP_DOWNLOAD_URL = "https://blog.cpyh.xyz/dsh-push-latest.apk";
+		const APP_DOWNLOAD_PAGE = "https://blog.cpyh.xyz";
+		const APP_QR_COUNT = 29;
+		const APP_QR_BITS = "/gxj/BbUUG66Drt1LLXbp8kuwS9xB/qqr+AWEgCCz15xJBuFl8pKwQklR4mukjDoOf3PWuYViThRpdpHWGRF7P3zkv/zaGVyCHGF+4BnhGP4XmuQT5ESumSf1dNII26LWv0ERQDf6UUKAA==";
+
+		function AppDownloadRow() {
+			const canvasRef = react.useRef(null);
+			react.useEffect(() => {
+				const canvas = canvasRef.current;
+				if (!canvas) return;
+				const ctx = canvas.getContext("2d");
+				if (!ctx) return;
+				let raw = "";
+				try {
+					raw = atob(APP_QR_BITS);
+				} catch {
+					return;
+				}
+				const scale = 5;
+				const quiet = 4;
+				const count = APP_QR_COUNT;
+				const size = (count + quiet * 2) * scale;
+				canvas.width = size;
+				canvas.height = size;
+				ctx.fillStyle = "#ffffff";
+				ctx.fillRect(0, 0, size, size);
+				ctx.fillStyle = "#000000";
+				for (let i = 0; i < count * count; i++) {
+					const byte = raw.charCodeAt(i >> 3);
+					if (!(byte & (128 >> (i & 7)))) continue;
+					const row = Math.floor(i / count);
+					const col = i % count;
+					ctx.fillRect((col + quiet) * scale, (row + quiet) * scale, scale, scale);
+				}
+			}, []);
+			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, padding: "8px 0" } },
+				react.createElement("div", { style: { fontWeight: 600 } }, "手机 App 下载"),
+				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
+					"还没装 App？手机扫下面的二维码直接下载最新版 APK（安卓，约 17 MB），装好后回这里点「生成配对二维码」即可。"),
+				react.createElement("div", { style: { display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" } },
+					react.createElement("canvas", {
+						ref: canvasRef,
+						style: { width: 185, height: 185, borderRadius: 10, background: "#ffffff", imageRendering: "pixelated" },
+					}),
+					react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8, fontSize: 13 } },
+						react.createElement("a", {
+							href: APP_DOWNLOAD_URL, target: "_blank", rel: "noreferrer",
+							style: { color: "inherit", textDecoration: "underline", wordBreak: "break-all" },
+						}, APP_DOWNLOAD_URL),
+						react.createElement("a", {
+							href: APP_DOWNLOAD_PAGE, target: "_blank", rel: "noreferrer",
+							style: { color: "inherit", textDecoration: "underline", opacity: 0.8 },
+						}, "插件介绍页与更新日志"),
+						react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
+							"下载页上的包永远是最新版；装好后系统还会在发版时收到更新推送。"))));
 		}
 
 
