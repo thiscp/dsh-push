@@ -47,6 +47,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
 import { RelayClient } from './relay.js'
+import { RemoteAccess, newRemoteSecret, remoteMessage } from './remote.js'
 import { credentialsPath, loadCredentials } from './credentials.mjs'
 
 /** Cordis plugin name used by loader diagnostics. */
@@ -90,6 +91,15 @@ const DEFAULTS = {
   echoAnswers: true,
   claimForeground: false,
   log: true,
+  // 远程访问（v0.4.0）：默认关闭，关着的时候整条链路是惰性的（不装 cloudflared 也不报错）。
+  // remoteSecret 就是用户手里那条 30 天链接里的口令；remotePort=0 表示让系统随便挑个空闲端口。
+  // remoteEnabled 不是 schema 键：它是凭据文件里的「上次开关状态」（'on'/'off'），
+  // 因为布尔开关的 schema 默认值 false 会反压凭据文件里的 true（见 CREDENTIAL_CONFIG_KEYS 注释）。
+  remoteAccess: false,
+  remoteSecret: '',
+  remoteBin: '',
+  remotePort: 0,
+  remoteEnabled: '',
 }
 
 /** Config keys (schema/overlay vocabulary) = the defaults above. */
@@ -178,6 +188,30 @@ export const Config = z.object({
   provisionDefault: z.string().default('').volatile(),
   /** 宿主处理完的请求号回写。 */
   provisionDone: z.string().default('').volatile(),
+
+  // ── 远程访问（v0.4.0）────────────────────────────────────────────────────────────
+  /** 总开关：只有 true 才起网关 + 隧道。 */
+  remoteAccess: z.boolean().default(false).volatile(),
+  /** 长期口令（30 天链接里的 `?k=`）。空着且打开开关 = 让宿主自动生成一串。 */
+  remoteSecret: z.string().default('').volatile(),
+  /** cloudflared 可执行文件；空 = 先找 `~/.dsh/bin/cloudflared[.exe]`，再找 PATH。 */
+  remoteBin: z.string().default('').volatile(),
+  /** 网关端口；0 = 挑空闲端口（推荐，避免与他人自跑的 cloudflared 抢端口）。 */
+  remotePort: z.number().step(1).min(0).max(65535).default(0).volatile(),
+  /** 当前公网地址（宿主写，设置行展示 + 复制；隧道重启换了域名会更新）。 */
+  remoteUrl: z.string().default('').volatile(),
+  /** 最近一次错误（'' = 正常），设置行直接显示给人看。 */
+  remoteStatus: z.string().default('').volatile(),
+  /** 一句人话状态：未开启 / 正在连接 / 已就绪。 */
+  remotePhase: z.string().default('').volatile(),
+  /** 上一次「推送链接到手机」的结果（'' = 没点过）。 */
+  remotePushResult: z.string().default('').volatile(),
+  /** 请求号：设置行按一次「重新连接」写一个新值，宿主据此重启隧道。 */
+  remoteSeq: z.string().default('').volatile(),
+  /** 动作：'' = 无；push = 把当前链接推到手机；reconnect = 重起隧道；rotate = 换口令。 */
+  remoteAction: z.union(['', 'push', 'reconnect', 'rotate']).default('').volatile(),
+  /** 宿主处理完的请求号回写（设置行据此清 busy）。 */
+  remoteDone: z.string().default('').volatile(),
 })
 
 /** `[{label, description?}]` (service vocabulary) → `[label]` (what the relay/phone render). */
@@ -798,7 +832,15 @@ export function resolvePluginConfig(config = {}, { env = process.env, readFile =
   // as "not set", so the file can fill it in. `false` stays meaningful (never dropped).
   const fromCredentials = pickConfigKeys(file.value)
   const explicit = {}
-  for (const [key, value] of Object.entries(config)) {
+  for (const [key, rawValue] of Object.entries(config)) {
+    // 2026-10-28 fix: a `.volatile()` field arrives here as a cosmokit ref OBJECT, so it is neither
+    // '' nor undefined/null and used to count as "explicitly configured"; `String(ref)` then became
+    // "[object Object]" (15 chars) and overrode the real value from the credentials file. remoteSecret
+    // is validated by length >= 16, so the plugin regenerated the passphrase on every boot and the
+    // 30-day link pushed the day before died. Unwrap the ref before deciding.
+    const value = (rawValue !== null && typeof rawValue === 'object' && typeof rawValue.get === 'function')
+      ? volatileValue(rawValue, '')
+      : rawValue
     if (value !== '' && value !== undefined && value !== null) explicit[key] = value
   }
   const resolved = resolveConfig({ ...fromCredentials, ...explicit })
@@ -843,6 +885,14 @@ export const CREDENTIAL_CONFIG_KEYS = [
   'regToken',
   'provisionBase',
   'provisionToken',
+  // v0.4.0 远程访问：口令与 cloudflared 路径可以写进凭据文件（用户级、与其余凭据同生死）。
+  // 开关单独用 `remoteEnabled: 'on'` 表达，**不复用 schema 里的 `remoteAccess` 布尔**：那个键的
+  // schema 默认值是 `false`，而 resolvePluginConfig 的 explicit 只丢掉 ''/undefined/null（false 是
+  // 显式值），所以凭据文件里的 true 会被默认 false 反压回去；`remoteEnabled` 不是 DEFAULTS 的键，
+  // resolveConfig 会原样带过来，RemoteAccessor 拿它判断「上次是开着还是关着」。
+  'remoteSecret',
+  'remoteBin',
+  'remoteEnabled',
 ]
 
 function pickConfigKeys(values) {
@@ -1394,6 +1444,312 @@ export class PassProvisioner {
   }
 }
 
+/**
+ * 远程访问（v0.4.0）的宿主侧壳：把 `RemoteAccess`（lib/remote.js）挂到插件生命周期上，
+ * 并把运行态镜像回 `remote*` 那几个 volatile 字段给网页设置行看。
+ *
+ * 三条设计约束（都是踩过的坑换来的）：
+ *
+ * 1. **口令存凭据文件，不存 volatile**。浏览器写 volatile 会被持久化进 profile 的
+ *    `cordis.patch.yml`（0.3.0 的通行证面板实测过），把长期口令写进用户的补丁文件既难看
+ *    又难撤。所以 `remoteSecret` 只做「显示/输入」通道，真正的落盘走
+ *    `writeCredentialsPatch(remoteSecret / remoteAccess)`，下次开机由 `resolvePluginConfig`
+ *    从凭据文件读回来。
+ * 2. **改 volatile 会热重启本插件 fiber** ⇒ 任何持久化都不能在同一次 `run()` 里做完就指望
+ *    内存还活着。做法与 PassProvisioner 相同：结果挂到进程级 store，新 fiber 启动时回灌。
+ * 3. **失败绝不致命**：起不来隧道只是 `remoteStatus` 有值，推送/作答链路完全不受影响。
+ *    宿主会把未处理的 rejection 当致命加载错误并退出进程，所以所有入口都吞掉异常。
+ */
+export class RemoteAccessor {
+  constructor(ctx, config, resolved, host, log, deps = {}) {
+    this.ctx = ctx
+    this.config = config
+    this.resolved = resolved
+    this.host = host
+    this.log = log
+    this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
+    this.credentialsPath = deps.credentialsPath || ''
+    this.engine = null
+    this.busy = false
+    this.scheduled = false
+    this.lastSeq = ''
+    /** 上一次推给手机的地址，避免隧道抖动时反复推送。 */
+    this.pushedUrl = ''
+    /** 正在把凭据文件里的开关状态回写进 volatile（此时的 volatile-update 不是用户操作）。 */
+    this.mirroring = false
+  }
+
+  read(key) { return volatileValue(this.config[key], '') }
+
+  /**
+   * 读一个「既可能在 volatile 里（本次会话刚改）、也可能只在凭据文件里」的配置。
+   *
+   * 2026-10-28 修的缺陷：`read()` 只看 `this.config[key]`，而 `Config` schema 的默认值是空串，
+   * 凭据文件里的值落在 `this.resolved` 上 ⇒ 只读 config 就等于永远读不到存盘的口令，**每次开机
+   * 都会重新生成一串新口令**，昨天推给手机的 30 天链接当天就失效。凡是持久化的键都必须走这里。
+   */
+  readAny(key) {
+    const live = this.read(key)
+    if (live !== '' && live !== undefined && live !== null && live !== false) return live
+    const saved = this.resolved ? this.resolved[key] : undefined
+    return saved === undefined || saved === null ? '' : saved
+  }
+
+  write(key, value) { setVolatileValue(this.config, key, value) }
+
+  storeKey() {
+    return 'remote|' + String(this.resolved.host || '') + '|' + String(this.credentialsPath || '')
+  }
+
+  /** 把最近状态回灌进当前 fiber（fiber 刚被热重启时设置行不该是空的）。 */
+  applyStore() {
+    const saved = remoteStore()[this.storeKey()]
+    if (!saved) return
+    this.write('remoteUrl', String(saved.url || ''))
+    this.write('remoteStatus', String(saved.status || ''))
+    this.write('remotePhase', String(saved.phase || ''))
+    this.write('remotePushResult', String(saved.pushResult || ''))
+    this.write('remoteDone', String(saved.done || ''))
+  }
+
+  saveStore() {
+    remoteStore()[this.storeKey()] = {
+      url: String(this.read('remoteUrl') || ''),
+      status: String(this.read('remoteStatus') || ''),
+      phase: String(this.read('remotePhase') || ''),
+      pushResult: String(this.read('remotePushResult') || ''),
+      done: String(this.read('remoteDone') || ''),
+    }
+  }
+
+  /**
+   * 把值写进 volatile，但**不让自己的 volatile-update 监听把它当成用户操作**（否则会再跑一遍
+   * persistEnabled/up，无限自激）。设置行读的是 volatile，开机时必须回灌一次，否则口令框是空的、
+   * 复制链接也复制不出东西。
+   */
+  mirror(key, value) {
+    if (this.read(key) === value) return
+    this.mirroring = true
+    try { this.write(key, value) } finally { this.mirroring = false }
+  }
+
+  /** 口令：配置里的（凭据文件/补丁）优先，都没有就生成一串并存盘。 */
+  ensureSecret() {
+    const given = String(this.readAny('remoteSecret') || '').trim()
+    if (given.length >= 16) return given
+    const generated = newRemoteSecret()
+    this.write('remoteSecret', generated)
+    this.persist({ remoteSecret: generated })
+    this.log('已生成远程访问口令（32 字节随机；存进凭据文件，不在补丁里）')
+    return generated
+  }
+
+  /** 落盘（凭据文件）；用于口令与开关，避免它们进 cordis.patch.yml。 */
+  persist(patch) {
+    if (!this.credentialsPath) return
+    try {
+      const saved = this.writeCreds(this.credentialsPath, patch)
+      this.log('远程访问设置已写回凭据文件 ' + saved.path)
+    } catch (error) {
+      this.log('写凭据文件失败：' + String(error?.message ?? error))
+    }
+  }
+
+  /** 起引擎（幂等）。@returns {Promise<void>} */
+  async up() {
+    const secret = this.ensureSecret()
+    this.mirror('remoteSecret', secret)
+    if (!this.engine) {
+      this.engine = new RemoteAccess({
+        log: this.log,
+        secret,
+        binPath: String(this.readAny('remoteBin') || ''),
+        webLog: this.resolved.webLog,
+        port: Number(this.readAny('remotePort') || 0) || 0,
+        onUrl: (url) => this.onUrl(url),
+      })
+    } else {
+      this.engine.setSecret(secret)
+    }
+    this.write('remotePhase', '正在连接…')
+    this.write('remoteStatus', '')
+    try {
+      const state = await this.engine.start()
+      if (state.running === false) {
+        this.write('remotePhase', '未运行')
+        this.write('remoteStatus', state.error || '启动失败')
+        return
+      }
+      // 地址可能比 server.listen 晚几秒才拿到（等 cloudflared），先给个中间态。
+      if (!state.url) this.write('remotePhase', '隧道建立中…')
+    } catch (error) {
+      this.write('remotePhase', '未运行')
+      this.write('remoteStatus', '启动失败：' + String(error?.message ?? error))
+      this.log('远程访问启动失败：' + String(error?.message ?? error))
+    }
+  }
+
+  /** 引擎拿到公网地址（或换了地址）时：镜像 + 首次/变更时推手机。 */
+  onUrl(url) {
+    this.write('remoteUrl', url)
+    this.write('remotePhase', '隧道建立中…')
+    this.write('remoteStatus', '')
+    this.saveStore()
+    const secret = String(this.readAny('remoteSecret') || '')
+    if (this.pushedUrl === url) return
+    this.pushedUrl = url
+    // 先等 Cloudflare 边缘真的挂上再推（否则用户点开是 530 报错页，实测 3~8 秒）。
+    Promise.resolve()
+      .then(() => this.engine?.waitPublic?.())
+      .then((ok) => {
+        this.write('remotePhase', ok === false ? '已就绪（边缘可能还要几秒）' : '已就绪')
+        this.saveStore()
+        return this.pushLink(secret)
+      })
+      .catch(() => {})
+  }
+
+  /** 把 30 天链接经 ntfy 送到手机（复用 RelayClient，不新增通道）。 */
+  async pushLink(secret) {
+    const url = String(this.read('remoteUrl') || '')
+    if (!url || !secret) return { ok: false, error: '还没有可用地址' }
+    if (!this.host || this.host.enabled !== true) return { ok: false, error: '推送通道未配置（先配通行证）' }
+    const link = remoteMessage(url, secret)
+    try {
+      const result = await this.host.relay.push({
+        title: 'DSH 远程访问地址',
+        body: '手机/异地浏览器打开这个链接即可（30 天免登录）：\n' + link,
+        priority: 3,
+        tags: ['globe_with_meridians'],
+      })
+      const ok = result?.status === 200
+      this.write('remotePushResult', ok ? '已推送到手机' : ('推送失败：HTTP ' + String(result?.status)))
+      this.log('远程链接推送 -> HTTP ' + String(result?.status))
+      this.saveStore()
+      return { ok }
+    } catch (error) {
+      this.write('remotePushResult', '推送异常：' + String(error?.message ?? error))
+      this.saveStore()
+      return { ok: false, error: String(error?.message ?? error) }
+    }
+  }
+
+  /** volatile-update 发生在 settings RPC 事务里 ⇒ 挪到下一个宏任务（同 PassProvisioner）。 */
+  schedule() {
+    if (this.scheduled) return
+    this.scheduled = true
+    setTimeout(() => {
+      this.scheduled = false
+      Promise.resolve(this.run()).catch(() => {})
+    }, 0)
+  }
+
+  /** 处理设置行的动作：push / reconnect / rotate。 */
+  async run() {
+    const seq = String(this.read('remoteSeq') || '')
+    const action = String(this.read('remoteAction') || '')
+    if (this.busy || seq === '' || seq === this.lastSeq) return
+    if (action !== 'push' && action !== 'reconnect' && action !== 'rotate') return
+    this.lastSeq = seq
+    this.busy = true
+    try {
+      if (action === 'push') {
+        await this.pushLink(String(this.readAny('remoteSecret') || ''))
+      } else if (action === 'reconnect') {
+        if (this.engine) this.engine.dispose()
+        this.engine = null
+        this.pushedUrl = ''
+        await this.up()
+      } else if (action === 'rotate') {
+        const fresh = newRemoteSecret()
+        this.write('remoteSecret', fresh)
+        this.persist({ remoteSecret: fresh })
+        if (this.engine) this.engine.setSecret(fresh)
+        this.pushedUrl = ''
+        this.write('remotePushResult', '')
+        this.write('remoteStatus', '')
+        this.log('远程访问口令已更换')
+        await this.pushLink(fresh)
+      }
+    } catch (error) {
+      this.write('remoteStatus', String(error?.message ?? error))
+    } finally {
+      this.write('remoteDone', seq)
+      this.busy = false
+      this.saveStore()
+    }
+  }
+
+  /** 开关的权威值：volatile（本次会话刚点过）优先，否则看凭据文件里的 `remoteEnabled`。 */
+  isEnabled() {
+    if (this.read('remoteAccess') === true) return true
+    return String(this.resolved?.remoteEnabled || '') === 'on'
+  }
+
+  /** 开关落盘（凭据文件；`off` 而不是删键——writeCredentialsPatch 只并非空字符串）。 */
+  persistEnabled(on) {
+    this.persist({ remoteEnabled: on ? 'on' : 'off' })
+  }
+
+  start() {
+    this.applyStore()
+    const enabled = this.isEnabled()
+    // 设置行的开关读的是 volatile 的 `remoteAccess`；开机时它总是默认 false，而真值在凭据文件里。
+    // 不把真值写回去，界面就会显示「开启远程访问」而隧道其实正在跑（用户会以为开关坏了）。
+    if (enabled && this.read('remoteAccess') !== true) {
+      // 自己写自己监听：不设这个闸，下面那个 volatile-update 分支会把它当成「用户刚点开启」
+      // 再跑一遍 persistEnabled + up()（会多写一次凭据文件、多启一次引擎）。
+      this.mirroring = true
+      try { this.write('remoteAccess', true) } finally { this.mirroring = false }
+    }
+    const mine = ['remoteSeq', 'remoteAction', 'remoteAccess', 'remoteSecret']
+    this.ctx.on('loader/volatile-update', (paths) => {
+      if (this.mirroring) return
+      const touched = Array.isArray(paths) && paths.some((path) =>
+        Array.isArray(path) && mine.includes(path[0]))
+      if (!touched) return
+      // 开关/口令是「配置」类变化，不需要请求号；直接按新配置重启引擎。
+      const switched = Array.isArray(paths) && paths.some((path) =>
+        Array.isArray(path) && (path[0] === 'remoteAccess' || path[0] === 'remoteSecret'))
+      if (switched) {
+        setTimeout(() => {
+          const on = this.read('remoteAccess') === true
+          this.persistEnabled(on)
+          if (on) { Promise.resolve(this.up()).catch(() => {}) } else if (this.engine) {
+            this.engine.dispose()
+            this.engine = null
+            this.write('remotePhase', '未开启')
+            this.write('remoteUrl', '')
+            this.saveStore()
+          }
+        }, 0)
+        return
+      }
+      this.schedule()
+    })
+    if (!enabled) {
+      this.write('remotePhase', '未开启')
+      this.log('远程访问未开启（设置 → 常规 → 远程访问 里可打开）')
+      return
+    }
+    // 本次 volatile 说开着、但凭据文件里还不是 on ⇒ 补齐。否则「第一次点开启」之后只要没
+    // 走到 volatile-update 那条分支（例如开关值随 config 一起来），下次开机就又变回关着。
+    if (this.read('remoteAccess') === true && String(this.resolved?.remoteEnabled || '') !== 'on') {
+      this.persistEnabled(true)
+    }
+    Promise.resolve(this.up()).catch(() => {})
+  }
+}
+
+/** 远程访问镜像的进程级暂存（同 panelStore 的理由：volatile 写入会热重启 fiber）。 */
+export const REMOTE_STORE_KEY = '__DSHPUSH_REMOTE__'
+
+export function remoteStore() {
+  const g = globalThis
+  if (!g[REMOTE_STORE_KEY]) g[REMOTE_STORE_KEY] = {}
+  return g[REMOTE_STORE_KEY]
+}
+
 export function apply(ctx, config = {}) {
   const { resolved, file } = resolvePluginConfig(config)
   const host = new PushHost(ctx, resolved)
@@ -1415,6 +1771,11 @@ export function apply(ctx, config = {}) {
   // dsh-provd → 把通行证文本与列表镜像回 volatile 字段；发号成功顺手把 topic + 两只 token
   // 写回插件自己的凭据文件（先备份）。重启本插件 fiber 后按新 topic 发布。
   new PassProvisioner(ctx, config, resolved, (message) => host.log(message), {
+    credentialsPath: file.path,
+  }).start()
+  // 远程访问（v0.4.0）：默认关。开着就走「内层改写网关 + cloudflared 快速隧道」，
+  // 把公网域名换成 30 天口令链接；隧道换了域名会自动重推给手机。
+  new RemoteAccessor(ctx, config, resolved, host, (message) => host.log(message), {
     credentialsPath: file.path,
   }).start()
 }

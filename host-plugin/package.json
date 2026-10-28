@@ -1,6 +1,6 @@
 {
   "name": "dsh-push-host",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "DSH host-side phone push: question events to ntfy + in-process answering via relay polling (replaces the external notifier + answer bridge)",
   "keywords": [
     "dsh",
@@ -30,6 +30,7 @@
     "./pairing": "./lib/pairing.mjs",
     "./pairing-lib": "./lib/pairing-lib.mjs",
     "./relay": "./lib/relay.js",
+    "./remote": "./lib/remote.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },

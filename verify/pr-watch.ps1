@@ -31,6 +31,7 @@
 param(
   [string]$Repo = "awesome-dsh-plugin/awesome-dsh-plugin",
   [int]$PrNumber = 9779,
+  [string]$GitHubToken = "",
   [switch]$DryRun,
   [switch]$Force
 )
@@ -78,14 +79,37 @@ function Push([string]$title, [string]$body, [int]$prio, [string]$click) {
   $pf = Join-Path $StateDir "push.json"
   [IO.File]::WriteAllText($pf, $json, (New-Object Text.UTF8Encoding($false)))
   if ($DryRun) { Log ("DRYRUN push prio=$prio title=" + $title); return "dryrun" }
-  $r = cmd /c "curl.exe -s -X POST -H ""Authorization: Bearer $WriteToken"" -H ""Content-Type: application/json"" --data-binary ""@$pf"" $Ntfy" 2>&1
-  $id = try { ($r | Out-String | ConvertFrom-Json).id } catch { "?" }
+  # The scheduled task runs this under cmd, where curl can emit extra lines
+  # ahead of the JSON body. Write the response to a file and parse that, so the
+  # message id is always recorded instead of falling back to "?".
+  $rf = Join-Path $StateDir "push-resp.json"
+  if (Test-Path -LiteralPath $rf) { Remove-Item -LiteralPath $rf -Force }
+  $null = cmd /c "curl.exe -s -o ""$rf"" -X POST -H ""Authorization: Bearer $WriteToken"" -H ""Content-Type: application/json"" --data-binary ""@$pf"" $Ntfy" 2>&1
+  $id = "?"
+  if (Test-Path -LiteralPath $rf) {
+    # PS 5.1 Get-Content reads UTF-8 as ANSI -> Chinese message text mangles the
+    # JSON. Always decode with .NET UTF-8 (global rule: text files via .NET).
+    try { $id = ([IO.File]::ReadAllText($rf, [Text.Encoding]::UTF8) | ConvertFrom-Json).id } catch { $id = "?" }
+  }
   Log ("pushed id=" + $id + " prio=" + $prio)
   return $id
 }
 
 # ---------- read the PR ----------
 $H = @{ Accept = "application/vnd.github+json"; "User-Agent" = "dsh-pr-watch" }
+# Optional: -GitHubToken (or env DSH_PR_WATCH_TOKEN) lifts the anonymous
+# 60-req/hour per-IP limit. Anonymous works for 3 requests a day, but a spent
+# IP returns 403 and the run would silently wait for tomorrow. The token is
+# NEVER stored in this repo: config.local.ps1 is tracked, so pass it on the
+# command line or keep it in the scheduled task, not in a tracked file.
+# Token resolution order: -GitHubToken, then env DSH_PR_WATCH_TOKEN, then the
+# state directory token file. None of these live in the repository.
+if (-not $GitHubToken -and $env:DSH_PR_WATCH_TOKEN) { $GitHubToken = $env:DSH_PR_WATCH_TOKEN }
+if (-not $GitHubToken) {
+  $tf = Join-Path $StateDir "github-token.txt"
+  if (Test-Path -LiteralPath $tf) { $GitHubToken = ([IO.File]::ReadAllText($tf, [Text.Encoding]::UTF8)).Trim() }
+}
+if ($GitHubToken) { $H["Authorization"] = "Bearer " + $GitHubToken }
 $api = "https://api.github.com/repos/$Repo"
 try {
   $pr = Invoke-RestMethod -Uri "$api/pulls/$PrNumber" -Headers $H -TimeoutSec 30

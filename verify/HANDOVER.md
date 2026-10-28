@@ -2778,3 +2778,54 @@ CI `check=completed/success`（run 40463880999）、0 条 review 评论。等维
    所以守望脚本**不保存任何凭据**，只有推送那一步用 `config.local.ps1` 的 `WriteToken`。
 3. ntfy 仍然要 **POST 服务器根路径**、topic 放进 JSON body、`priority` 必须是**整数**（HANDOVER 7.26）。
 4. `.cmd` 包装器必须 **CRLF + 纯 ASCII**（LF 会被 cmd 静默错位）。
+
+### §7.27.1 投稿结果：已合并上架（2026-10-27 17:32:37Z）
+
+PR #9779 **merged=true**，合并者 fkysly（社区维护者）。合并时维护者**改了我们的描述**（只改描述，不改 url/name/category）：
+
+> 已合并，但把「手机作答会回灌」这句改准了：只有把 `tool-ask-user` 配成 `mode: timed` 才会把手机答案回灌给 agent，
+> 默认的 `mode: legacy` 只推送通知（README 的「两条硬约束」第 1 条与 `host-plugin/lib/index.js:21-27` 都是这个口径）。
+
+**这是一条真教训**：我们投稿时写的 `fed back to the agent as a user message even after it has stopped waiting` 是
+**无条件的**说法，而代码里这条能力有前置条件。市场要求「描述必须与代码一致」，这条被维护者当场纠正了。
+入库后的最终文本两份都要跟：仓库里的 `deploy/market/thiscp__dsh-push--host-plugin.yml` 与 `deploy/market/PR.md`
+已按合并版改写（`mode: timed` 前置条件写明，默认 legacy 只推送）。**以后写市场描述一律先读代码确认前置条件。**
+
+**上架验证（三处独立证据）**
+
+| 项 | 证据 |
+|---|---|
+| 目录文件已入 main | `raw.githubusercontent.com/.../main/data/plugins/thiscp__dsh-push--host-plugin.yml` = 200，内容即合并版 |
+| 站点已生成详情页 | `https://awesome-dsh-plugin.com/p/thiscp/dsh-push--host-plugin/` = 200（24,644 B） |
+| 站内数据已收录 | `plugins.json` 命中，`added: 2026-10-27`，category `notify`，capabilities `[fs-write, fs-read, network, env]` |
+
+**⚠ npm 关联还没生效**（`plugins.json` 里 `npm: null / version: null`，安装命令仍是 `github:...#path:/host-plugin`）。
+原因不是我们这边错：`data/npm-map.json` 是 **gitignore 的 CI 缓存文件**，而 `build-site.yml` 里
+`probe-npm.mjs` 只在 `schedule`/`workflow_dispatch` 或 npm-map 为空时跑；合并当天的构建是 `workflow_run` 触发，
+**跳过了 npm 探测**。所以只能等夜间 `schedule`（cron `23 2 * * *`）那一轮，它会重探 unknown 条目。
+探针逻辑本身已核对可满足：`probe` 读 `raw.githubusercontent.com/thiscp/dsh-push/HEAD/host-plugin/package.json`
+→ name `dsh-push-host`；registry `dist-tags.latest=0.3.2`；`repository.url=git+https://github.com/thiscp/dsh-push.git`
+→ `linked=true`。等夜间构建跑完，市场页会变成 `dsh-push-host@0.3.2`，安装命令自动改成
+`dsh plugin --profile web add dsh-push-host`。
+
+**守望脚本的表现**：`pr-watch.ps1` 在 2026-10-28 10:05 的定时运行里正确判定为 prio 5 并推送成功
+（ntfy `gDzMdRiKak3U`，标题「dsh-push 上架 DSH 插件市场了」）；但日志里 `id=?` —— 调度任务下
+`cmd /c curl` 的 stdout 有时含额外行，`ConvertFrom-Json` 失败。**推送本身成功，只是没记下 message id**，
+属日志噪声不是功能缺陷（想修就把 curl 输出的最后一行 JSON 单独取出来解析）。
+
+### §7.27.2 守望脚本两个真实缺陷（2026-10-28 修）
+
+合并当天 10:05 的定时运行推送**成功**了（ntfy `gDzMdRiKak3U`），但复查发现两处该修的地方：
+
+1. **message id 记不下来**（日志里 `id=?`）。两个叠加原因：
+   - 调度任务下 curl 的 stdout 混行 → 改成 `curl -o <file>` 把响应写文件再解析；
+   - **PS 5.1 的 `Get-Content -Raw` 按 ANSI 读 UTF-8**，响应里的中文（title / message）被读坏，
+     `ConvertFrom-Json` 直接报「应为值」→ 必须用 `[IO.File]::ReadAllText($f, [Text.Encoding]::UTF8)`。
+     这是全局纪律「文本文件一律用 read/write 工具或 .NET 读写」的又一实例。
+   修完实测 `pushed id=99aOh5jyN6p1`。
+
+2. **匿名 API 会被同 IP 配额打死**（`403 已禁止`）。本机出网 IP 是共享的，匿名 60 req/hour 很快见底，
+   而脚本把 fetch 失败当「网络抖动」静默跳过 → 看上去像「今天没变化」。
+   修法：检索顺序 `-GitHubToken` → 环境变量 `DSH_PR_WATCH_TOKEN` → `%LOCALAPPDATA%\dsh-pr-watch\github-token.txt`。
+   **token 绝不能放进 `verify/config.local.ps1`**：那个文件虽然写在 .gitignore 里，但早已被 `git add` 跟踪
+   （`git ls-files` 能查到），写进去会被推到 gitee / github。放在 state 目录（仓库外）最安全。

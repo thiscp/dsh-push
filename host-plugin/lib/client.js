@@ -71,6 +71,13 @@ window.__ModuleLoader__.load({
 				order: 130,
 				label: "通行证",
 			}, () => PassPanelRow(scope, listeners, notify)))), "dsh-push-host: pass panel row");
+			// v0.4.0：远程访问——给没装 Tailscale 的人一条 30 天免登录的公网入口（宿主侧跑 cloudflared）。
+			ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("settings.general.item", () => ctx.slots.register({
+				name: "settings.general.item",
+				id: "push-host-remote",
+				order: 140,
+				label: "远程访问",
+			}, () => RemoteRow(scope, listeners, notify)))), "dsh-push-host: remote access row");
 			// v0.2.2：把推送链接 hash 里的来源会话切到主视图（与设置行互不相干，各自独立生效）。
 			revealFromHash(ctx);
 		}
@@ -233,6 +240,102 @@ window.__ModuleLoader__.load({
 						react.createElement("span", { style: { fontFamily: "monospace", wordBreak: "break-all" } },
 							row.name + "  →  " + (row.topics || []).map((t) => t.topic + "(" + t.permission + ")").join(", ")),
 						btn("吊销", () => ask("revoke", row.name), !writable)))) : null);
+		}
+
+		/**
+		 * 远程访问（v0.4.0）：给没装 Tailscale 的人一条公网入口。
+		 *
+		 * 为什么不直接暴露 3081：DSH 自己有两道栅栏（Host 不在白名单 403 host-not-trusted、
+		 * Origin 不在白名单 403 origin-not-trusted，2026-10-28 实测），而且它的 token 每次重启
+		 * 都变 —— 用户「重启后还得再扫码」正是要避免的事。所以宿主侧起一个内层改写网关
+		 * （把 Host/Origin 改回回环）再挂 cloudflared，对外只发一条 30 天有效的口令链接。
+		 *
+		 * 这一行只负责：开关、口令（可换）、看状态、把链接再推一次。真正的隧道在
+		 * lib/index.js:RemoteAccessor + lib/remote.js。
+		 * @param scope - 绑定了 push-host 的配置表单。
+		 * @param listeners - 订阅回调集合。
+		 * @param notify - 唤醒全部订阅者。
+		 */
+		function RemoteRow(scope, listeners, notify) {
+			const [snapshot, setSnapshot] = react.useState(() => scope.getSnapshot());
+			const [busy, setBusy] = react.useState(false);
+			const [copied, setCopied] = react.useState(false);
+			react.useEffect(() => {
+				const update = () => setSnapshot(scope.getSnapshot());
+				listeners.add(update);
+				update();
+				return () => {
+					listeners.delete(update);
+				};
+			}, []);
+			const ready = snapshot.status === "ready";
+			const value = snapshot.value ?? {};
+			const text = (key) => (typeof value[key] === "string" ? value[key] : "");
+			const on = value.remoteAccess === true;
+			const phase = text("remotePhase");
+			const url = text("remoteUrl");
+			const status = text("remoteStatus");
+			const pushResult = text("remotePushResult");
+			const secret = text("remoteSecret");
+			const done = text("remoteDone");
+			const seq = text("remoteSeq");
+			react.useEffect(() => {
+				if (busy && done !== "" && done === seq) setBusy(false);
+			}, [done, seq, busy]);
+			const writable = ready && snapshot.writable === true && !busy;
+			// 30 天口令链接：宿主 pushLink 发的是同一条（remoteMessage），这里现拼一条方便复制。
+			const link = url !== "" && secret !== "" ? (url + "/?k=" + secret) : "";
+			const write = (ops) => {
+				if (!writable) return;
+				const nextSeq = String(Date.now()) + "-" + Math.floor(Math.random() * 1e6).toString(36);
+				setBusy(true);
+				setCopied(false);
+				setTimeout(() => setBusy(false), 30000);
+				Promise.resolve()
+					.then(() => scope.mutate(ops.concat([{ op: "set", path: ["remoteSeq"], value: nextSeq }]), snapshot.revision))
+					.catch(() => setBusy(false))
+					.then(() => notify());
+			};
+			const act = (action) => write([{ op: "set", path: ["remoteAction"], value: action }]);
+			const toggle = () => write([{ op: "set", path: ["remoteAccess"], value: !on }]);
+			const copy = () => {
+				if (link === "") return;
+				try {
+					navigator.clipboard.writeText(link);
+					setCopied(true);
+				} catch {
+					setCopied(false);
+				}
+			};
+			const btn = (label, onClick, disabled) => react.createElement("button", {
+				type: "button", disabled: disabled, onClick: onClick,
+				style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: disabled ? 0.5 : 1 },
+			}, label);
+			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" } },
+				react.createElement("div", { style: { fontWeight: 600 } }, "远程访问"),
+				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
+					"没装 Tailscale 也能用：给这台机器开一条公网入口，手机打开一次就记住 30 天，重启不用重新扫码。"),
+				react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+					btn(on ? "关闭远程访问" : "开启远程访问", toggle, !writable),
+					on ? btn("重新推送链接", () => act("push"), !writable) : null,
+					on ? btn("换一个口令", () => act("rotate"), !writable) : null,
+					on ? btn("重建隧道", () => act("reconnect"), !writable) : null),
+				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
+					on
+						? ("状态：" + (phase || "…") + (status !== "" ? ("（" + status + "）") : ""))
+						: "未开启。开启后需要本机有 cloudflared（放 ~/.dsh/bin/cloudflared.exe，或在 PATH 里）；没有也能开，只是会提示找不到程序。"),
+				link !== ""
+					? react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+						react.createElement("textarea", {
+							readOnly: true, value: link, rows: 2,
+							onFocus: (event) => { try { event.target.select(); } catch {} },
+							style: { flex: "1 1 240px", padding: "6px 8px", borderRadius: 8, border: "1px solid currentColor", background: "transparent", color: "inherit", fontFamily: "monospace", fontSize: 12 },
+						}),
+						btn(copied ? "已复制" : "复制", copy, false))
+					: null,
+				pushResult !== "" ? react.createElement("div", { style: { fontSize: 12, opacity: 0.7 } }, pushResult) : null,
+				react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
+					"这条链接里的口令就是开关机钥匙：谁拿到谁能进。泄露了就在这里点「换一个口令」，旧链接立刻作废。地址是 Cloudflare 快速隧道，每次重建都会换域名，换了宿主会自动再推一次到手机。"));
 		}
 
 

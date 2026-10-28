@@ -91,10 +91,16 @@ export const CREDENTIAL_KEYS = {
   provisionToken: ['provisiontoken'],
   provisionBase: ['provisionbase'],
   webLog: ['weblog'],
+  // v0.4.0 远程访问。三处都要有：index.js 的 CREDENTIAL_CONFIG_KEYS（允许从文件读）、
+  // 这张表（真的去读），以及 selftest 的两条清单对账断言（漏一个就 FAIL，2026-10-17 踩过）。
+  // remoteEnabled 是 'on'/'off' 字符串而不是布尔：布尔开关的 schema 默认值会反压文件值。
+  remoteSecret: ['remotesecret'],
+  remoteBin: ['remotebin'],
+  remoteEnabled: ['remoteenabled'],
 }
 
 /** Keys that hold secrets: they are never echoed back in logs or diagnostic output. */
-export const SECRET_KEYS = ['hostToken', 'ntfyToken', 'phoneToken', 'regToken', 'provisionToken']
+export const SECRET_KEYS = ['hostToken', 'ntfyToken', 'phoneToken', 'regToken', 'provisionToken', 'remoteSecret']
 
 /** `~` / `~/x` / `~\x` → the real home path; everything else resolves against `base`. */
 export function expandHome(input, home = homedir()) {

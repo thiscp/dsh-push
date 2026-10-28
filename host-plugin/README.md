@@ -172,7 +172,7 @@ timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 
 `publishConfig.access: public` / `engines` / `files` 白名单，MIT `LICENSE` 随包）。
 用户侧只需 `dsh plugin add`：
 
-**已发布到 npm：`dsh-push-host@0.3.1`（2026-10-27）** — https://registry.npmjs.org/dsh-push-host
+**已发布到 npm：`dsh-push-host@0.3.2`（2026-10-27）** — https://registry.npmjs.org/dsh-push-host
 （`latest` 即最新版；`repository.directory = host-plugin`，市场据此自动关联 npm 包）
 
 ```powershell
@@ -180,7 +180,7 @@ timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 
 & $dsh plugin --profile <profile> add dsh-push-host
 
 # 从 tarball 装（离线/内网，等价路径，已实测）
-& $dsh plugin --profile <profile> add ./dsh-push-host-0.3.1.tgz
+& $dsh plugin --profile <profile> add ./dsh-push-host-0.3.2.tgz
 
 # 从本地目录装（开发期，改完立即生效）
 & $dsh plugin --profile <profile> add "link:<仓库>/host-plugin"
@@ -194,7 +194,7 @@ DSH 运行时只带 pnpm 的机器上，仓库里配了等价工具，输出同�
 
 ```powershell
 & $node tools/pack-npm-tarball.mjs host-plugin --dry-run   # 只看清单，不落盘
-& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.3.1.tgz
+& $node tools/pack-npm-tarball.mjs host-plugin             # 落盘 host-plugin/dsh-push-host-0.3.2.tgz
 ```
 
 实测产物 9 个文件：`LICENSE`、`README.md`、`cordis.patch.yml`、`package.json`、
@@ -217,7 +217,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 & $dsh --profile pushdist --from-default-profile headless --dump-config
 
 # 2. 把包（或 tarball）装进去
-& $dsh plugin --profile pushdist add ./dsh-push-host-0.3.1.tgz
+& $dsh plugin --profile pushdist add ./dsh-push-host-0.3.2.tgz
 
 # 3. 验收挂载：看 dump-config 尾部
 & $dsh --profile pushdist --dump-config | Select-Object -Last 3
@@ -239,7 +239,7 @@ $dsh = '<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd'      # 不在 PATH
 ```powershell
 & powershell -NoProfile -ExecutionPolicy Bypass -File deploy/windows/install-user.ps1 `
     -Profile <profile> -DshCli "<DSH 安装目录>\resources\runtime\cli\bin\dsh.cmd" `
-    -Source .\dsh-push-host-0.3.1.tgz
+    -Source .\dsh-push-host-0.3.2.tgz
 # 成功后照打印的 next steps 走：重启 DSH（工具注册是冷的）→ 用新会话（变体钉在会话创建时）
 ```
 
@@ -347,6 +347,51 @@ harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tm
 - **通行证文本格式**：`dshpush://v1?base=<中继>&topic=<topic>&token=<只读 token>` —— App v1.33.0 起解析它；
   只粘一串 `tk_…` 的老通行证在 App 里仍按默认 topic `dsh` 处理，所以现有手机不会被这次改动破坏。
 - 发号失败（401 无密钥 / 409 名字占用 / 服务不可达）都在面板上显示中文原因，**不动本机凭据文件、不影响已工作的推送链路**。
+
+## 远程访问：没装 Tailscale 也能从外网打开（v0.4.0）
+
+前面所有能力都假设手机和电脑在同一个 tailnet 里。真实用户经常没有 —— 这一版给一条不依赖
+Tailscale 的公网入口，而且**重启后不用重新扫码**。
+
+设置 → 常规 → 远程访问 → 打开，系统会：
+
+1. 在 `127.0.0.1:<随机端口>` 起一个**内层改写网关**；
+2. 用 `cloudflared tunnel` 把它挂到 Cloudflare 的快速隧道，拿到一个 `https://xxx.trycloudflare.com`；
+3. 把 `https://xxx.trycloudflare.com/?k=<口令>` 经 ntfy 推到你手机。
+
+点开这个链接：第一次访问会种一个 **30 天有效**的 cookie，然后 303 把 `?k=` 从地址栏抹掉。
+之后 30 天内换电脑重启、换 DSH token 都不用再扫。
+
+### 为什么不能直接把 3081 暴露出去
+
+DSH 有两道栅栏，都是 2026-10-28 实测的：
+
+| 请求 | Host | Origin | 结果 |
+|---|---|---|---|
+| `GET /api/session/list` | `abc.trycloudflare.com` | — | **403 host-not-trusted** |
+| `GET /api/session/list` | `127.0.0.1:3081` | `https://abc.trycloudflare.com` | **403 origin-not-trusted** |
+
+所以只改 `--trusted-host` 不够，Origin 也要改。网关把 Host/Origin/Referer 全程改写成回环，
+再替客户端注入 DSH 自己的登录 cookie（从 `~/.dsh/web.log` 现取，随 DSH 重启自动刷新）——
+**这就是「用户不用重新扫码」的实现方式**：会变的 token 藏在内层，对外只发自己的 30 天口令。
+
+### 几个实现上的硬点（改代码前先读）
+
+- **口令存凭据文件，不进 `cordis.patch.yml`**，且 cookie 里存的是 `HMAC-SHA256(secret)` 而不是口令原文。
+- **`.volatile()` 字段在 `resolvePluginConfig` 里是 cosmokit ref 对象**，既不是 `''` 也不是 `undefined`，
+  会被当成"用户显式配置"；`String(ref)` 得到 `[object Object]` 把凭据文件的值盖掉。2026-10-28 就因此
+  每次开机重新生成口令、前一天推的链接当天失效。**必须先用 `volatileValue()` 解开 ref 再判空**。
+- 开关的落盘键是 `remoteEnabled: 'on'|'off'`，**不复用 schema 里的 `remoteAccess` 布尔**（布尔默认值
+  `false` 会反压文件里的 `true`）。
+- 起隧道后 Cloudflare 边缘还要 **3~8 秒**才挂上域名，这期间访问回 **530**。`waitPublic()` 会先自打
+  `/__dshpush/status` 到「不是 5xx」再推链接，否则用户点开就是 Cloudflare 报错页。
+- WebSocket 升级时要**补回 `Connection`/`Upgrade`**（`HOP_BY_HOP` 会剔掉它们，缺了上游不触发 upgrade）。
+- 隧道换了域名会自动重推；`remotePhase` 是给人看的一句话（未开启 / 正在连接 / 隧道建立中 / 已就绪）。
+
+### 局限
+
+快速隧道的域名每次重启都变（Cloudflare 免费策略），**但口令不变，所以旧链接仍然可用到过期**；
+域名变了会重推一条新的。想要固定地址需要自己的域名 + 命名隧道，那是下一版的事。
 
 ## 给一个真实用户开通（凭据文件 + 配对）
 
