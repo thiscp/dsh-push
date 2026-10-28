@@ -1,6 +1,6 @@
 {
   "name": "dsh-push-host",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "DSH host-side phone push: question events to ntfy + in-process answering via relay polling (replaces the external notifier + answer bridge)",
   "keywords": [
     "dsh",
@@ -32,7 +32,8 @@
     "./relay": "./lib/relay.js",
     "./remote": "./lib/remote.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cloudflared": "./lib/cloudflared.mjs"
   },
   "bin": {
     "dsh-push-pair": "./lib/pairing.mjs"

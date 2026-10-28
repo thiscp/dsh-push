@@ -100,6 +100,8 @@ const DEFAULTS = {
   remoteBin: '',
   remotePort: 0,
   remoteEnabled: '',
+  // 手机链接走哪条路（v0.5.0）：'' = tailnet。空串是刻意的——非空默认值会反压凭据文件里的 tunnel。
+  linkMode: '',
 }
 
 /** Config keys (schema/overlay vocabulary) = the defaults above. */
@@ -212,6 +214,15 @@ export const Config = z.object({
   remoteAction: z.union(['', 'push', 'reconnect', 'rotate']).default('').volatile(),
   /** 宿主处理完的请求号回写（设置行据此清 busy）。 */
   remoteDone: z.string().default('').volatile(),
+  /**
+   * 手机推送里那条链接走哪条路（v0.5.0，用户 m16379「用户可以自行选择是使用公网隧道还是
+   * tailscale」）：`tailnet` = 沿用 webBase/web.log 的原地址（默认，老用户行为完全不变）；
+   * `tunnel` = 用公网隧道地址（没装 Tailscale 也能打开）。
+   * 默认值是 **`''`（不是 `'tailnet'`）**：resolvePluginConfig 的 explicit 只丢掉
+   * ''/undefined/null，非空默认值会把凭据文件里的 `tunnel` 反压回去（与 remoteEnabled 同一个坑）；
+   * 空串在代码里一律按 tailnet 处理（见 RemoteAccessor.readMode）。
+   */
+  linkMode: z.union(['', 'tailnet', 'tunnel']).default('').volatile(),
 })
 
 /** `[{label, description?}]` (service vocabulary) → `[label]` (what the relay/phone render). */
@@ -893,6 +904,7 @@ export const CREDENTIAL_CONFIG_KEYS = [
   'remoteSecret',
   'remoteBin',
   'remoteEnabled',
+  'linkMode',
 ]
 
 function pickConfigKeys(values) {
@@ -1555,8 +1567,36 @@ export class RemoteAccessor {
     }
   }
 
+  /**
+   * 手机链接走哪条路（v0.5.0，用户 m16379）：`tunnel` = 公网隧道，`tailnet` = 原来的地址。
+   * 空串按 tailnet 处理 —— 这样老用户升级后行为一模一样（他们根本没写过这个键）。
+   */
+  readMode() {
+    const raw = String(this.readAny('linkMode') || this.resolved?.linkMode || '').trim()
+    // 空串（从没选过）按 tunnel 处理 —— 这个功能本身就是隧道；v0.4.x 用户升级后行为不变。
+    return raw === 'tailnet' ? 'tailnet' : 'tunnel'
+  }
+
+  /** 模式落盘（凭据文件；偏好放这里就能跟随这台机器，而 volatile 重启会丢）。 */
+  persistMode(mode) {
+    this.persist({ linkMode: mode === 'tunnel' ? 'tunnel' : 'tailnet' })
+  }
+
   /** 起引擎（幂等）。@returns {Promise<void>} */
   async up() {
+    // tailnet 模式不需要隧道：不下载 cloudflared、不起网关，只把「用你自己的地址」这件事说清楚。
+    // 这条分支是「不能影响到已装 Tailscale 的用户」的硬保证（m16379）。
+    if (this.readMode() === 'tailnet') {
+      if (this.engine) {
+        try { this.engine.dispose() } catch { /* 已经停了 */ }
+        this.engine = null
+      }
+      this.write('remotePhase', '已就绪（使用 Tailscale / 你自己的地址）')
+      this.write('remoteStatus', '')
+      this.write('remoteUrl', '')
+      this.saveStore()
+      return
+    }
     const secret = this.ensureSecret()
     this.mirror('remoteSecret', secret)
     if (!this.engine) {
@@ -1567,6 +1607,11 @@ export class RemoteAccessor {
         webLog: this.resolved.webLog,
         port: Number(this.readAny('remotePort') || 0) || 0,
         onUrl: (url) => this.onUrl(url),
+        // 下载 cloudflared 的阶段文案要出现在设置行，否则用户会以为卡死了（40MB）。
+        onPhase: (phase) => {
+          this.write('remotePhase', String(phase))
+          this.saveStore()
+        },
       })
     } else {
       this.engine.setSecret(secret)
@@ -1611,6 +1656,13 @@ export class RemoteAccessor {
 
   /** 把 30 天链接经 ntfy 送到手机（复用 RelayClient，不新增通道）。 */
   async pushLink(secret) {
+    // tailnet 模式下没有隧道地址：通知里那条 #web 链接本身就是用户可达的入口，
+    // 不需要再推一条。这里返回一句人话，免得设置行显示「还没有可用地址」让人困惑。
+    if (this.readMode() === 'tailnet') {
+      this.write('remotePushResult', '当前用 Tailscale / 自定义地址：通知里的链接就能直接打开，无需单独推送')
+      this.saveStore()
+      return { ok: false, error: 'tailnet 模式不需要推送隧道链接' }
+    }
     const url = String(this.read('remoteUrl') || '')
     if (!url || !secret) return { ok: false, error: '还没有可用地址' }
     if (!this.host || this.host.enabled !== true) return { ok: false, error: '推送通道未配置（先配通行证）' }
@@ -1702,7 +1754,7 @@ export class RemoteAccessor {
       this.mirroring = true
       try { this.write('remoteAccess', true) } finally { this.mirroring = false }
     }
-    const mine = ['remoteSeq', 'remoteAction', 'remoteAccess', 'remoteSecret']
+    const mine = ['remoteSeq', 'remoteAction', 'remoteAccess', 'remoteSecret', 'linkMode']
     this.ctx.on('loader/volatile-update', (paths) => {
       if (this.mirroring) return
       const touched = Array.isArray(paths) && paths.some((path) =>
@@ -1710,11 +1762,13 @@ export class RemoteAccessor {
       if (!touched) return
       // 开关/口令是「配置」类变化，不需要请求号；直接按新配置重启引擎。
       const switched = Array.isArray(paths) && paths.some((path) =>
-        Array.isArray(path) && (path[0] === 'remoteAccess' || path[0] === 'remoteSecret'))
+        Array.isArray(path) && (path[0] === 'remoteAccess' || path[0] === 'remoteSecret' || path[0] === 'linkMode'))
       if (switched) {
         setTimeout(() => {
           const on = this.read('remoteAccess') === true
           this.persistEnabled(on)
+          // 选了哪条路也要落盘：volatile 会随重启丢，而这个选择是用户偏好。
+          this.persistMode(this.readMode())
           if (on) { Promise.resolve(this.up()).catch(() => {}) } else if (this.engine) {
             this.engine.dispose()
             this.engine = null

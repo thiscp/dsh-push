@@ -2897,6 +2897,7 @@ User said (m15528): 「用户肯定不希望重启后还得再扫码吧，最好
 快速隧道域名每次重启都变（Cloudflare 免费策略），**但口令不变，旧链接仍可用到过期**；域名变了会
 自动重推一条新的。想要固定地址需要自有域名 + 命名隧道（下一版）。
 
+
 ## §7.30 远程访问在真实宿主上的两处硬伤（2026-10-28，用户 m12376 追问验收）
 
 用户问「有试过实际把 VM1 或者 VM 上的插件卸载，然后通过 npm 安装来做功能验收吗」。做了，
@@ -2958,3 +2959,91 @@ User said (m15528): 「用户肯定不希望重启后还得再扫码吧，最好
   （VM 直连 GitHub 会下到 2,150,400 B 的**残包**且 `chmod +x` 后报「权限不够」，别信第一次的
   `curl` 成功）。
 - 仓库：私有仓 `931fdd0`；npm `dsh-push-host@0.4.2`（`dist-tags.latest`）。
+
+## §7.31 host-plugin v0.5.0：cloudflared 自动安装 + 「公网隧道 / Tailscale」二选一（2026-10-28）
+
+### 需求（用户 m16379）
+> 「做吧，目标是用户只需要安装插件和我们的app就能正常使用，不需要额外下载安装tailscale，
+> 但是也不能影响到有些用户已经安装有tailscale的方案，用户可以自行选择是使用公网隧道还是tailscale」
+
+三件事：① cloudflared 自动装（v0.4.x 要用户自己放进 `~/.dsh/bin`）② 已有 Tailscale 路线一点不能动
+③ 设置页给二选一。
+
+### 落地
+
+**新文件 `E:\work\work_dsh\dsh-push\host-plugin\lib\cloudflared.mjs`（263 行）**
+
+导出 `assetName / binName / defaultDir / looksUsable / onPath / sha256File / fetchAssets / ensureCloudflared`。
+`ensureCloudflared()` 的解析顺序（每一级都是为了「不打扰已有用户」）：
+
+1. 显式配置 `binPath` → 直接用；
+2. `~/.dsh/bin/cloudflared[.exe]` 已有且 `looksUsable()`（存在、≥20 MB、非 Windows 有可执行位）→ **一次网络请求都不发**；
+3. `PATH` 上已有 → 用用户的，不下载；
+4. 都没有 → 读 GitHub API 拿 `tag + size + digest`，下载并按 **size + sha256 双重校验**，先写 `.part` 再 `rename` 到最终路径。
+
+**`remote.js`**：新增 `prepareBin()`（包住 `ensureCloudflared`，记 `this.resolvedBin` 与 `downloadPhase`，失败只置
+`lastError` 不抛）、`resolveBin()` 改为认 `this.resolvedBin`、constructor 增 `resolvedBin / downloadPhase / onPhase`
+三个字段、`start()` 在 `spawnTunnel()` 之前 `await this.prepareBin()`（拿不到就不起隧道）。
+
+**`index.js`**：`DEFAULTS` + `Config` + `CREDENTIAL_CONFIG_KEYS` 三处加 `linkMode`；新增 `readMode()` / `persistMode()`；
+`up()` **tailnet 模式直接短路**（dispose 掉引擎、只写 `remotePhase='已就绪（使用 Tailscale / 你自己的地址）'`，
+不下载、不起网关）；`pushLink()` 在 tailnet 模式返回一句人话；`volatile-update` 的 `mine` 与 `switched` 都加上 `linkMode`。
+
+**`client.js`**：`RemoteRow` 顶部加两个互斥按钮「公网隧道（免 Tailscale）」「Tailscale / 自定义地址」，
+tunnel 模式下才显示「重新推送链接 / 换一个口令 / 重建隧道」与口令链接框；未开启的说明文案按模式分叉。
+
+**`credentials.mjs`**：`CREDENTIAL_KEYS` 加 `linkMode: ['linkmode']`（三处清单必须同步，否则 `plugin-selftest.mjs` FAIL）。
+
+### 三处实测坑（都写进了代码注释，别删）
+
+1. **Release 没有独立 `.sha256` 资产**（`…linux-amd64.sha256` 实测 404），可信摘要只在 GitHub API 的
+   `assets[].digest` 里。**只看下载退出码会放走残包**：VM1 上拿到过 2,150,400 B（真包 40,263,303 B），
+   `chmod +x` 后报「权限不够」。
+2. **慢网必须断点续传**：VM1 直连 GitHub 只有 ~37 KB/s，40 MB 要 18 分钟；单次请求 5 分钟就被掐断只拿
+   22 MB。`downloadToFile()` 用 `Range: bytes=<已有>-` 续，判失败用「连续 90 秒没有新字节」而不是总时长。
+3. **`linkMode` 的 schema 默认值必须是 `''` 而不是 `'tailnet'`**：`resolvePluginConfig` 的 `explicit` 只丢掉
+   `''/undefined/null`，非空默认值会把凭据文件里的 `tunnel` 反压回去（与 `remoteEnabled` 同一个坑）。
+   空串在 `readMode()` 里按 `tunnel` 解释。
+
+### 镜像实测（两家机器结论不同，别照抄）
+
+| 源 | 笔电 | VM1 |
+|---|---|---|
+| 直连 github.com | 快（8s 下完 55 MB） | 206 但 ~37 KB/s |
+| `gh.llkk.cc` | — | **206、40 KB/s、能下完**（最稳） |
+| `ghproxy.net` | — | 206、6 KB/s |
+| `ghfast.top` | — | 206、10 KB/s |
+| `ghfile.geekertao.top` | — | 206、40 KB/s |
+| `gh-proxy.com` | 可用 | **不通（curl 000）** |
+| `gh.ddlc.top` | — | 429 限流 |
+
+`MIRRORS` 按上表排序，**直连仍排第一**（不把第三方写进默认信任链）。
+
+### 验收（全部实测）
+
+`host-plugin/selftest-remote-bin.mjs` → **21/21**：平台资产名 5 条、缓存命中不联网 3 条、小文件不算装好 1 条、
+size 不符判失败 2 条、sha256 不符 1 条、下载成功落盘 3 条、断点续传 4 条（带 Range、拼接后 size 与 sha256 正确）、
+显式 binPath 优先 1 条、`start()` 状态快照 1 条。
+
+`plugin-selftest.mjs` → **149/149**（凭据清单对账没破）。
+
+真机联调：
+- 笔电：`C:\Temp\cfdrive-win.mjs` → 下载 55,343,328 B、8s、`USABLE true`。
+- **VM1（先把 `~/.dsh/bin/cloudflared` 删掉再跑）**：`mount-050.mjs` → tailnet 分支 `PASS`（phase 是
+  「已就绪（使用 Tailscale / 你自己的地址）」、`remoteUrl` 为空、没起网关）；tunnel 分支 `PASS`——
+  日志依次是「本机没有 cloudflared，开始自动下载」→「cloudflared 已装好：/home/user/.dsh/bin/cloudflared
+  （40,263,303 字节，2026.10.5）」→「远程网关已监听 127.0.0.1:44001」→「公网地址：https://coffee-…trycloudflare.com」，
+  共 **6s**。
+
+### 发布
+
+- npm **`dsh-push-host@0.5.0`**（91.5 kB 包 / 251.8 kB 展开 / 12 文件，shasum `5b0bd601d70acb434765d35eac02938ffb0cc048`）。
+  registry 生效有 1~2 分钟延迟；若 `dist-tags.latest` 仍指旧版，`npm dist-tag add dsh-push-host@0.5.0 latest`。
+- 私有仓 `d5d61f1`，已推 gitee。
+
+### 局限
+
+- 自动下载只覆盖 **Windows x64/ia32、Linux x64/arm64/arm/ia32**；**macOS 明确返回空**（官方只发 `.tgz`，
+  不假装支持），要在 mac 上用隧道得用户自己装。
+- 快速隧道域名每次重启都变（Cloudflare 免费策略），口令不变所以旧链接仍可用到过期；固定地址需要自己的
+  域名 + 命名隧道，仍未做。

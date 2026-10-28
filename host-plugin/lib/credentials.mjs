@@ -97,6 +97,8 @@ export const CREDENTIAL_KEYS = {
   remoteSecret: ['remotesecret'],
   remoteBin: ['remotebin'],
   remoteEnabled: ['remoteenabled'],
+  // v0.5.0：手机链接走哪条路（'tunnel'/'tailnet'）。不是秘密，但要跟着这台机器记住选择。
+  linkMode: ['linkmode'],
 }
 
 /** Keys that hold secrets: they are never echoed back in logs or diagnostic output. */

@@ -30,10 +30,14 @@
  */
 import http from 'node:http'
 import { spawn } from 'node:child_process'
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, appendFileSync } from 'node:fs'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import {
+  existsSync, mkdirSync, readdirSync, readFileSync, statSync, appendFileSync,
+  chmodSync, renameSync, unlinkSync, writeFileSync,
+} from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { ensureCloudflared } from './cloudflared.mjs'
 
 /** cookie 名（本模块自己发的，与 DSH 的 dsh-auth-* 互不相干）。 */
 const COOKIE = 'dshpush-remote'
@@ -125,6 +129,12 @@ export class RemoteAccess {
     this.child = null
     this.disposed = false
     this.restartTimer = null
+    /** 自动装好的 cloudflared 路径（v0.5.0；空 = 还没找过）。 */
+    this.resolvedBin = ''
+    /** 下载阶段的文案（设置行显示「正在下载 cloudflared 12.3/40.3 MB」）。 */
+    this.downloadPhase = ''
+    /** 阶段回调（RemoteAccessor 用它把文案镜像到设置行）。 */
+    this.onPhase = options.onPhase ?? (() => {})
     /** DSH 自己的登录 cookie 缓存：`dsh-auth-xxx=v1.…`。 */
     this.dshCookie = ''
     this.dshCookieAt = 0
@@ -143,12 +153,57 @@ export class RemoteAccess {
     }
   }
 
-  /** 找 cloudflared：显式配置 > ~/.dsh/bin > PATH。 */
+  /** 找 cloudflared：显式配置 > ~/.dsh/bin > 自动下载结果 > PATH。
+   *
+   *  v0.5.0 起 `prepareBin()` 会把东西真的装上，并把路径记在 `this.resolvedBin`；
+   *  这里只负责「按优先级读」，不再假设文件已经存在（老的 existsSync 分支保留给
+   *  「用户手动放了一份」的情况，避免联网）。
+   */
   resolveBin() {
     if (this.binPath) return this.binPath
+    if (this.resolvedBin) return this.resolvedBin
     const local = join(homedir(), '.dsh', 'bin', process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared')
     if (existsSync(local)) return local
     return process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared'
+  }
+
+  /**
+   * 确保本机有 cloudflared（用户 m16379：只想装插件+App 就能用，不想再装别的东西）。
+   *
+   * 只在真的找不到时才联网，顺序落在 lib/cloudflared.mjs 里：
+   * 显式配置 → ~/.dsh/bin 已有一份 → PATH 上已有 → 自动下载并按 GitHub API 的
+   * size + sha256 校验。**已装好的机器永远不联网**，老用户行为完全不变。
+   */
+  async prepareBin() {
+    if (this.binPath) { this.resolvedBin = this.binPath; return this.resolvedBin }
+    try {
+      const got = await ensureCloudflared({
+        log: this.log,
+        onProgress: (done, total) => {
+          const mb = (n) => (n / 1048576).toFixed(1)
+          const phase = total > 0
+            ? '正在下载 cloudflared ' + mb(done) + '/' + mb(total) + ' MB'
+            : '正在下载 cloudflared ' + mb(done) + ' MB'
+          this.downloadPhase = phase
+          try { this.onPhase?.(phase) } catch { /* caller's problem */ }
+        },
+      })
+      if (got.error || !got.path) {
+        this.lastError = '找不到 cloudflared，自动安装也失败：' + String(got.error || '未知原因')
+        this.log(this.lastError)
+        this.downloadPhase = ''
+        return ''
+      }
+      this.resolvedBin = got.path
+      this.downloadPhase = ''
+      if (got.source === 'download') this.log('cloudflared 自动安装完成（' + String(got.tag ?? '') + '）：' + got.path)
+      return got.path
+    } catch (error) {
+      this.lastError = 'cloudflared 自动安装异常：' + String(error?.message ?? error)
+      this.log(this.lastError)
+      this.downloadPhase = ''
+      return ''
+    }
   }
 
   /** 起网关 + 隧道。重复调用安全（已起就返回）。 */
@@ -184,6 +239,15 @@ export class RemoteAccess {
         resolve()
       })
     })
+
+    // v0.5.0（用户 m16379）：真要起隧道之前才确保 cloudflared 在本机。
+    // 已经装好的机器走缓存分支，不联网也不变慢；只有真缺的时候才下载。
+    const bin = await this.prepareBin()
+    if (this.disposed) return this.state()
+    if (!bin) {
+      if (!this.lastError) this.lastError = '找不到 cloudflared，自动安装也没成功'
+      return this.state()
+    }
 
     this.spawnTunnel()
     return this.state()

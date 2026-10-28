@@ -272,6 +272,9 @@ window.__ModuleLoader__.load({
 			const value = snapshot.value ?? {};
 			const text = (key) => (typeof value[key] === "string" ? value[key] : "");
 			const on = value.remoteAccess === true;
+			// 走哪条路：'' 视作 tunnel（v0.4 的行为就是这个功能本身）。
+			const mode = text("linkMode") === "tailnet" ? "tailnet" : "tunnel";
+			const setMode = (next) => write([{ op: "set", path: ["linkMode"], value: next }]);
 			const phase = text("remotePhase");
 			const url = text("remoteUrl");
 			const status = text("remoteStatus");
@@ -298,6 +301,13 @@ window.__ModuleLoader__.load({
 			};
 			const act = (action) => write([{ op: "set", path: ["remoteAction"], value: action }]);
 			const toggle = () => write([{ op: "set", path: ["remoteAccess"], value: !on }]);
+			const modeBtn = (key, label) => {
+				const active = mode === key;
+				return react.createElement("button", {
+					type: "button", disabled: !writable, onClick: () => setMode(key),
+					style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: !writable ? 0.5 : active ? 1 : 0.55, fontWeight: active ? 600 : 400 },
+				}, (active ? "✓ " : "") + label);
+			};
 			const copy = () => {
 				if (link === "") return;
 				try {
@@ -314,16 +324,21 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" } },
 				react.createElement("div", { style: { fontWeight: 600 } }, "远程访问"),
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
-					"没装 Tailscale 也能用：给这台机器开一条公网入口，手机打开一次就记住 30 天，重启不用重新扫码。"),
+					"手机在外网怎么打开这台机器。已装 Tailscale 的选后者（用你自己的地址，一切照旧）；没装就选前者，插件会自己装好 cloudflared 并开一条公网入口，手机打开一次记住 30 天。"),
+				react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+					modeBtn("tunnel", "公网隧道（免 Tailscale）"),
+					modeBtn("tailnet", "Tailscale / 自定义地址")),
 				react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
 					btn(on ? "关闭远程访问" : "开启远程访问", toggle, !writable),
-					on ? btn("重新推送链接", () => act("push"), !writable) : null,
-					on ? btn("换一个口令", () => act("rotate"), !writable) : null,
-					on ? btn("重建隧道", () => act("reconnect"), !writable) : null),
+					on && mode === "tunnel" ? btn("重新推送链接", () => act("push"), !writable) : null,
+					on && mode === "tunnel" ? btn("换一个口令", () => act("rotate"), !writable) : null,
+					on && mode === "tunnel" ? btn("重建隧道", () => act("reconnect"), !writable) : null),
 				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
 					on
 						? ("状态：" + (phase || "…") + (status !== "" ? ("（" + status + "）") : ""))
-						: "未开启。开启后需要本机有 cloudflared（放 ~/.dsh/bin/cloudflared.exe，或在 PATH 里）；没有也能开，只是会提示找不到程序。"),
+						: (mode === "tailnet"
+							? "未开启。这个模式下不需要隧道，也不会下载任何东西：推送通知里的链接就是你自己的地址。"
+							: "未开启。开启后插件会自动下载 cloudflared（约 40MB，只需一次）并校验收到的文件；已经装过就直接用，不联网。")),
 				link !== ""
 					? react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
 						react.createElement("textarea", {
@@ -334,8 +349,10 @@ window.__ModuleLoader__.load({
 						btn(copied ? "已复制" : "复制", copy, false))
 					: null,
 				pushResult !== "" ? react.createElement("div", { style: { fontSize: 12, opacity: 0.7 } }, pushResult) : null,
-				react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
-					"这条链接里的口令就是开关机钥匙：谁拿到谁能进。泄露了就在这里点「换一个口令」，旧链接立刻作废。地址是 Cloudflare 快速隧道，每次重建都会换域名，换了宿主会自动再推一次到手机。"));
+				mode === "tunnel"
+					? react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
+						"这条链接里的口令就是开关机钥匙：谁拿到谁能进。泄露了就在这里点「换一个口令」，旧链接立刻作废。地址是 Cloudflare 快速隧道，每次重建都会换域名，换了宿主会自动再推一次到手机。")
+					: null);
 		}
 
 

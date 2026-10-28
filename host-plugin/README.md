@@ -348,16 +348,31 @@ harness 自己的 `~\.dsh\dsh-runtimes\...` 那个 node 同为 v24.21.0、`os.tm
   只粘一串 `tk_…` 的老通行证在 App 里仍按默认 topic `dsh` 处理，所以现有手机不会被这次改动破坏。
 - 发号失败（401 无密钥 / 409 名字占用 / 服务不可达）都在面板上显示中文原因，**不动本机凭据文件、不影响已工作的推送链路**。
 
-## 远程访问：没装 Tailscale 也能从外网打开（v0.4.0）
+## 远程访问：没装 Tailscale 也能从外网打开（v0.4.0 起，v0.5.0 加模式选择）
 
 前面所有能力都假设手机和电脑在同一个 tailnet 里。真实用户经常没有 —— 这一版给一条不依赖
 Tailscale 的公网入口，而且**重启后不用重新扫码**。
 
-设置 → 常规 → 远程访问 → 打开，系统会：
+v0.5.0 起设置行顶部有一个**二选一**（用户 2026-10-28 的要求：「用户可以自行选择是使用公网隧道
+还是 tailscale」）：
 
+| 选项 | 行为 | 适合谁 |
+|---|---|---|
+| **公网隧道（免 Tailscale）** | 起内层网关 + cloudflared 快速隧道 | 没装 Tailscale 的人 |
+| **Tailscale / 自定义地址** | **完全不起网关、不下载任何东西**，通知里的链接就是 `webBase`/`web.log` 的地址 | 已经在用 Tailscale 的人（默认，升级后行为一模一样） |
+
+选「公网隧道」并打开开关，系统会：
+
+0. **先确保本机有 cloudflared**：已经装过（`~/.dsh/bin/` 或 PATH）就直接用，**一次网络请求都不发**；
+   没有才去 GitHub Release 自动下载（约 40 MB），并按 GitHub API 给的 `size` + `sha256` 双重校验；
 1. 在 `127.0.0.1:<随机端口>` 起一个**内层改写网关**；
 2. 用 `cloudflared tunnel` 把它挂到 Cloudflare 的快速隧道，拿到一个 `https://xxx.trycloudflare.com`；
 3. 把 `https://xxx.trycloudflare.com/?k=<口令>` 经 ntfy 推到你手机。
+
+> **为什么校验是硬要求**：cloudflared 的 Release **没有**独立的 `.sha256` 资产，可信摘要只在
+> GitHub API 的 `digest` 字段里；而且从国内网络直连下载**会间歇性截断**（实测拿到过 2,150,400 B
+> 的残包，真包 40,263,303 B），`chmod +x` 之后报「权限不够」。只看下载退出码会把残包当成功 ——
+> 所以 `lib/cloudflared.mjs` 既校 size 又校 sha256，任一不符就换下一个源（直连失败退 `gh-proxy.com`）。
 
 点开这个链接：第一次访问会种一个 **30 天有效**的 cookie，然后 303 把 `?k=` 从地址栏抹掉。
 之后 30 天内换电脑重启、换 DSH token 都不用再扫。
@@ -392,6 +407,9 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
   表现就是「手机打开链接一直要求重新登录」。现在 `refreshDshCookie()` 会把 `~/.dsh` 与系统临时
   目录里名字像 `dsh`/`web` 的 `.log` 全当候选（按 mtime 从新到旧），逐个试到真能换出 `dsh-auth-*`。
 - 隧道换了域名会自动重推；`remotePhase` 是给人看的一句话（未开启 / 正在连接 / 隧道建立中 / 已就绪）。
+- **`linkMode` 的 schema 默认值必须是 `''` 而不是 `'tailnet'`**：`resolvePluginConfig` 的 `explicit`
+  只丢掉 `''`/`undefined`/`null`，非空默认值会把凭据文件里用户选的 `tunnel` 反压回去（与
+  `remoteEnabled` 是同一个坑，2026-10-28 第二次踩到）。空串在 `readMode()` 里按 `tunnel` 解释。
 
 ### 局限
 
