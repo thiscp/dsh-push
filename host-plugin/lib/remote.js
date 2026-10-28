@@ -31,8 +31,8 @@
 import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, appendFileSync } from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /** cookie 名（本模块自己发的，与 DSH 的 dsh-auth-* 互不相干）。 */
@@ -221,18 +221,38 @@ export class RemoteAccess {
     const url = this.url
     if (!url) return false
     const deadline = Date.now() + timeoutMs
+    // 「到了自己的网关」与「Cloudflare 边缘认识这条隧道」不是同一件事：
+    // 刚建好隧道时各边缘节点学习路由有先后，同一域名可能一会儿 404（还没路由）
+    // 一会儿 401（我们网关的登录门）。2026-10-28 在 work VM 上就撞到过
+    // waitPublic 报就绪、紧接着首页 404 —— 用户点开就是一个空白的 404。
+    // 判据改成：连续两次（换路径 + 间隔）都拿到 401/200 才算通。
+    let streak = 0
+    const paths = ['/__dshpush/status', '/']
+    let turn = 0
     while (Date.now() < deadline) {
       if (this.disposed) return false
+      const path = paths[turn % paths.length]
+      turn += 1
+      let ok = false
       try {
-        const res = await fetch(url + '/__dshpush/status', { redirect: 'manual' })
-        if (res.status < 500) {
-          this.log('公网链路已就绪（status=' + String(res.status) + '）')
+        const res = await fetch(url + path, { redirect: 'manual' })
+        // 401 = 我们网关的登录门；200 = 已经能出内容。404/530 都是边缘还没路由。
+        ok = res.status === 401 || res.status === 200
+      } catch {
+        ok = false
+      }
+      if (ok) {
+        streak += 1
+        if (streak >= 2) {
+          this.log('公网链路已就绪（连续 ' + String(streak) + ' 次命中网关）')
           return true
         }
-      } catch { /* 还没就绪，继续等 */ }
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      } else {
+        streak = 0
+      }
+      await new Promise((resolve) => setTimeout(resolve, 700))
     }
-    this.log('公网链路 ' + String(Math.round(timeoutMs / 1000)) + ' 秒内未就绪（链接可能点开会先看到 Cloudflare 的 530）')
+    this.log('公网链路 ' + String(Math.round(timeoutMs / 1000)) + ' 秒内未就绪（链接可能点开会先看到 Cloudflare 的 530 或 404）')
     return false
   }
 
@@ -334,36 +354,95 @@ export class RemoteAccess {
     }, delay)
   }
 
-  /** 从 web.log 取当前 token，换成 DSH 自己的登录 cookie。 */
+  /**
+   * 候选日志文件（按修改时间从新到旧）。
+   *
+   * 为什么不能只读 web.log：DSH 不一定由 `dsh web` 直接拉起。实测 VM1 上它被
+   * 「市场重启」脚本派生，stdout 被重定向到 /tmp/dsh-market-restart-*.out.log，
+   * 于是 ~/.dsh/web.log 停在几小时前再没更新 —— 只读它就会拿到**上一轮的旧 token**，
+   * 兑换 cookie 恒 401，用户侧表现是「手机打开链接一直要求重新登录」。
+   * 所以把 ~/.dsh 与系统临时目录里名字像 dsh/web 的 .log 全当候选，逐个试到能换出 cookie 为止。
+   */
+  webLogCandidates() {
+    const list = []
+    const push = (p) => { if (p && !list.includes(p) && existsSync(p)) list.push(p) }
+    push(this.webLog)
+    for (const dir of [join(homedir(), '.dsh'), tmpdir()]) {
+      let names = []
+      try {
+        names = readdirSync(dir)
+      } catch {
+        continue
+      }
+      for (const name of names) {
+        if (!/\.log$/i.test(name)) continue
+        if (!/dsh|web/i.test(name)) continue
+        push(join(dir, name))
+      }
+    }
+    const stamp = (p) => {
+      try {
+        return statSync(p).mtimeMs
+      } catch {
+        return 0
+      }
+    }
+    return list.sort((a, b) => stamp(b) - stamp(a))
+  }
+
+  /** 候选日志里出现过的 DSH 访问链接，去重后按「日志越新越靠前」。 */
+  webUrls() {
+    const seen = new Set()
+    const out = []
+    for (const file of this.webLogCandidates()) {
+      let text = ''
+      try {
+        text = readFileSync(file, 'utf8')
+      } catch {
+        continue
+      }
+      const lines = [...text.matchAll(new RegExp(WEB_URL_RE, 'g'))]
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const url = lines[i][1]
+        if (seen.has(url)) continue
+        seen.add(url)
+        out.push(url)
+      }
+    }
+    return out
+  }
+
+  /** 从候选日志里取当前 token，换成 DSH 自己的登录 cookie。 */
   async refreshDshCookie() {
-    let text = ''
-    try {
-      text = readFileSync(this.webLog, 'utf8')
-    } catch {
-      this.log('读不到 web.log：' + this.webLog + '（远程访问需要它来取 DSH token）')
-      return ''
-    }
-    const matches = [...text.matchAll(new RegExp(WEB_URL_RE, 'g'))]
-    if (matches.length === 0) return ''
-    const url = matches[matches.length - 1][1]
-    let target
-    try {
-      target = new URL(url)
-    } catch {
-      return ''
-    }
-    // 只在回环上取 cookie：绝不用隧道域名去自打（那会再撞一次 Host/Origin 栅栏）。
-    target.hostname = '127.0.0.1'
-    const res = await fetch(target.toString(), { redirect: 'manual', headers: { 'cache-control': 'no-store' } })
-    const list = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
-    const auth = list.find((line) => line.startsWith('dsh-auth-'))
-    if (!auth) {
-      this.log('DSH 没有下发 dsh-auth-* cookie（status=' + String(res.status) + '）')
+    const urls = this.webUrls()
+    if (urls.length === 0) {
+      this.log('找不到 DSH 访问链接（web.log 与 /tmp 日志里都没有）；远程访问需要它来取 token')
       return this.dshCookie
     }
-    this.dshCookie = auth.split(';')[0].trim()
-    this.dshCookieAt = Date.now()
-    this.log('已取得 DSH 登录 cookie（有效期由 DSH 决定，本模块会自动刷新）')
+    for (const raw of urls) {
+      let target
+      try {
+        target = new URL(raw)
+      } catch {
+        continue
+      }
+      // 只在回环上取 cookie：绝不用隧道域名去自打（那会再撞一次 Host/Origin 栅栏）。
+      target.hostname = '127.0.0.1'
+      let res
+      try {
+        res = await fetch(target.toString(), { redirect: 'manual', headers: { 'cache-control': 'no-store' } })
+      } catch {
+        continue
+      }
+      const list = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
+      const auth = list.find((line) => line.startsWith('dsh-auth-'))
+      if (!auth) continue
+      this.dshCookie = auth.split(';')[0].trim()
+      this.dshCookieAt = Date.now()
+      this.log('已取得 DSH 登录 cookie（候选中第 ' + String(urls.indexOf(raw) + 1) + ' 个链接有效，会自动刷新）')
+      return this.dshCookie
+    }
+    this.log('候选日志里没有能换出 cookie 的 DSH token（共 ' + String(urls.length) + ' 个候选）')
     return this.dshCookie
   }
 
@@ -496,13 +575,15 @@ export class RemoteAccess {
     up.end()
   }
 
-  /** 从 web.log 现取目标端口（DSH 可能换端口，每次现读更稳）。 */
+  /** 从日志里现取目标端口（DSH 可能换端口、也可能不写 web.log，每次现读更稳）。 */
   targetPort() {
-    try {
-      const text = readFileSync(this.webLog, 'utf8')
-      const matches = [...text.matchAll(new RegExp(WEB_URL_RE, 'g'))]
-      if (matches.length > 0) return Number(new URL(matches[matches.length - 1][1]).port) || 3081
-    } catch { /* fall through */ }
+    const urls = this.webUrls()
+    for (const raw of urls) {
+      try {
+        const port = Number(new URL(raw).port)
+        if (port > 0) return port
+      } catch { /* continue */ }
+    }
     return 3081
   }
 

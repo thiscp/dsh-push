@@ -372,7 +372,7 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
 | `GET /api/session/list` | `127.0.0.1:3081` | `https://abc.trycloudflare.com` | **403 origin-not-trusted** |
 
 所以只改 `--trusted-host` 不够，Origin 也要改。网关把 Host/Origin/Referer 全程改写成回环，
-再替客户端注入 DSH 自己的登录 cookie（从 `~/.dsh/web.log` 现取，随 DSH 重启自动刷新）——
+再替客户端注入 DSH 自己的登录 cookie（从 DSH 的启动日志现取，随 DSH 重启自动刷新）——
 **这就是「用户不用重新扫码」的实现方式**：会变的 token 藏在内层，对外只发自己的 30 天口令。
 
 ### 几个实现上的硬点（改代码前先读）
@@ -386,6 +386,11 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
 - 起隧道后 Cloudflare 边缘还要 **3~8 秒**才挂上域名，这期间访问回 **530**。`waitPublic()` 会先自打
   `/__dshpush/status` 到「不是 5xx」再推链接，否则用户点开就是 Cloudflare 报错页。
 - WebSocket 升级时要**补回 `Connection`/`Upgrade`**（`HOP_BY_HOP` 会剔掉它们，缺了上游不触发 upgrade）。
+- **DSH 不一定由 `dsh web` 直接拉起，`~/.dsh/web.log` 可能是几小时前的旧文件**。2026-10-28 在 VM1
+  实测：DSH 被「市场重启」脚本派生，stdout 被重定向到 `/tmp/dsh-market-restart-*.out.log`，于是
+  `web.log` 停在 10:20 不再更新 —— 只读它会拿到**上一轮的旧 token**，兑换 cookie 恒 401，用户侧
+  表现就是「手机打开链接一直要求重新登录」。现在 `refreshDshCookie()` 会把 `~/.dsh` 与系统临时
+  目录里名字像 `dsh`/`web` 的 `.log` 全当候选（按 mtime 从新到旧），逐个试到真能换出 `dsh-auth-*`。
 - 隧道换了域名会自动重推；`remotePhase` 是给人看的一句话（未开启 / 正在连接 / 隧道建立中 / 已就绪）。
 
 ### 局限

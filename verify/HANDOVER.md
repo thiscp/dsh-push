@@ -2896,3 +2896,65 @@ User said (m15528): 「用户肯定不希望重启后还得再扫码吧，最好
 ### 局限
 快速隧道域名每次重启都变（Cloudflare 免费策略），**但口令不变，旧链接仍可用到过期**；域名变了会
 自动重推一条新的。想要固定地址需要自有域名 + 命名隧道（下一版）。
+
+## §7.30 远程访问在真实宿主上的两处硬伤（2026-10-28，用户 m12376 追问验收）
+
+用户问「有试过实际把 VM1 或者 VM 上的插件卸载，然后通过 npm 安装来做功能验收吗」。做了，
+在 **VM1（<tailnet-vm1>）** 与 **工作 VM（<tailnet-work>）** 上各走一遍「卸旧 → 从 npm 装 →
+跑通隧道 + 口令门」，过程中撞出两个只在真实宿主上才暴露的问题，v0.4.0 因此有 **0.4.1 / 0.4.2**
+两次补丁。
+
+### 硬伤 1：`~/.dsh/web.log` 可能是几小时前的旧文件（0.4.1 修）
+
+**现象**：网关起来、隧道也通、`/?k=<口令>` 能拿到 303 + 30 天 cookie，但带 cookie 访问首页恒
+**401 `dsh web authentication required`**。日志只有一句
+`DSH 没有下发 dsh-auth-* cookie（status=401）`。
+
+**根因**：`refreshDshCookie()` 只读 `~/.dsh/web.log`，而 **DSH 不一定是 `dsh web` 直接拉起的**。
+实测 VM1 的 DSH 被「市场重启」脚本派生：
+
+```
+/proc/<pid>/fd/1 -> /tmp/dsh-market-restart-2026-10-28T03-15-32.out.log
+~/.dsh/web.log  mtime = 10:20（进程 11:15 才起，文件根本没更新）
+```
+
+于是取到的是**上一轮那次运行的旧 token**，兑换必然 401。工作 VM 上同样有这个坑。
+
+**修法**：`webLogCandidates()` 把 `~/.dsh` 与系统临时目录里名字像 `dsh`/`web` 的 `.log` 全当候选，
+按 mtime 从新到旧；`refreshDshCookie()` 逐个 URL 试，**直到真换出 `dsh-auth-*` 才停**；
+`targetPort()` 也从同一批 URL 里取端口。日志会打「候选中第 N 个链接有效」。
+
+### 硬伤 2：`waitPublic()` 把「边缘还没学到路由」当成就绪（0.4.2 修）
+
+**现象**：`waitPublic = true` 后立刻访问首页 **404（0 字节）**，而 `/api/session/list` 正常 200。
+
+**根因**：Cloudflare 各边缘节点学习新隧道路由的时间不一致，同一域名在隧道建好后的一小段时间里
+会回 **404**。旧判据是「status < 500 就算通」，401/404 都过，于是链接可能被推给手机时边缘还没路由。
+
+**修法**：改成交替打 `/__dshpush/status` 与 `/`，**连续两次**拿到 `401` 或 `200` 才判就绪，
+`404/530` 一律当未就绪，轮询间隔 700ms。
+
+### 验收矩阵（两宿主 × 六项，全部 PASS）
+
+| 项 | VM1 | 工作 VM |
+|---|---|---|
+| 无口令访问 `/` | 401（登录页 1046 B） | 401（1046 B） |
+| `/?k=<口令>` | 303 + `dshpush-remote` **Max-Age=2592000（30 天）** | 同 |
+| 带 cookie `/` | 200（42,704 B） | 200（43,804 B） |
+| 带 cookie `POST /api/session/list` | 200（688 B） | 200（688 B） |
+| `GET /__dshpush/status` | 200 `{"ok":true,"running":true,...}` | 同 |
+| `wss://…/api/remote.mux` | **OPEN OK** | **OPEN OK** |
+
+`waitPublic` 实测 4.0–8.9s（VM1）/ 7.2s（工作 VM）。
+
+### 环境事实
+
+- VM1：node v24.21.0、pnpm 12.14.0 在 `~/.local/node/bin`；DSH 跑在 3081，2381…3080 是
+  `dsh-net-proxy` 的对外口；`~/.dsh/web.pid` 等 pid 文件均过期（旧进程 366323 早已不在）。
+- 工作 VM：node v22.23.3（**系统 /usr/bin**）、pnpm 12.11.2 在 `~/.npm-global/bin`（不在
+  `~/.local/node/bin`，PATH 里要加 `$HOME/.npm-global/bin`）。**两台的 pnpm 路径不同，别照抄。**
+- cloudflared **不在任何宿主的 PATH**，由插件 `resolveBin()` 从 `~/.dsh/bin/cloudflared` 找。
+  安装方式：在笔电 `curl -fL` 下载 `cloudflared-linux-amd64`（40,263,303 B）再 `scp` 过去
+  （VM 直连 GitHub 会下到 2,150,400 B 的**残包**且 `chmod +x` 后报「权限不够」，别信第一次的
+  `curl` 成功）。
+- 仓库：私有仓 `931fdd0`；npm `dsh-push-host@0.4.2`（`dist-tags.latest`）。
