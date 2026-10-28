@@ -3052,3 +3052,68 @@ size 不符判失败 2 条、sha256 不符 1 条、下载成功落盘 3 条、�
   不假装支持），要在 mac 上用隧道得用户自己装。
 - 快速隧道域名每次重启都变（Cloudflare 免费策略），口令不变所以旧链接仍可用到过期；固定地址需要自己的
   域名 + 命名隧道，仍未做。
+
+## §7.32 host-plugin v0.5.1：点插件卡片直接进它自己的设置页（2026-10-28，用户 m16853）
+
+### 需求
+
+> 「插件的项目设置，能直接点击插件就能去设置吗，而不是还得单独进入 dsh 的设置里面去」
+
+原来是「设置 → 通用设置 → 往下滚三行（手机作答模式 / 通行证 / 远程访问）」，路径太深。
+`plugins.bundle.config` 是 DSH 官方的机制：插件自己往这个槽位注册，插件面板里点某个插件进详情页就会渲染它。
+
+### 三个必须同时满足的判据（写错任一条都静默失效，无报错、无警告）
+
+| 判据 | 写错的后果 | 出处 |
+|---|---|---|
+| `key` **必须精确等于 bundle 包名** `dsh-push-host`（不是 profile entry id `push-host`） | 详情页不渲染 `<section data-plugin-config>` | `dsh-client-ui-plugin-manager/lib/client.js` 的 `configLedgerSource`：`ledger.bundles = keysOf("plugins.bundle.config")`，`configured = ledger.bundles.has(pkg.name)` |
+| **禁止传 `locale`** 字段（连空串都不行，必须省略整个键） | 槽位装配抛 `SlotAssemblyError` | `dsh-client-ui-renderer/lib/client.js:745/:953`：`if (entry.locale !== undefined) { const face = host.locale; if (face === undefined) throw ... }`，我们文件里没有字典面 |
+| 必须可用 `ctx.configForms.whileServed([NS], …)` 拿到 scope | 三行读写不到配置 | 同我们的 `settings.general.item` 三行 |
+
+`plugins.row.config` 的 key 形态不同，是 **`<bundle>#<rowId>`**（`rowConfigKey`），本版没用到。
+
+### 落地（`host-plugin/lib/client.js`，+34 行）
+
+```js
+ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.bundle.config", () => ctx.slots.register({
+    name: "plugins.bundle.config",
+    key: "dsh-push-host",
+}, () => PluginConfigPage(scope, listeners, notify)))), "dsh-push-host: bundle config page");
+```
+
+`PluginConfigPage` 把**同一批行组件**（`AskUserModeRow` / `PassPanelRow` / `RemoteRow`）竖着叠起来，前面加一行说明
+「手机推送的全部设置都在这一页；改完即时生效，不需要重启宿主。」
+
+**为什么不另写一套 UI**：三行都读同一个 `push-host` 命名空间、订阅同一份快照、共用「忙」判定；另写必然两处状态不同步。
+行组件本身不依赖 `settings.general.item` 的列结构（各自渲染标题 + 控件），可直接搬。
+
+原有的 `settings.general.item` 三行**保留不删**（老路径仍可用，桌面用户习惯那个入口）。
+
+### 验收（VM1 + 无头 Chrome，390x844 移动视口，全部实测）
+
+`C:\Temp\cdp-browser.mjs`（自写无头 Chrome CDP 驱动，可 `launch()` / `ev()` / `click()` / `shot()`）：
+- 插件面板 →「已安装」→ 滚到 `dsh-push-host`（`scrollIntoView({block:'center'})` 才点得到，纯 wheel 会停在列表中部）→ 点卡片。
+- 详情页 `document.querySelector('[data-plugin-config]')` **存在**；`body.innerText` 同时含
+  「手机推送的全部设置都在这一页」「手机作答模式」「通行证」「远程访问」四项 ⇒ 全页渲染成功。
+- 截图 `C:\Temp\p51_card2.png`：标题 `dsh-push-host / v0.5.1` + 通行证节 + 远程访问节（含「公网隧道（免 Tailscale）」✓）+
+  「包含的组件 共 1 个 · 1 运行中」。
+
+### 发布与安装
+
+- npm **`dsh-push-host@0.5.1`**（92.3 kB 包 / 253.9 kB 展开 / 12 文件，shasum `f2799ef23b5b9d6ada58ca258bfe7509670a2f53`）；
+  下载 tarball 复核：sha1 一致、`grep -c plugins.bundle.config` = 3、`node --check` 通过。
+- **VM1**：`pnpm add dsh-push-host@0.5.1`（成功）→ `dsh-net.sh restart`（`/tmp/restart051.log`，
+  `dsh web 启动成功 (PID 494087)`、3 个地址自检全通）→ 从页面真实拉取
+  `/plugins/??dsh-push-host/client.js&rev=a2c0156511cc`（34,638 B）复核新代码已在服务端生效。
+- **笔电**：profile 是 `file:` 挂载开发形态，`pnpm` 不在 PATH 且 `corepack` 的 pnpm 12.15.0 缓存缺 `bin/pnpm.cjs`
+  （`Cannot find module ...\corepack\v1\pnpm\12.15.0\bin\pnpm.cjs`）⇒ 用
+  `npm exec --yes --package=pnpm@12.15.0 -- pnpm install` 安装，`node_modules/dsh-push-host` 升到 0.5.1。
+  顺手把 `package.json` 依赖从 `dsh-push-host-0.3.1.tgz` 改成 `dsh-push-host-0.5.1.tgz`（并 `npm pack` 重新生成）。
+
+### 坑
+
+- `.gitignore` 原本只有 `*.tgz` 一条就够；我在追加时误把它写成**精确文件名**那一行（`dsh-push-host-0.5.1.tgz`），
+  等于把 `*.tgz` 的覆盖范围缩窄成一个固定名字 —— 已回退，保持只有 `*.tgz`。
+- 插件列表很长（14+ 个），`Emulation` 视口 390x844 下我们那一行在列表第 10 位左右；**必须 `scrollIntoView`**，
+  靠 `mouseWheel` 累加滚动会在中途停住，点到的是别的插件（第一次就点进了「Agent 循环」，`data-plugin-config` 有内容
+  但三行文案全 false —— 这个「hasSection=true 但 ask/pass/remote 全 false」正是点错卡片的指纹）。

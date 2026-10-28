@@ -78,9 +78,43 @@ window.__ModuleLoader__.load({
 				order: 140,
 				label: "远程访问",
 			}, () => RemoteRow(scope, listeners, notify)))), "dsh-push-host: remote access row");
+			// v0.5.1：插件页自带配置。用户在「插件」面板点我们的卡片，进详情页就能看到这三行，
+			// 不必再走「设置 → 通用设置」往下滚（用户 m16853 的诉求）。
+			//
+			// `key` MUST 精确等于 **bundle 包名**（不是 profile entry id `push-host`）：
+			// plugin-manager 的 configLedgerSource 用 `keysOf("plugins.bundle.config")` 收集 key，
+			// 详情页只在 `ledger.bundles.has(pkg.name)` 时才渲染 <section data-plugin-config>。
+			// 写错就静默不显示，无报错、无警告。
+			//
+			// 也 MUST NOT 传 `locale`：渲染器要求 entry.locale 指向已注册的字典面，
+			// 本文件没有字典（三行文案都是写死的中文），传了会在槽位装配时抛 SlotAssemblyError。
+			ctx.effect(() => ctx.configForms.whileServed([NS], () => ctx.slots.inject("plugins.bundle.config", () => ctx.slots.register({
+				name: "plugins.bundle.config",
+				key: "dsh-push-host",
+			}, () => PluginConfigPage(scope, listeners, notify)))), "dsh-push-host: bundle config page");
 			// v0.2.2：把推送链接 hash 里的来源会话切到主视图（与设置行互不相干，各自独立生效）。
 			revealFromHash(ctx);
 		}
+
+		/**
+		* v0.5.1：插件详情页里的「设置」整页——把三行原样叠起来。
+		*
+		* 为什么复用同一批行组件而不是另写一套：三行都要读写 `push-host` 命名空间、订阅同一份
+		* 快照、共用「忙」的判定；另写一套必然出现两处状态不同步。行组件本身不依赖
+		* `settings.general.item` 的列结构（各自渲染标题 + 控件），所以能直接搬。
+		* @param scope - 绑定了 push-host 的配置表单。
+		* @param listeners - 订阅回调集合。
+		* @param notify - 唤醒全部订阅者。
+		*/
+		function PluginConfigPage(scope, listeners, notify) {
+			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+				react.createElement("div", { style: { fontSize: 13, opacity: 0.7 } },
+					"手机推送的全部设置都在这一页；改完即时生效，不需要重启宿主。"),
+				AskUserModeRow(scope, listeners, notify),
+				PassPanelRow(scope, listeners, notify),
+				RemoteRow(scope, listeners, notify));
+		}
+
 
 		/**
 		* 设置行本体：settings.general.item 的列只叠行，标签、状态、写入全是行自己的。
