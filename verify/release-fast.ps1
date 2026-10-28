@@ -10,6 +10,7 @@
 #   1. idempotent version sync in build.gradle.kts (versionCode + versionName)
 #   2. gradle assembleDebug on the BUILD BOX (vm1) and fetch the apk back
 #   3. upload to the dl dir and confirm ?v=<versionCode> serves the same SHA256
+#   3b. mirror the same apk to the blog download button (skip with -SkipBlog)
 #   4. ntfy update notification (skip with -NoNotify)
 #   5. export public mirrors (skip with -SkipExport)
 # Second round (user reports a problem) still uses verify\release.ps1 / dsh-app-verify.ps1.
@@ -22,6 +23,7 @@ param(
   [switch]$NoNotify,
   [switch]$NoPublish,        # build only: no upload, no notification (lets you verify the build)
   [switch]$SkipExport,
+  [switch]$SkipBlog,         # do not refresh blog.cpyh.xyz/dl/dsh-push-latest.apk (see step 3b)
   [switch]$SkipOnlineCheck,
   [switch]$DryRun,
   [int]$BuildTimeoutSec = 900
@@ -116,10 +118,28 @@ stat -c %s app/build/outputs/apk/debug/app-debug.apk
 if ($NoPublish) {
   Say ("publish: skipped (-NoPublish); built apk = " + $localApk)
 } elseif ($DryRun) {
-  Say "DRYRUN: would scp to ${Aliyun}:/var/www/certbot/dl/dsh-push.apk and check ?v=$VersionCode"
+  Say "DRYRUN: would scp to ${Aliyun}:/var/www/certbot/dl/dsh-push.apk and ${Aliyun}:/srv/blog/dl/dsh-push-latest.apk, then check ?v=$VersionCode"
 } else {
   Say "publish: upload to the dl directory"
   cmd /c "scp $SSH_OPTS ""$localApk"" ""${Aliyun}:/var/www/certbot/dl/dsh-push.apk""" 2>&1 | Out-Null
+  # 3b. blog download button. blog.cpyh.xyz serves /dsh-push-latest.apk from /srv/blog/dl/,
+  # OUTSIDE dist/ (so static site deploys never clobber it) - which also means nothing else
+  # ever refreshes it. 2026-10-28: it was stuck on 1.33.52 while dl/ served 1.33.53. Keep the
+  # two in step here, or the blog button silently ships an old build.
+  if ($SkipBlog) {
+    Say "publish: blog copy skipped (-SkipBlog)"
+  } else {
+    cmd /c "scp $SSH_OPTS ""$localApk"" ""${Aliyun}:/srv/blog/dl/dsh-push-latest.apk""" 2>&1 | Out-Null
+    $blog = "https://blog.cpyh.xyz/dsh-push-latest.apk"
+    $bchk = cmd /c "curl.exe -s -o ""$OutDir\blog-check.apk"" -w ""%{http_code} %{size_download}"" $blog" 2>&1
+    $bsame = (Test-Path "$OutDir\blog-check.apk") -and ((Get-FileHash "$OutDir\blog-check.apk" -Algorithm SHA256).Hash -eq (Get-FileHash $localApk -Algorithm SHA256).Hash)
+    if (($bchk -match "^200") -and $bsame) {
+      Say ("publish: blog OK $blog (" + $bchk + ", sha256 matches)")
+    } else {
+      # not fatal: dl/ is the distribution path the app actually uses
+      Say ("publish: WARN blog copy mismatch: " + $bchk + " same=" + $bsame)
+    }
+  }
   $dl = "$Ntfy/dl/dsh-push.apk?v=$VersionCode"
   if ($SkipOnlineCheck) {
     Say "publish: online check skipped"
