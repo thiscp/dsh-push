@@ -3039,7 +3039,12 @@ size 不符判失败 2 条、sha256 不符 1 条、下载成功落盘 3 条、�
 
 - npm **`dsh-push-host@0.5.0`**（91.5 kB 包 / 251.8 kB 展开 / 12 文件，shasum `5b0bd601d70acb434765d35eac02938ffb0cc048`）。
   registry 生效有 1~2 分钟延迟；若 `dist-tags.latest` 仍指旧版，`npm dist-tag add dsh-push-host@0.5.0 latest`。
-- 私有仓 `d5d61f1`，已推 gitee。
+- 私有仓 `d5d61f1`（代码）+ `6de699a`（本节移正顺序），已推 gitee；公开镜像四端 `77d79d5`。
+- 两宿主 npm 安装 0.5.0 后实测：VM1 `ensureCloudflared` → `{"path":"/home/user/.dsh/bin/cloudflared","source":"cached"}`；
+  工作 VM → `{"path":"/home/work/.dsh/bin/cloudflared","source":"cached"}`（都是上一轮留下的那份，**命中缓存不联网**，
+  正是「已装好的机器不受影响」）。
+- ⚠️ 笔电自己的 profile 仍是 `file:E:/work/work_dsh/dsh-push/host-plugin/dsh-push-host-0.3.1.tgz`（0.3.1），
+  本次没动它 —— 那是作者本机的开发挂载，不是发布形态。
 
 ### 局限
 
