@@ -2829,3 +2829,70 @@ PR #9779 **merged=true**，合并者 fkysly（社区维护者）。合并时维�
    修法：检索顺序 `-GitHubToken` → 环境变量 `DSH_PR_WATCH_TOKEN` → `%LOCALAPPDATA%\dsh-pr-watch\github-token.txt`。
    **token 绝不能放进 `verify/config.local.ps1`**：那个文件虽然写在 .gitignore 里，但早已被 `git add` 跟踪
    （`git ls-files` 能查到），写进去会被推到 gitee / github。放在 state 目录（仓库外）最安全。
+
+## §7.29 host 插件 v0.4.0：没装 Tailscale 也能远程访问（2026-10-28，用户 m15414/m15528）
+
+### 需求
+User said (m15414): 「之后能否再做个新功能，因为有些用户可能是没有安装tailscale的，能否让其也能远程访问」
+User said (m15528): 「用户肯定不希望重启后还得再扫码吧，最好是能持久30天之类的。」
+
+### 为什么不能直接把 3081 暴露出去（实测两道栅栏）
+| 请求 | Host | Origin | 结果 |
+|---|---|---|---|
+| `GET /api/session/list` | `abc.trycloudflare.com` | — | **403 host-not-trusted** |
+| `GET /api/session/list` | `127.0.0.1:3081` | `https://abc.trycloudflare.com` | **403 origin-not-trusted** |
+| `GET /`（带合法 token） | `abc.trycloudflare.com` | — | 303 → 200（首页能开） |
+
+⇒ 陌生域名下「页面能打开、接口全 403」。只改 `--trusted-host` 不够，**Origin 也必须改写**。
+另外 DSH 自己的 token 每次重启都变 —— 这正是「重启后还要再扫码」的根因。
+
+### 方案
+手机 → Cloudflare 快速隧道 → **内层改写网关**（`127.0.0.1:<随机端口>`）→ DSH `127.0.0.1:3081`。
+网关把 Host/Origin/Referer 全程改写成回环，并**替客户端注入 DSH 自己的登录 cookie**
+（从 `~/.dsh/web.log` 现取，随 DSH 重启自动刷新）。对外只发一条 `?k=<口令>` 的 30 天链接。
+
+- 首次访问 `?k=` → 种 `dshpush-remote` cookie（`Max-Age=2592000`=30 天、HttpOnly、SameSite=Lax）
+  → **303 把 `?k=` 从地址栏抹掉**（防截图转发泄露）。
+- cookie 里存的是 `HMAC-SHA256(secret)`，**不是口令原文**；比较用 `timingSafeEqual`。
+- 加了口令门就**不能裸暴露**：隧道是公网可达的。
+
+### 文件
+- 新增 `host-plugin/lib/remote.js`（约 590 行）：`newRemoteSecret()` / `remoteCookieToken()` /
+  `remoteMessage()` / `class RemoteAccess`（网关 + 隧道 + WS 升级 + 断线退避重连 + `waitPublic()`）。
+- `host-plugin/lib/index.js`：`class RemoteAccessor`（约 300 行）+ schema 11 个字段 + `apply()` 接线。
+- `host-plugin/lib/client.js`：设置页第 4 行「远程访问」（`order: 140`）：开关 / 重新推送 / 换口令 /
+  重建隧道 + 状态 + 可复制的链接 textarea。
+- `host-plugin/lib/credentials.mjs`：`remoteSecret`/`remoteBin`/`remoteEnabled` 三个键（`SECRET_KEYS` 含 remoteSecret）。
+- `host-plugin/package.json`：`exports["./remote"]`，版本 0.3.2 → **0.4.0**。
+
+### 四个必须记住的坑（都有实测依据）
+1. **`.volatile()` 字段在 `resolvePluginConfig` 里是 cosmokit ref 对象**，既不是 `''` 也不是
+   `undefined`/`null` ⇒ 被当成「用户显式配置」，`String(ref)` 变成 `[object Object]`（15 字符）
+   把凭据文件的值盖掉。`remoteSecret` 靠长度 ≥16 判有效，于是**每次开机都重新生成口令、前一天
+   推给手机的链接当天失效**。修法：`resolvePluginConfig` 里先用 `volatileValue()` 解开 ref 再判空。
+   （`dockerfile` 那条老注释说的「空串算没设」只覆盖了 = '' 的情况。）
+2. **开关的落盘键不能用 schema 里的布尔**：`remoteAccess: z.boolean().default(false)` 的默认值
+   会反压凭据文件里的 `true`（`false` 是「有意义的显式值」，不会被 `explicit` 丢掉）。
+   改用 **`remoteEnabled: 'on'|'off'`**（不是 DEFAULTS 的键，原样透传）。
+3. **`waitPublic()` 不能省**：cloudflared 打印域名后 Cloudflare 边缘还要 **3~8 秒**（实测 9.0~12.9s）
+   才挂上，这期间访问回 **530**。不等待就推送，用户点开是 Cloudflare 报错页。
+4. **WebSocket 升级要补回 `Connection`/`Upgrade`**：`HOP_BY_HOP` 会剔掉它们（普通请求正确），
+   缺了上游不触发 upgrade → 浏览器报 `Connection was closed before it was established`。
+   另：Node 的 WS `onerror` message 常是空串，必须自己加超时才能区分「报错」与「拒绝」。
+
+### 验收（全部实测 PASS）
+- `node --check` 三个文件 rc=0；`plugin-selftest.mjs` **149/149**。
+- 真实隧道全链（`C:\Temp\rt7.mjs`）：`waitPublic=true took 12.9s` → 无口令 **401** → `?k=` **303**
+  + `Max-Age=2592000（30 天）` → 首页 **200（42,295 B）** → `POST /api/session/list` **200** →
+  `wss://…/api/remote.mux` **OPEN OK**。
+- 开机镜像（`C:\Temp\rt-boot.mjs`）：凭据文件 `remoteEnabled=on` + volatile 全空 ⇒ 自己起隧道、
+  `remoteAccess` 镜像成 `true`（否则设置行显示「开启」而隧道在跑）、口令沿用存盘值。
+- **旧口令仍可用**（`C:\Temp\rt-old-secret.mjs`）：拿凭据文件里的口令去开**新一轮隧道** →
+  `303` + `maxAgeDays=30` + 首页 `200` ⇒ 这就是「30 天不用重扫」的证明。
+- npm：`dsh-push-host@0.4.0` 已发布，shasum `022a56b44ef94c3258b95435c7d83a672a6606c7`，
+  11 文件 / 81.5 kB / 解包 225.5 kB；空目录 `npm install dsh-push-host@0.4.0` 后 `node --check` 两个入口 0 错。
+- 仓库：私有仓 `36a3548`（已推 gitee）；公开镜像四端 **`a52ba82`**。
+
+### 局限
+快速隧道域名每次重启都变（Cloudflare 免费策略），**但口令不变，旧链接仍可用到过期**；域名变了会
+自动重推一条新的。想要固定地址需要自有域名 + 命名隧道（下一版）。
