@@ -3272,3 +3272,52 @@ const APP_QR_BITS  = "/gxj/BbUUG66Drt1LLXbp8kuwS9xB/...";  // base64 行优先�
   可靠形态：`scp` 脚本到 `/tmp` → `bash /tmp/x.sh > /tmp/o.log 2>&1` → 单独 `cat` 日志。
 - 笔电 `pnpm add dsh-push-host@0.6.1` 会把 profile `package.json` 里的
   `file:E:/.../dsh-push-host-0.6.0.tgz` 改写为 `"0.6.1"`，属正常（之后走 registry 而不是本地 tgz）。
+
+## §7.40 自助开通（免发号密钥）+ 真实客户端 IP 透传（host-plugin v0.7.0 → v0.7.2，2026-10-29）
+
+### 需求
+用户 m19862「那如果是其他的用户呢，他们如果安装了我们的插件该怎么办呢」、m19916「最终目标是，客户安装插件、手机 app 后，可以直接扫码完成配对，就能正常接收通知、正常进网页，不需要其他繁琐步骤」、m19988「动手吧，按你觉得合理的来」。
+
+旧流程要求用户在插件设置里填 `provisionToken` 才能发通行证，这等于「必须先找我们」。改成**任何人装上插件就能自己领一条通道**。
+
+### 服务端（阿里云 relay）
+- `/usr/local/bin/dsh-provd.py` 新增免鉴权 `POST /enroll`（唯一不需要 token 的动词）：校验 `name` 规则 `^[a-z0-9][a-z0-9-]{1,30}$`，随即建 ntfy 用户 + 发读/写 token + 注册 answer-relay host（`hk_` 由 relay 自动生成），一次性返回 `topic/readToken/writeToken/host/hostToken/relayBase/answerBase`。
+- 幂等：同名重入直接回同一套凭据，不重复建号。
+- 限流：`/var/lib/dsh-provd/enroll.json` 按 IP 记账，**每小时 2 次、每天 6 次**；超限回 `429 {error, retryAfter}`。状态文件在**进程内存里也有副本**，只删文件不重启服务不生效——必须 `systemctl restart dsh-provd`。
+
+### ★ 排查出来的真实缺陷：所有外部客户端都被记成 `127.0.0.1`
+现象：VM1（外网出口 `182.148.119.196`）走公网 `/provision/enroll`，`enroll.json` 里记的却是 `127.0.0.1`。
+
+根因链（三层，缺一不可）：
+1. 边缘 `edge` 容器（host 网络）的 **stream 层**在 443 用 `ssl_preread` 按 SNI 分流，`proxy_pass` 把**原始 TCP 字节**转给 `127.0.0.1:9443` —— 于是 9443 上 HTTP 层看到的 `$remote_addr` 对**所有客户端**都是 `127.0.0.1`。
+2. `edge-http.conf` 的 `/provision/` 确实写了 `proxy_set_header X-Real-IP $remote_addr;`（配置本身没错），但 `$remote_addr` 此时已经是 127.0.0.1。
+3. `dsh-provd.py` 取 IP 的代码 `fwd = (self.headers.get('X-Real-IP') or '').strip() or self.client_address[0]` 本身也是对的。
+
+⇒ 后果：限流退化成**全局每天 6 次**，第 7 个用户就永久 429。这是上线后才会炸、且极难复现的缺陷。
+
+修法：用 **PROXY protocol** 把真实 IP 从 stream 层带到 http 层（edge 的 nginx 1.29.2 带 `--with-stream_realip_module`）：
+- `/root/edge/nginx.conf`（容器的 `/etc/nginx/nginx.conf` 是 **ro bind mount**，必须改宿主机文件）：stream server 里加 `proxy_protocol on;`；`http {}` 顶部加 `set_real_ip_from 127.0.0.1; set_real_ip_from ::1; real_ip_header proxy_protocol;`。
+- `/root/edge/conf.d/edge-http.conf`：四个 `listen ...:9443 ssl;` 全部改成 `listen ...:9443 ssl proxy_protocol;`（bind mount 也是 ro，改宿主机）。
+- `docker exec edge nginx -t` 通过后 `nginx -s reload`。
+- 备份留在 `/root/edge/*.bak-realip-<ts>`。
+
+验收（全部实测）：VM1 → 记 `182.148.119.196`；笔电 → 记 `111.9.5.85`；两条完全独立；VM1 第 3 次被 `429 {retryAfter:3600}` 挡住时笔电不受影响。四站点 `ntfy/blog/git/cpyh.xyz` 全部 200，`/provision/enroll` 的 GET 回 401（正常）。
+
+### 插件端（host-plugin）
+- `PushHost` 拿不到 `provisionToken` 时不再报「缺少发号密钥」，面板显示**一键开通**按钮；点击 → volatile `provisionAction=enroll` + `provisionSeq` → 宿主 `enrollCall()` → 成功后 `writeCredentialsPatch()` 写盘 + 内存注入 `host/topic/ntfyToken` + 重启轮询，用户**不必重启宿主**就能收到第一条推送。
+- `lib/pairqr.mjs`：`pairPayload/pairQrMatrix/pairQrSvg/pairQrDataUrl`。**只把点阵（`{count, bits}`，base64 行优先位图）放进 volatile**，不塞 SVG/data URL——volatile 会落到 `cordis.patch.yml`，几十 KB 会把补丁文件撑起来。
+- 载荷 `dshpush://v1?base=&topic=&token=&web=&name=`：`web`/`name` 做 percent-encoding，`base/topic/token` 保持原文以兼容旧 App（旧 App 忽略多出两项）。
+
+### UX 缺陷（v0.7.1/0.7.2 修）
+1. **失败后按钮卡死**：busy 解锁只有「`provisionDone === seq`」和 30s 硬超时两条路径。宿主那次 volatile 写一旦丢了（补丁热重启 / 网络断），按钮半小时内点不动，用户看到的是「点了没反应」。修：硬超时 30s→**12s**，并新增「`provisionResult` 一变就立刻解锁」（失败时宿主同样会写 `开通失败：…`，这条路径以前完全没被用上）。
+2. **429 提示不说多久**：服务端回 `retryAfter` 秒数，客户端原来只显示「开通太频繁」。「等一分钟」和「等一天」差太多 → 现在换算成 `N 小时 / N 分钟`。
+
+### 发布
+- npm：`0.7.0`（一键开通）→ `0.7.1`（面板解锁）→ **`0.7.2`**（429 提示）。`dist-tags.latest = 0.7.2`；每个版本发完都要 `npm dist-tag add ... latest` 并等 registry 传播（实测 `npm view` 会先看到旧值）。
+- 自测：`plugin-selftest.mjs` **161/161**（含 `/enroll` 200、429+retryAfter、字段残缺三态）。
+- 部署验证：VM1 / 笔电 `pnpm add dsh-push-host@0.7.x` → 重启 `dsh-net.sh restart` → 从 index 抓 `dsh-push-host/client.js&rev=` 拉模块，`grep 12000/resultRef` + `node --check` 双证。
+- 私有仓 `2f427a4`；公开镜像四端 `9895723`。
+
+### 局限
+- 免费额度按 IP 记账：同一出口 IP（公司/校园 NAT）后面的人共享配额。
+- 快速隧道域名每次重启会变，但口令不变，旧链接有效到过期。
