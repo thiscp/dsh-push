@@ -282,6 +282,8 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { style: { fontWeight: 600 } }, "扫码配对"),
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
 					"点一下生成二维码，用手机 App 扫它即可同时配好推送通行证与网页入口（隧道模式会自动带上口令），不用手填。"),
+				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
+					"第一次用会顺手把凭据自动开好（不需要发号密钥，也不需要手工填任何东西）；开通失败才会在这里显示原因。"),
 				react.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
 					react.createElement("button", {
 						type: "button", disabled: !writable, onClick: generate,

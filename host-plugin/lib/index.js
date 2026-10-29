@@ -1512,6 +1512,11 @@ export class PassProvisioner {
     const seq = String(this.read('provisionSeq') || '')
     const action = String(this.read('provisionAction') || '')
     if (this.busy || seq === '' || seq === this.lastSeq) return
+    // v0.7.6：`provisionSeq` 会被持久化进 cordis.patch.yml，而 `lastSeq` 只在内存里 ⇒
+    // 每次宿主重启都会把「上一次的 enroll」再执行一遍（实测：VM1 重启后 topic 从 `dsh`
+    // 变成新的 `dsh-local`，等于每次重启都白烧一次 /enroll 配额并换掉推送主题）。
+    // 用持久化的 `provisionDone` 做幂等闸：这个请求号已经处理完就永不再跑。
+    if (String(this.read('provisionDone') || '') === seq) return
     if (action !== 'issue' && action !== 'revoke' && action !== 'refresh' && action !== 'enroll') return
     this.lastSeq = seq
     this.busy = true
@@ -1625,6 +1630,8 @@ export class PassProvisioner {
     } finally {
       this.busy = false
       this.write('provisionDone', seq)
+      // 处理完立刻清掉动作，避免补丁文件里留着一个「待执行」的 enroll 被误读。
+      try { this.write('provisionAction', '') } catch { /* 清不掉也不致命，done 闸会兜住 */ }
       this.saveStore()
     }
   }
@@ -2033,6 +2040,14 @@ export class PairBox {
     this.busy = false
     this.scheduled = false
     this.mirroring = false
+    /**
+     * v0.7.6：二维码的意义就是「不用手工配」。没有凭据时点「生成二维码」就直接自动走一次
+     * 免密钥 /enroll，这里记住已经为哪个请求号发起过开通，避免开通失败后被无限重试。
+     */
+    this.enrollTried = ''
+    /** v0.7.6：自助开通走这里发起，自测与宿主都可以注入（默认就是真的 /enroll）。 */
+    this.enrollCall = deps.enrollCall || enrollCall
+    this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
   }
 
   read(key) { return volatileValue(this.config[key], '') }
@@ -2102,6 +2117,72 @@ export class PairBox {
     }
   }
 
+  /**
+   * v0.7.6：免密钥自助开通（点「生成配对二维码」时没有凭据就自动走这里）。
+   *
+   * 复用 v0.7.0 一键开通那套 `/enroll` 语义，但不经过 volatile 请求号——那条路径要经过
+   * PassProvisioner 的轮询，而这里已经在 PairBox 的异步回调里，直接调更短也更好排错。
+   * 全程**不在 await 期间写 volatile**（写 volatile 会让本插件 fiber 热重启，把这次开通腰斩），
+   * 所以顺序是：先联网 → 写凭据文件 → 同步内存 resolved → 最后才镜像状态并重算二维码。
+   */
+  async autoEnroll(key) {
+    this.enrollTried = key
+    this.enrolling = true
+    try {
+      const name = provisionNameSuggest(this.resolved)
+      const out = await this.enrollCall({ base: this.resolved.provisionBase, name })
+      if (!out.ok) {
+        this.log('生成二维码时自助开通失败：' + out.error)
+        this.enrolling = false
+        try {
+          this.remember({ count: 0, bits: '', text: '', status: '自助开通失败：' + out.error, done: '' })
+          this.mirror('pairStatus', '自助开通失败：' + out.error)
+        } catch { /* 连写都失败就只剩日志 */ }
+        return
+      }
+      const data = out.data || {}
+      const patch = {
+        host: data.host || data.topic,
+        topic: data.topic,
+        ntfyToken: data.writeToken,
+        phoneToken: data.readToken,
+      }
+      if (data.hostToken) patch.hostToken = data.hostToken
+      if (data.relayBase) patch.relayBase = data.relayBase
+      if (data.answerBase) patch.answerBase = data.answerBase
+      if (this.credentialsPath) {
+        try {
+          // 别名一起写（理由同 PassProvisioner）：文件里两只 token 的新旧必须一致，
+          // 只写新键会把旧值留在文件里骗下一个读文件的人。
+          const saved = this.writeCreds(this.credentialsPath, {
+            host: patch.host,
+            topic: patch.topic,
+            ntfyToken: patch.ntfyToken, writeToken: patch.ntfyToken,
+            phoneToken: patch.phoneToken, readToken: patch.phoneToken,
+            ...(patch.hostToken ? { hostToken: patch.hostToken } : {}),
+            ...(patch.relayBase ? { relayBase: patch.relayBase } : {}),
+            ...(patch.answerBase ? { answerBase: patch.answerBase } : {}),
+          })
+          this.log('自助开通成功，已写回凭据文件 ' + saved.path)
+        } catch (error) {
+          this.log('凭据文件写入失败：' + String(error && error.message ? error.message : error))
+        }
+      }
+      // 内存态立刻生效：resolved 是各组件共享的那个对象，push 链路读的就是它。
+      Object.assign(this.resolved, patch)
+      try { this.host.rearm(patch) } catch (error) {
+        this.log('开通后启用推送失败：' + String(error && error.message ? error.message : error))
+      }
+      this.enrolling = false
+      // 最后才排下一次计算：此时凭据已经在内存里，refresh() 能真正出码。
+      this.schedule()
+    } catch (error) {
+      this.enrolling = false
+      this.log('生成二维码时自助开通异常：' + String(error && error.message ? error.message : error))
+      try { this.mirror('pairStatus', '自助开通异常：' + String(error && error.message ? error.message : error)) } catch { /* 已记日志 */ }
+    }
+  }
+
   payload() {
     return pairPayload({
       relayBase: String(this.readAny('relayBase') || ''),
@@ -2133,7 +2214,20 @@ export class PairBox {
         this.mirror('pairStatus', why)
       }
       if (!payload || payload.length < 12 || topic === '' || token === '') {
-        fail('凭据不完整：先配好 relay / topic / readToken 再生成二维码')
+        // v0.7.6：二维码存在的意义就是「不用手工配 relay/topic/readToken」。
+        // 缺凭据时不再报错要用户去填，而是当场走一次免密钥 /enroll 自助开通，成功后自动出码。
+        // 同一个请求号只自动开通一次，避免用户连点把 /enroll 的日配额烧光。
+        const seq = String(this.read('pairSeq') || '').trim()
+        const key = seq === '' ? 'auto' : seq
+        if (this.enrolling) {
+          fail('正在自助开通（免发号密钥），请稍候…')
+          return
+        }
+        if (this.enrollTried !== key) {
+          void this.autoEnroll(key)
+          return
+        }
+        fail('自助开通未成功，请再点一次「生成配对二维码」重试')
         return
       }
       if (web.length > PAIR_WEB_MAX) {

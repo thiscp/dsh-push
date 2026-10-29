@@ -153,15 +153,43 @@ function decodeBits(bits, count) {
   check('refresh: leaves a log line', host.lines.some((line) => line.includes('配对二维码已生成')), JSON.stringify(host.lines))
 }
 
-// ── 7. missing credentials → refuse, explain, never draw a fake QR ──────────────
+// ── 7. v0.7.6: missing credentials → auto-enroll, never draw a fake QR ────────
+// 二维码存在的意义就是「不用手工配」。所以缺凭据时不再报「请先配 relay/topic/readToken」，
+// 而是当场走一次免密钥 /enroll；开通失败才把原因写进 pairStatus。
 {
   const config = makeConfig({})
   const host = makeHost('')
-  const box = new PairBox(makeCtx(), config, {}, host, host.log, { credentialsPath: 'C:/creds.json' })
+  const calls = []
+  const box = new PairBox(makeCtx(), config, {}, host, host.log, {
+    credentialsPath: 'C:/creds.json',
+    enrollCall: async (opts) => { calls.push(opts); return { ok: false, error: 'quota exceeded' } },
+  })
   box.refresh()
+  box.refresh()   // 同一请求号不得重复开通，否则连点会把日配额烧光
   check('missing creds: module count stays zero', config.pairCount === 0, String(config.pairCount))
   check('missing creds: no bit-map', (config.pairBits ?? '') === '', String(config.pairBits))
-  check('missing creds: status explains what is missing', String(config.pairStatus).includes('凭据不完整'), String(config.pairStatus))
+  check('missing creds: auto-enroll fires exactly once', calls.length === 1, JSON.stringify(calls.length))
+  await new Promise((r) => setTimeout(r, 30))
+  check('missing creds: failure is explained in status', String(config.pairStatus).includes('自助开通失败'), String(config.pairStatus))
+}
+
+// ── 7b. v0.7.6: auto-enroll success feeds the QR in one shot ───────────────────
+{
+  const config = makeConfig({ pairSeq: 'seq-auto-1' })
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  const resolved = { host: 'auto-host' }
+  const written = []
+  const box = new PairBox(makeCtx(), config, resolved, host, host.log, {
+    credentialsPath: '',
+    enrollCall: async () => ({ ok: true, data: { topic: 'dsh-auto', readToken: 'tk_read', writeToken: 'tk_write', relayBase: 'https://ntfy.example.test' } }),
+    writeCredentialsPatch: (path, patch) => { written.push(patch); return { path } },
+  })
+  box.refresh()
+  await new Promise((r) => setTimeout(r, 60))
+  check('auto-enroll: memory resolved gets the new topic', resolved.topic === 'dsh-auto', String(resolved.topic))
+  check('auto-enroll: the QR is produced without a second click', typeof config.pairCount === 'number' && config.pairCount >= 21, String(config.pairCount))
+  check('auto-enroll: payload carries the fresh token', String(config.pairText).includes('token=tk_read'), String(config.pairText))
+  check('auto-enroll: done echoes the seq that triggered it', String(config.pairDone) === 'seq-auto-1', String(config.pairDone))
 }
 
 // ── 8. pairSeq drives exactly one refresh ──────────────────────────────────────
@@ -238,14 +266,18 @@ function decodeBits(bits, count) {
   const deps = { credentialsPath: 'C:/creds-fail.json' }
   const config = makeConfig({ relayBase: '', topic: '', phoneToken: '' })
   const host = makeHost('')
-  const first = new PairBox(makeCtx(), config, { host: 'fail-host' }, host, host.log, deps)
+  const first = new PairBox(makeCtx(), config, { host: 'fail-host' }, host, host.log, {
+    ...deps,
+    enrollCall: async () => ({ ok: false, error: 'offline' }),
+  })
   first.refresh()
-  check('failure: status explains what is missing', String(config.pairStatus).includes('凭据不完整'), String(config.pairStatus))
+  await new Promise((r) => setTimeout(r, 30))
+  check('failure: status explains what is missing', String(config.pairStatus).includes('自助开通失败'), String(config.pairStatus))
   const fresh = makeConfig({})
   const second = new PairBox(makeCtx(), fresh, { host: 'fail-host' }, host, host.log, deps)
   second.applyStore()
   // 失败结果以前只写 volatile、不落 store ⇒ 热重启后提示消失，页面变成「什么都没发生」。
-  check('failure: the reason survives a fiber restart', String(fresh.pairStatus).includes('凭据不完整'), String(fresh.pairStatus))
+  check('failure: the reason survives a fiber restart', String(fresh.pairStatus).includes('自助开通失败'), String(fresh.pairStatus))
   pairStore()[first.storeKey()] = undefined
 }
 
