@@ -181,7 +181,7 @@ export const Config = z.object({
    * 连点两次也必须各得一次结果，所以不能只靠 action 字段的变化触发。
    */
   provisionName: z.string().default('').volatile(),
-  provisionAction: z.union(['', 'issue', 'revoke', 'refresh']).default('').volatile(),
+  provisionAction: z.union(['', 'issue', 'revoke', 'refresh', 'enroll']).default('').volatile(),
   provisionSeq: z.string().default('').volatile(),
   /** 最近一次操作的结果文本（'' = 无）：成功时是通行证原文，失败时是给人看的中文原因。 */
   provisionResult: z.string().default('').volatile(),
@@ -191,6 +191,13 @@ export const Config = z.object({
   provisionDefault: z.string().default('').volatile(),
   /** 宿主处理完的请求号回写。 */
   provisionDone: z.string().default('').volatile(),
+  /**
+   * 本机凭据是否已生效（'1' / '0'，v0.7.0 一键开通用）。
+   *
+   * 全新用户装完插件时 relay/topic/token 全空，这时「发通行证」按钮只会回「缺少发号密钥」——
+   * 对一个只想把手机连上的用户毫无意义。页面据此改显「一键开通」，宿主在启动时回写一次。
+   */
+  provisionReady: z.string().default('').volatile(),
 
   // ── 远程访问（v0.4.0）────────────────────────────────────────────────────────────
   /** 总开关：只有 true 才起网关 + 隧道。 */
@@ -304,6 +311,8 @@ class PushHost {
     /** callId → timestamp of the last complaint we logged (log throttling). */
     this.complained = new Map()
     this.polling = false
+    /** Poll interval armed exactly once, whether by start() or by rearm() after enrollment. */
+    this.pollArmed = false
     /** Last poll's callId set, so the queue line is printed only when it changes. */
     this.lastQueue = ''
   }
@@ -330,12 +339,55 @@ class PushHost {
     this.ctx.interval(() => {
       void this.pollOnce()
     }, this.config.pollIntervalMs)
+    this.pollArmed = true
     this.log(
       'relay ready host=' + this.config.host +
       ' topic=' + this.config.topic +
       ' poll=' + String(this.config.pollIntervalMs) + 'ms' +
       (this.config.claimForeground === true ? ' claimForeground=on' : ''),
     )
+  }
+
+  /**
+   * Swap in freshly provisioned credentials **without** waiting for a fiber restart (v0.7.0).
+   *
+   * Why this exists: a brand-new install has no `host` / `hostToken`, so `start()` took the
+   *「relay disabled」early return and never registered the poll interval. After 一键开通 the
+   * credentials land in `this.config`, but the poll was never armed — the user would have had to
+   * restart the whole DSH host before the first push could arrive. Re-arming here makes the very
+   * first notification of a brand-new user work immediately.
+   *
+   * Safe to call repeatedly: the interval is armed exactly once (`this.pollArmed`), and the relay
+   * client is rebuilt because it caches host/hostToken/topic in its constructor.
+   */
+  rearm(patch = {}) {
+    Object.assign(this.config, patch)
+    this.relay = new RelayClient({
+      relayBase: this.config.relayBase,
+      host: this.config.host,
+      hostToken: this.config.hostToken,
+      regToken: this.config.regToken,
+      ntfyToken: this.config.ntfyToken,
+      topic: this.config.topic,
+    })
+    if (!this.enabled) {
+      this.log('relay still disabled after rearm (host/hostToken empty): push/answer off')
+      return false
+    }
+    if (this.pollArmed) {
+      this.log('relay re-armed host=' + this.config.host + ' topic=' + this.config.topic)
+      return true
+    }
+    this.pollArmed = true
+    this.ctx.interval(() => {
+      void this.pollOnce()
+    }, this.config.pollIntervalMs)
+    this.log(
+      'relay armed by enrollment host=' + this.config.host +
+      ' topic=' + this.config.topic +
+      ' poll=' + String(this.config.pollIntervalMs) + 'ms',
+    )
+    return true
   }
 
   stop() {
@@ -1263,6 +1315,53 @@ export async function provisionCall({ base, token, path, body, fetchImpl = globa
 }
 
 /**
+ * 自助开通（v0.7.0）：**不需要发号密钥**的一次调用。
+ *
+ * 这是整条产品路径的关键一环。此前 `/issue` 要求 `provisionToken`（我们自己的运营密钥），
+ * 于是「别人装了插件」永远停在「缺少发号密钥」——用户 m19862 / m19916 要的是「装完插件+App，
+ * 扫一下就通了」，那第一张通行证就只能由用户自己从服务端自助领取。
+ *
+ * 服务端 `/enroll` 是唯一免鉴权的动词（按 IP 限速 2/小时、6/天，全局 40/天、总量上限 500），
+ * 一次性返回 topic + 只读/只写 token + relay 队列 hostToken，于是本机立刻能推能收。
+ *
+ * 与 `provisionCall` 分开写而不是加个 `auth:false` 开关：两者的错误文案和后果完全不同
+ * （这里失败意味着用户彻底用不了，必须给出人能读懂的原因）。
+ */
+export async function enrollCall({ base, name, fetchImpl = globalThis.fetch } = {}) {
+  if (typeof fetchImpl !== 'function') return { ok: false, error: '这个 Node 运行时没有 fetch，无法开通' }
+  let res
+  try {
+    res = await fetchImpl(provisionUrl(base, 'enroll'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(name ? { name } : {}),
+    })
+  } catch (error) {
+    return { ok: false, error: '开通服务不可达：' + String(error && error.message ? error.message : error) }
+  }
+  let text = ''
+  try { text = String(await res.text()) } catch { text = '' }
+  let data = null
+  try { data = JSON.parse(text) } catch { data = null }
+  if (res.status === 429) {
+    const why = data && data.error ? data.error : '配额已满'
+    // v0.7.1：服务端会回 retryAfter 秒数，提示里要说清多久后能再试，
+    // 否则用户只看到「太频繁」，不知道是等一分钟还是等一天。
+    const wait = data && Number(data.retryAfter) > 0 ? Number(data.retryAfter) : 0
+    const human = wait >= 3600 ? Math.ceil(wait / 3600) + ' 小时' : wait >= 60 ? Math.ceil(wait / 60) + ' 分钟' : (wait > 0 ? wait + ' 秒' : '稍后')
+    return { ok: false, error: '开通太频繁：同一网络' + human + '内已用满名额，请等' + human + '后再试' + (why ? '（' + why + '）' : '') }
+  }
+  if (!res.ok) {
+    const why = data && data.error ? data.error : text.slice(0, 120)
+    return { ok: false, error: '开通服务返回 ' + res.status + (why ? '：' + why : '') }
+  }
+  if (!data || !data.topic || !data.readToken || !data.writeToken) {
+    return { ok: false, error: '开通服务返回不完整（缺 topic / token）' }
+  }
+  return { ok: true, data }
+}
+
+/**
  * 把发到的凭据写回插件自己的凭据文件（先 copyFileSync 备份）。只动 topic / ntfyToken /
  * phoneToken 三项，其它字段原样保留；文件不存在时按目录建好再写。
  */
@@ -1321,6 +1420,8 @@ export class PassProvisioner {
     this.fetchImpl = deps.fetchImpl || globalThis.fetch
     this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
     this.credentialsPath = deps.credentialsPath || ''
+    /** 一键开通成功后回调宿主「热重配 + 起轮询」（v0.7.0）。 */
+    this.onEnrolled = deps.onEnrolled || null
     this.busy = false
     this.scheduled = false
     /** 已经处理过的请求号；同一个 seq 绝不重复发号（重复点按由页面换新 seq）。 */
@@ -1365,6 +1466,23 @@ export class PassProvisioner {
   publishDefault() {
     const suggested = provisionNameSuggest(this.resolved)
     if (this.read('provisionDefault') !== suggested) this.write('provisionDefault', suggested)
+    this.publishReady()
+  }
+
+  /**
+   * 回写「本机是否已经有可用凭据」（v0.7.0）。
+   *
+   * 判据取 `this.resolved`（= 凭据文件 + profile + env 合成后的生效值），不看 volatile：
+   * 页面要回答的是「这台机器现在能不能推」，而不是「上次谁点过按钮」。
+   * topic 与 host 缺任一就不能推（RelayClient 会把 Authorization 写成空的 Bearer）。
+   */
+  publishReady() {
+    const r = this.resolved || {}
+    const ready = String(r.host || '') !== '' && String(r.hostToken || '') !== '' &&
+      String(r.topic || '') !== '' && String(r.ntfyToken || '') !== ''
+    const next = ready ? '1' : '0'
+    if (this.read('provisionReady') !== next) this.write('provisionReady', next)
+    return ready
   }
 
   /** volatile-update 发生在 settings RPC 的事务里 ⇒ 挪到下一个宏任务再跑（同 AskUserModeSwitch）。 */
@@ -1394,12 +1512,65 @@ export class PassProvisioner {
     const seq = String(this.read('provisionSeq') || '')
     const action = String(this.read('provisionAction') || '')
     if (this.busy || seq === '' || seq === this.lastSeq) return
-    if (action !== 'issue' && action !== 'revoke' && action !== 'refresh') return
+    if (action !== 'issue' && action !== 'revoke' && action !== 'refresh' && action !== 'enroll') return
     this.lastSeq = seq
     this.busy = true
     const name = String(this.read('provisionName') || '').trim() || provisionNameSuggest(this.resolved)
     try {
-      if (action === 'issue') {
+      if (action === 'enroll') {
+        // 一键开通（v0.7.0）：全新用户没有发号密钥，走免鉴权的 /enroll 领第一张通行证。
+        // 成功即写凭据文件并把新值注入内存 + 重新起轮询，用户不必重启宿主就能收到第一条推送。
+        const out = await enrollCall({
+          base: this.resolved.provisionBase, name, fetchImpl: this.fetchImpl,
+        })
+        if (!out.ok) {
+          this.write('provisionResult', '开通失败：' + out.error)
+          this.log('自助开通失败：' + out.error)
+        } else {
+          const data = out.data || {}
+          const text = passText({
+            relayBase: data.relayBase || this.resolved.relayBase,
+            topic: data.topic, readToken: data.readToken,
+          })
+          this.write('provisionResult', text)
+          this.log('自助开通成功：topic=' + data.topic + '，通行证文本已回写页面')
+          const patch = {
+            host: data.host || data.topic,
+            topic: data.topic,
+            ntfyToken: data.writeToken,
+            phoneToken: data.readToken,
+          }
+          if (data.hostToken) patch.hostToken = data.hostToken
+          if (data.relayBase) patch.relayBase = data.relayBase
+          if (data.answerBase) patch.answerBase = data.answerBase
+          if (this.credentialsPath) {
+            try {
+              // 别名一起写（理由同 issue 分支）：credentials.mjs 里 ntfyToken 排在 writetoken
+              // 之前，新值一定赢；但只写新键会把旧值留在文件里骗下一个读文件的人。
+              const saved = this.writeCreds(this.credentialsPath, {
+                host: patch.host,
+                topic: patch.topic,
+                ntfyToken: patch.ntfyToken, writeToken: patch.ntfyToken,
+                phoneToken: patch.phoneToken, readToken: patch.phoneToken,
+                ...(patch.hostToken ? { hostToken: patch.hostToken } : {}),
+                ...(patch.relayBase ? { relayBase: patch.relayBase } : {}),
+                ...(patch.answerBase ? { answerBase: patch.answerBase } : {}),
+              })
+              this.log('已写回凭据文件 ' + saved.path)
+            } catch (error) {
+              this.log('凭据文件写入失败：' + String(error && error.message ? error.message : error))
+            }
+          }
+          // 内存态立刻生效：resolved 是各组件共享的那个对象，push 链路读的就是它。
+          Object.assign(this.resolved, patch)
+          this.publishReady()
+          if (this.onEnrolled) {
+            try { this.onEnrolled(patch) } catch (error) {
+              this.log('开通后启用推送失败：' + String(error && error.message ? error.message : error))
+            }
+          }
+        }
+      } else if (action === 'issue') {
         const out = await provisionCall({
           base: this.resolved.provisionBase, token: this.resolved.provisionToken,
           path: 'issue', body: { name }, fetchImpl: this.fetchImpl,
@@ -2039,8 +2210,16 @@ export function apply(ctx, config = {}) {
   // 通行证发号面板（v0.3.0）：网页写 volatile 的 provisionAction/Name/Seq → 这里调中继的
   // dsh-provd → 把通行证文本与列表镜像回 volatile 字段；发号成功顺手把 topic + 两只 token
   // 写回插件自己的凭据文件（先备份）。重启本插件 fiber 后按新 topic 发布。
+  // PairBox 在下面才创建，这里先用闭包占位：一键开通成功后要顺手把二维码也算出来，
+  // 用户点一次「一键开通」就能直接扫，不必再点「生成二维码」。
+  let pairBox = null
   new PassProvisioner(ctx, config, resolved, (message) => host.log(message), {
     credentialsPath: file.path,
+    // 一键开通后让推送链路当场生效：rearm 重建 RelayClient 并补上开机的轮询定时器。
+    onEnrolled: (patch) => {
+      host.rearm(patch)
+      if (pairBox) { try { pairBox.refresh() } catch { /* refresh 自己兜底 */ } }
+    },
   }).start()
   // 远程访问（v0.4.0）：默认关。开着就走「内层改写网关 + cloudflared 快速隧道」，
   // 把公网域名换成 30 天口令链接；隧道换了域名会自动重推给手机。
@@ -2051,10 +2230,11 @@ export function apply(ctx, config = {}) {
   // 扫码配对（v0.6.0）：网页点「生成二维码」→ volatile pairSeq 变 → 这里算出
   // `dshpush://v1?base=&topic=&token=&web=&name=` 的载荷与点阵，镜像回 volatile 给设置行画。
   // 隧道模式下网页入口从 accessor 现取（要带 `?k=` 口令），tailnet 模式取 web.log 里的地址。
-  new PairBox(ctx, config, resolved, host, (message) => host.log(message), {
+  pairBox = new PairBox(ctx, config, resolved, host, (message) => host.log(message), {
     credentialsPath: file.path,
     accessor,
-  }).start()
+  })
+  pairBox.start()
 }
 
 export { PushHost, resolveConfig, CONFIG_KEYS }

@@ -357,6 +357,8 @@ window.__ModuleLoader__.load({
 			const [busy, setBusy] = react.useState(false);
 			const [name, setName] = react.useState("");
 			const [copied, setCopied] = react.useState(false);
+			/** v0.7.1：点按钮那一刻的 result，用来判断「宿主有没有写回新结果」以提前解锁。 */
+			const resultRef = react.useRef("");
 			react.useEffect(() => {
 				const update = () => setSnapshot(scope.getSnapshot());
 				listeners.add(update);
@@ -369,12 +371,20 @@ window.__ModuleLoader__.load({
 			const value = snapshot.value ?? {};
 			const text = (key) => (typeof value[key] === "string" ? value[key] : "");
 			const suggested = text("provisionDefault");
+			/** 本机凭据是否已生效（宿主启动时回写 '1'/'0'）。'' 视为「还不知道」，按可用处理。 */
+			const readyFlag = text("provisionReady");
+			const enrolled = readyFlag !== "0";
 			const result = text("provisionResult");
 			const done = text("provisionDone");
 			const seq = text("provisionSeq");
 			react.useEffect(() => {
 				if (busy && done !== "" && done === seq) setBusy(false);
 			}, [done, seq, busy]);
+			// v0.7.1：result 一变就解锁——宿主失败时同样会写 provisionResult（"开通失败：…"），
+			// 这条路径以前完全没被用上，只能干等 30s 超时（用户看到「点了没反应」）。
+			react.useEffect(() => {
+				if (busy && result !== resultRef.current) setBusy(false);
+			}, [result, busy]);
 			const rawList = text("provisionList");
 			let passes = [];
 			let listError = "";
@@ -394,7 +404,11 @@ window.__ModuleLoader__.load({
 				if (action !== "refresh" && typed !== "") ops.push({ op: "set", path: ["provisionName"], value: typed });
 				setBusy(true);
 				setCopied(false);
-				setTimeout(() => setBusy(false), 30000);
+				resultRef.current = result;
+				// v0.7.1：解锁原来只有「provisionDone === seq」和 30s 硬超时两条路径。
+				// 宿主那次 volatile 写一旦丢了（补丁热重启 / 网络断），按钮会卡死半分钟，
+				// 用户看到的就是「点了没反应」。降到 12s，并在 result 一变就立刻解锁。
+				setTimeout(() => setBusy(false), 12000);
 				Promise.resolve()
 					.then(() => scope.mutate(ops, snapshot.revision))
 					.catch(() => setBusy(false))
@@ -416,18 +430,27 @@ window.__ModuleLoader__.load({
 			return react.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" } },
 				react.createElement("div", { style: { fontWeight: 600 } }, "通行证"),
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } },
-					"给手机签发一条专属通道：一个 topic + 一只只读 token。多人各用各的，通知互不串。"),
-				react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-					react.createElement("input", {
-						value: name, placeholder: suggested || "dsh-local",
-						onChange: (event) => setName(event.target.value),
-						disabled: !writable,
-						style: { padding: "6px 10px", borderRadius: 8, border: "1px solid currentColor", minWidth: 170, background: "transparent", color: "inherit" },
-					}),
-					btn(busy ? "处理中…" : "发通行证", () => ask("issue"), !writable),
-					btn("刷新列表", () => ask("refresh"), !writable)),
+					enrolled
+						? "给手机签发一条专属通道：一个 topic + 一只只读 token。多人各用各的，通知互不串。"
+						: "这台机器还没有推送凭据。点一下「一键开通」自动领一条专属通道（一个 topic + 一对 token），随后扫二维码即可配对。"),
+				enrolled
+					? react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+						react.createElement("input", {
+							value: name, placeholder: suggested || "dsh-local",
+							onChange: (event) => setName(event.target.value),
+							disabled: !writable,
+							style: { padding: "6px 10px", borderRadius: 8, border: "1px solid currentColor", minWidth: 170, background: "transparent", color: "inherit" },
+						}),
+						btn(busy ? "处理中…" : "发通行证", () => ask("issue"), !writable),
+						btn("刷新列表", () => ask("refresh"), !writable))
+					: react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+						btn(busy ? "开通中…" : "一键开通", () => ask("enroll"), !writable),
+						react.createElement("span", { style: { fontSize: 12, opacity: 0.6 } },
+							"无需任何密钥；成功后会自动写进本机凭据并立刻生效。")),
 				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
-					"名字：小写字母/数字/短横线，2-31 位、开头不能是短横线。发号成功后 topic 与只写 token 会写回本机凭据文件，重启本插件后按新 topic 发布。"),
+					enrolled
+						? "名字：小写字母/数字/短横线，2-31 位、开头不能是短横线。发号成功后 topic 与只写 token 会写回本机凭据文件，重启本插件后按新 topic 发布。"
+						: "名额按 IP 限流（每小时 2 次、每天 6 次），够一个人反复重装用。"),
 				result !== "" ? react.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
 					react.createElement("textarea", {
 						readOnly: true, value: result, rows: 2,

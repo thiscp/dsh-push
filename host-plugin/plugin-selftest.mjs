@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import {
   AskUserModeSwitch,
   apply,
+  enrollCall,
   askUserBackupPath,
   CREDENTIAL_CONFIG_KEYS,
   askUserSyncPlan,
@@ -870,6 +871,56 @@ check('provision: a second write keeps unrelated keys and leaves a backup behind
 check('provision: an empty patch value never clobbers a stored secret',
   (() => { writeCredentialsPatch(provFile, { ntfyToken: '' }, { stamp: () => 'T3' }); return JSON.parse(readFileSync(provFile, 'utf8')).ntfyToken === 'tk_write' })())
 
+// ── 一键开通（v0.7.0）────────────────────────────────────────────────────────────
+// 全新用户没有 provisionToken，只能走免鉴权的 /enroll。这条链断掉就等于「别人装了插件永远连不上」，
+// 所以假服务端把 200 / 429 / 字段残缺 三种形态都演一遍。
+const enrollCalls = []
+const enrollFetch = async (url, init) => {
+  enrollCalls.push({ url, init })
+  if (url.endsWith('/enroll')) {
+    return {
+      ok: true, status: 200,
+      async text() {
+        return JSON.stringify({
+          ok: true, name: 'dsh-newbie', topic: 'dsh-newbie', host: 'dsh-newbie',
+          readToken: 'tk_readnew', writeToken: 'tk_writenew', hostToken: 'hk_new',
+          relayBase: 'https://ntfy.cpyh.xyz', answerBase: 'https://ntfy.cpyh.xyz',
+        })
+      },
+    }
+  }
+  return { ok: false, status: 404, async text() { return '{}' } }
+}
+const enrollGood = await enrollCall({ base: 'https://x/provision', name: 'dsh-newbie', fetchImpl: enrollFetch })
+check('enroll: a 200 returns every credential the machine needs to start pushing',
+  enrollGood.ok === true && enrollGood.data.topic === 'dsh-newbie' &&
+  enrollGood.data.readToken === 'tk_readnew' && enrollGood.data.writeToken === 'tk_writenew' &&
+  enrollGood.data.hostToken === 'hk_new')
+check('enroll: the request carries no Authorization header (that is the whole point)',
+  enrollCalls[0].init.headers.Authorization === undefined &&
+  JSON.parse(enrollCalls[0].init.body).name === 'dsh-newbie')
+
+const enrollBusy = await enrollCall({
+  base: 'https://x/provision',
+  fetchImpl: async () => ({ ok: false, status: 429, async text() { return JSON.stringify({ error: 'too many passes from this IP this hour' }) } }),
+})
+check('enroll: 429 is translated into advice a user can act on',
+  enrollBusy.ok === false && String(enrollBusy.error).includes('太频繁') && String(enrollBusy.error).includes('too many'))
+
+const enrollPartial = await enrollCall({
+  base: 'https://x/provision',
+  fetchImpl: async () => ({ ok: true, status: 200, async text() { return JSON.stringify({ ok: true, topic: 'dsh-x' }) } }),
+})
+check('enroll: a 200 that is missing tokens is a failure, not a half-configured host',
+  enrollPartial.ok === false && String(enrollPartial.error).includes('不完整'))
+
+const enrollDown = await enrollCall({
+  base: 'https://x/provision',
+  fetchImpl: async () => { throw new Error('ENOTFOUND') },
+})
+check('enroll: an unreachable service says so instead of throwing',
+  enrollDown.ok === false && String(enrollDown.error).includes('不可达'))
+
 // the panel round-trip: browser writes volatile request -> host provCalls the service -> mirrors back
 const panelConfig = { provisionName: '', provisionAction: '', provisionSeq: '', provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '' }
 const panelResolved = { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek' }
@@ -938,6 +989,49 @@ check('provision: revoke reports the outcome in Chinese',
 // the fiber-restart trap: the browser's volatile write lands in cordis.patch.yml, which
 // hot-restarts this plugin's fiber and zeroes the in-memory mirrors — the panel would show
 // a result for one moment and then go blank. The store lives on globalThis instead.
+// 一键开通的完整往返：面板只写 volatile，宿主领到凭据后必须三件事同时发生
+//   ① 凭据文件落地（否则重启又回到「没配」）② 内存 resolved 立刻可用（否则要重启宿主）
+//   ③ provisionReady 翻成 '1'（否则页面还显示「一键开通」）
+const enrollPanelDir = mkdtempSync(join(tmpdir(), 'dsh-push-enroll-'))
+const enrollPanelFile = join(enrollPanelDir, 'credentials.json')
+const enrollConfig = {
+  provisionName: 'dsh-newbie', provisionAction: 'enroll', provisionSeq: 'seq-e1',
+  provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '', provisionReady: '',
+}
+const enrollResolved = { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: '', host: '', hostToken: '', topic: '', ntfyToken: '', phoneToken: '' }
+let rearmed = null
+const enrollPanel = new PassProvisioner(
+  { on: () => () => {} }, enrollConfig, enrollResolved, () => {},
+  {
+    fetchImpl: enrollFetch,
+    credentialsPath: enrollPanelFile,
+    writeCredentialsPatch: (path, patch) => writeCredentialsPatch(path, patch, { stamp: () => 'TE' }),
+    onEnrolled: (patch) => { rearmed = { ...patch } },
+  },
+)
+enrollPanel.publishDefault()
+check('enroll: a fresh install reports itself as not ready (the panel then shows 一键开通)',
+  enrollConfig.provisionReady === '0')
+await enrollPanel.run()
+check('enroll: the pass text handed to the phone carries the freshly issued topic and read token',
+  enrollConfig.provisionResult === 'dshpush://v1?base=https://ntfy.cpyh.xyz&topic=dsh-newbie&token=tk_readnew',
+  'got ' + enrollConfig.provisionResult)
+check('enroll: the credentials file lands on disk so a restart does not lose the channel',
+  (() => {
+    const back = JSON.parse(readFileSync(enrollPanelFile, 'utf8'))
+    return back.topic === 'dsh-newbie' && back.ntfyToken === 'tk_writenew' && back.phoneToken === 'tk_readnew' &&
+      back.host === 'dsh-newbie' && back.hostToken === 'hk_new'
+  })())
+check('enroll: the in-memory resolved config is patched, so no host restart is needed',
+  enrollResolved.host === 'dsh-newbie' && enrollResolved.ntfyToken === 'tk_writenew' &&
+  enrollResolved.hostToken === 'hk_new' && enrollResolved.topic === 'dsh-newbie')
+check('enroll: the host is told to rearm its relay poll (first push must not wait for a reboot)',
+  rearmed !== null && rearmed.hostToken === 'hk_new')
+check('enroll: provisionReady flips to 1 so the panel stops offering 一键开通',
+  enrollConfig.provisionReady === '1')
+check('enroll: provisionDone echoes the seq so the button un-busies',
+  enrollConfig.provisionDone === 'seq-e1')
+
 check('provision: the last outcome is parked on the process-level store',
   (() => {
     const saved = panelStore()[panel.storeKey()]

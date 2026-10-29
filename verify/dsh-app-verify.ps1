@@ -181,6 +181,45 @@ if ($WatchdogSelfTest) {
   Abort-Step "watchdog-selftest" $h.Why $h.Cmd $h.ErrText $h.OutText
 }
 
+# ---------- 0b. source-stale guard: the build source must not lag origin/master ----------
+# 2026-10-29: nightly printed 'install FAIL - INSTALL_FAILED_VERSION_DOWNGRADE (81 < 159)' and the APP
+# was fine. The real fault: this verifier's tree had sat at 1.32.15 / versionCode 81 for two weeks,
+# 208 commits behind gitee. The Windows tree IS the build source (step 3 scp's build.gradle.kts to
+# vm1), so a stale tree means the nightly certifies an old APK. Two shapes, only one of them loud:
+#   loud  - built versionCode < what the emulator already has -> install aborts (what we happened to hit)
+#   quiet - built versionCode <= current                      -> PASSES while testing an old build
+# Prove freshness BEFORE touching any host. A failed fetch only WARNs (an offline dev box must still
+# be able to verify); a PROVEN lag aborts, because 'which build did we just certify' is then unanswerable.
+$script:srcVc = ""
+$srcVer = "unknown"
+$gk = Get-FileText (Join-Path $Repo 'android-app\app\build.gradle.kts')
+$vcM = [regex]::Match($gk, 'versionCode\s*=\s*(\d+)')
+$vnM = [regex]::Match($gk, 'versionName\s*=\s*"([^"]+)"')
+if ($vcM.Success) { $script:srcVc = $vcM.Groups[1].Value }
+if ($vcM.Success -and $vnM.Success) { $srcVer = $vnM.Groups[1].Value + " / versionCode " + $vcM.Groups[1].Value }
+elseif ($vcM.Success) { $srcVer = "versionCode " + $vcM.Groups[1].Value }
+Log ("SOURCE " + $srcVer + "  repo=" + $Repo)
+$fh = Start-Watched "source-stale" ('git -C "' + $Repo + '" fetch --quiet origin') $SshTimeoutSec $null
+$fh = Wait-Watched $fh
+if ($fh.TimedOut -or $fh.ExitCode -ne 0) {
+  Log ("WARN source-stale: git fetch origin rc=" + $fh.ExitCode + " - freshness NOT proven (" + (Flatten $fh.ErrText) + ")")
+} else {
+  $bh = Start-Watched "source-stale" ('git -C "' + $Repo + '" rev-list --count HEAD..origin/master') 30 $null
+  $bh = Wait-Watched $bh
+  if ($bh.TimedOut -or $bh.ExitCode -ne 0) {
+    Log ("WARN source-stale: rev-list HEAD..origin/master rc=" + $bh.ExitCode + " (no such ref?) - freshness NOT proven")
+  } else {
+    $cm = [regex]::Match((Flatten $bh.OutText), '(\d+)')
+    $behind = if ($cm.Success) { [int]$cm.Groups[1].Value } else { 0 }
+    if ($behind -gt 0) {
+      Abort-Step "source-stale" ("build source is " + $behind + " commits behind origin/master (" + $srcVer + ") - this tree IS the build source, so the run would certify an old APK; fix: git -C <repo> merge --ff-only origin/master") $bh.Cmd $bh.ErrText $bh.OutText
+    }
+    $hh = Start-Watched "source-stale" ('git -C "' + $Repo + '" log -1 --pretty=format:%h_%cI') 30 $null
+    $hh = Wait-Watched $hh
+    Log ("source-stale OK: up to date with origin/master, HEAD " + (Flatten $hh.OutText))
+  }
+}
+
 # ---------- 1. preflight: is the emulator host reachable at all? (fail fast in ~10s) ----------
 $pre = Invoke-Watched "emulator-up" ("ssh " + $SSH_OPTS + " " + $EmuUser + "@" + $EmuIp + " hostname") 20 $null
 $emuHost = ($pre.OutText -split "`r?`n" | Where-Object { $_.Trim() -ne "" } | Select-Object -First 1)
@@ -332,6 +371,13 @@ $S = @("-s", $serial)
 # [2] install (+ optional fresh seed)
 Stage "install"
 "INSTALL=" + (A ($S + @("install","-r","-g",$apk)))
+# 2026-10-29: "Update version code 81 is older than current 159" cost a whole diagnosis round because
+# neither side of that comparison was in the log. dumpsys right after install names what the device
+# actually runs; the outer script compares it with the tree's versionCode - a mismatch means the APK
+# on the device is NOT the build this tree just made (the false-green shape above).
+$dp = A ($S + @("shell","dumpsys","package","xyz.cpyh.dshpush"))
+$dm = [regex]::Match($dp, 'versionCode=(\d+)')
+"INSTALLED_VC=" + $(if ($dm.Success) { $dm.Groups[1].Value } else { "none" })
 if ("__FRESH__" -eq "1") {
   A ($S + @("shell","pm","clear","xyz.cpyh.dshpush")) | Out-Null
   # readiness (was blind Start-Sleep 2): wait for the app data dir to come back, cap 10s
@@ -446,7 +492,13 @@ Report "emulator-up" ($emuUp -match "BOOT=1") "serial=$serial api=$api"
 $inst = Grab '^INSTALL='
 if (-not $inst) { Abort-Step "install" "drive session produced no INSTALL line" $dv.Cmd $dv.ErrText $dv.OutText }
 $instOk = $inst -match "Success"
-Report "install" $instOk ($inst -replace '^INSTALL=', '')
+$ivcLine = Grab '^INSTALLED_VC='
+$ivc = if ($ivcLine) { ($ivcLine -replace '^INSTALLED_VC=', '').Trim() } else { "n/a" }
+$vcNote = "installed_vc=" + $ivc + " source_vc=" + $(if ($script:srcVc) { $script:srcVc } else { "n/a" })
+# Anti-false-green: after a successful install the device must run the version this tree declares.
+$vcOk = $true
+if ($instOk -and $script:srcVc -and ($ivc -match '^\d+$') -and ($ivc -ne $script:srcVc)) { $vcOk = $false }
+Report "install" ($instOk -and $vcOk) (($inst -replace '^INSTALL=', '') + " [" + $vcNote + "]")
 if (-not $instOk) {
   Log "FATAL install did not report Success - refusing to assert against a stale app"
   Write-Host ("SUMMARY: ABORTED at step install after " + (ElapsedSec) + "s - adb install failed")

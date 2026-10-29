@@ -1,7 +1,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$Token,
   [string]$Registry = "https://registry.npmjs.org/",
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$SkipBlog
 )
 $ErrorActionPreference = "Continue"
 $pkg = "E:\work\work_dsh\dsh-push\host-plugin"
@@ -40,4 +41,13 @@ if (-not $DryRun) {
   "REGISTRY_HTTP=$code"
   $ver = & curl.exe -s "https://registry.npmjs.org/dsh-push-host/latest"
   if ($ver) { "LATEST=" + ($ver | ConvertFrom-Json).version }
+}
+
+# The blog download button serves its own copy of the tarball (release-fast.ps1 only mirrors
+# the APK), so a publish that stops here leaves https://blog.cpyh.xyz/dl/ behind - and since
+# the page no longer prints a version number, nobody can see it. Keep them in lockstep.
+if (-not $DryRun -and -not $SkipBlog) {
+  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\blog-mirror-host.ps1" 2>&1 | ForEach-Object { "BLOG: $_" }
+  "BLOG_RC=$LASTEXITCODE"
+  if ($LASTEXITCODE -ne 0) { "WARN npm publish succeeded but the blog mirror did not verify - run blog-mirror-host.ps1 by hand" }
 }
