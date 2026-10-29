@@ -222,15 +222,26 @@ window.__ModuleLoader__.load({
 			const payload = text("pairText");
 			const done = text("pairDone");
 			const seq = text("pairSeq");
+			/**
+			* v0.7.3：点按钮那一刻的 `pairStatus` 快照，用来判断「宿主有没有写回新结果」以提前解锁。
+			* 与 PassPanelRow 的 resultRef 同一个理由：宿主失败时也会写 pairStatus（"凭据不完整：…"），
+			* 这条路径以前没被用上，只靠 done === seq 与 30s 硬超时 ⇒ 用户看到「生成中…」一直转。
+			*/
+			const statusRef = react.useRef("");
 			react.useEffect(() => {
 				if (busy && done !== "" && done === seq) setBusy(false);
 			}, [done, seq, busy]);
+			react.useEffect(() => {
+				if (busy && status !== "" && status !== statusRef.current) setBusy(false);
+			}, [status, busy]);
 			const writable = ready && snapshot.writable === true && !busy;
 			const generate = () => {
 				if (!writable) return;
 				const nextSeq = String(Date.now()) + "-" + Math.floor(Math.random() * 1e6).toString(36);
 				setBusy(true);
-				setTimeout(() => setBusy(false), 30000);
+				statusRef.current = status;
+				// 12s 硬超时（原来是 30s）：宿主那次 volatile 写一旦丢了，用户不必干等半分钟。
+				setTimeout(() => setBusy(false), 12000);
 				Promise.resolve()
 					.then(() => scope.mutate([{ op: "set", path: ["pairSeq"], value: nextSeq }], snapshot.revision))
 					.catch(() => setBusy(false))

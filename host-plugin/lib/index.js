@@ -2068,6 +2068,19 @@ export class PairBox {
   }
 
   /**
+   * 把一次计算结果同时挂到进程级 store（供热重启后的新 fiber 回灌）与 volatile（供页面读）。
+   *
+   * v0.7.3：**先 store 后 volatile**。写 volatile 会让本插件 fiber 热重启，而 applyStore 只认
+   * store；顺序反了，重启刚好落在 mirror 中间，新 fiber 的 store 还是空的 ⇒ 二维码白算一场，
+   * 页面什么都不显示（用户报的「点完等很久也没出二维码」就是这个）。
+   */
+  remember(result) {
+    try {
+      pairStore()[this.storeKey()] = result
+    } catch { /* store 挂了不影响下面的 volatile 写入 */ }
+  }
+
+  /**
    * 手机可达的网页入口。
    *
    * 隧道模式必须带上口令（`?k=`），否则手机上打开只有 401；tailnet / 自定义地址走 web.log
@@ -2110,32 +2123,34 @@ export class PairBox {
       // 的方形，比不画更坏。所以这里按「能真正配对」判：topic 与手机只读令牌缺一不可。
       const topic = String(this.readAny('topic') || '')
       const token = String(this.readAny('phoneToken') || '')
+      const fail = (why) => {
+        // 失败也要落 store：applyStore 只从 store 回灌，否则热重启后页面的提示会消失，
+        // 用户看到的是「点了没反应」而不是「为什么没成」。
+        this.remember({ count: 0, bits: '', text: '', status: why, done: '' })
+        this.mirror('pairCount', 0)
+        this.mirror('pairBits', '')
+        this.mirror('pairText', '')
+        this.mirror('pairStatus', why)
+      }
       if (!payload || payload.length < 12 || topic === '' || token === '') {
-        this.mirror('pairCount', 0)
-        this.mirror('pairBits', '')
-        this.mirror('pairText', '')
-        this.mirror('pairStatus', '凭据不完整：先配好 relay / topic / readToken 再生成二维码')
+        fail('凭据不完整：先配好 relay / topic / readToken 再生成二维码')
         return
-      }      if (web.length > PAIR_WEB_MAX) {
-        this.mirror('pairCount', 0)
-        this.mirror('pairBits', '')
-        this.mirror('pairText', '')
-        this.mirror('pairStatus', '网页入口过长（' + web.length + ' 字符，上限 ' + PAIR_WEB_MAX + '），已跳过')
+      }
+      if (web.length > PAIR_WEB_MAX) {
+        fail('网页入口过长（' + web.length + ' 字符，上限 ' + PAIR_WEB_MAX + '），已跳过')
         return
       }
       const matrix = pairQrMatrix(payload)
       const status = web
         ? '已生成：手机扫这一张就完成配对（推送通行证 + 网页入口都带上）'
         : '已生成：手机扫这一张可完成推送配对。注意：本机暂时取不到网页入口（web.log 里没有 token，或隧道还没起来），网页地址仍需手工填'
-      const done = String(Date.now())
+      const done = String(this.read('pairSeq') || '').trim() || String(Date.now())
+      this.remember({ count: matrix.count, bits: matrix.bits, text: payload, status, done })
       this.mirror('pairCount', matrix.count)
       this.mirror('pairBits', matrix.bits)
       this.mirror('pairText', payload)
       this.mirror('pairStatus', status)
       this.mirror('pairDone', done)
-      pairStore()[this.storeKey()] = {
-        count: matrix.count, bits: matrix.bits, text: payload, status, done,
-      }
       this.log('配对二维码已生成：载荷 ' + payload.length + ' 字节 / ' + matrix.count + ' 模块' + (web ? '' : '（无网页入口）'))
     } catch (error) {
       try { this.mirror('pairStatus', '生成失败：' + String(error?.message ?? error)) } catch { /* 连写都失败就只剩日志 */ }
@@ -2218,7 +2233,11 @@ export function apply(ctx, config = {}) {
     // 一键开通后让推送链路当场生效：rearm 重建 RelayClient 并补上开机的轮询定时器。
     onEnrolled: (patch) => {
       host.rearm(patch)
-      if (pairBox) { try { pairBox.refresh() } catch { /* refresh 自己兜底 */ } }
+      // v0.7.3：这里**不能**直接 refresh()。onEnrolled 跑在 settings RPC 的事务里，而 refresh()
+      // 会立刻写 volatile（pairCount/pairBits/...）⇒ 事务中改 volatile 会触发本插件 fiber 热重启，
+      // 那几次镜像写入跟着丢，用户看到的就是「开通成功了，但二维码一直不出来」。
+      // 一律走 schedule()（挪到下一个宏任务），与 PassProvisioner 内部同一套规避。
+      if (pairBox) { try { pairBox.schedule() } catch { /* schedule 自己兜底 */ } }
     },
   }).start()
   // 远程访问（v0.4.0）：默认关。开着就走「内层改写网关 + cloudflared 快速隧道」，

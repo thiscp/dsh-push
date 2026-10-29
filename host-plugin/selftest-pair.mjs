@@ -222,6 +222,33 @@ function decodeBits(bits, count) {
   check('guard: an absurd web entry refuses instead of making an unscannable code', config.pairCount === 0 && String(config.pairStatus).includes('过长'), String(config.pairStatus).slice(0, 80))
 }
 
+// ── 11. v0.7.3: the done marker must echo the seq (that is what un-busies the button) ──
+{
+  const config = makeConfig({ relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a', pairSeq: 'seq-abc_1' })
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json' })
+  box.refresh()
+  // 页面靠 `done === seq` 解锁按钮。以前 done 是 Date.now()，这个等式永远不成立，
+  // 只能干等 30s 硬超时 —— 用户看到的就是「点了转很久」。
+  check('done marker: echoes the pairSeq so the button un-busies', String(config.pairDone) === 'seq-abc_1', String(config.pairDone))
+}
+
+// ── 12. v0.7.3: a failed refresh must also survive the fiber restart ───────────
+{
+  const deps = { credentialsPath: 'C:/creds-fail.json' }
+  const config = makeConfig({ relayBase: '', topic: '', phoneToken: '' })
+  const host = makeHost('')
+  const first = new PairBox(makeCtx(), config, { host: 'fail-host' }, host, host.log, deps)
+  first.refresh()
+  check('failure: status explains what is missing', String(config.pairStatus).includes('凭据不完整'), String(config.pairStatus))
+  const fresh = makeConfig({})
+  const second = new PairBox(makeCtx(), fresh, { host: 'fail-host' }, host, host.log, deps)
+  second.applyStore()
+  // 失败结果以前只写 volatile、不落 store ⇒ 热重启后提示消失，页面变成「什么都没发生」。
+  check('failure: the reason survives a fiber restart', String(fresh.pairStatus).includes('凭据不完整'), String(fresh.pairStatus))
+  pairStore()[first.storeKey()] = undefined
+}
+
 console.log('')
 console.log(String(passed) + '/' + String(passed + failed) + ' checks passed')
 if (failed > 0) process.exitCode = 1
