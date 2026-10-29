@@ -1327,17 +1327,45 @@ export async function provisionCall({ base, token, path, body, fetchImpl = globa
  * 与 `provisionCall` 分开写而不是加个 `auth:false` 开关：两者的错误文案和后果完全不同
  * （这里失败意味着用户彻底用不了，必须给出人能读懂的原因）。
  */
+/**
+ * v0.7.9：给任何一次网络动作套上**硬超时**。
+ *
+ * 工作台式机实测（用户 m21760「感觉是卡住了呢」）：面板停在「正在校验凭据…」不动。
+ * 真因不是逻辑走错，而是 HTTP 请求根本不返回 —— 没有超时的 fetch 会把整条自助开通挂在
+ * 半空，而用户看到的只是「一直转」。凡是「用户按了按钮在等」的路径，一律必须有上界。
+ */
+function withTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error((label || '操作') + '超时（' + Math.round(ms / 1000) + ' 秒）'))
+    }, ms)
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(timer); resolve(value) },
+      (error) => { clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 export async function enrollCall({ base, name, fetchImpl = globalThis.fetch } = {}) {
   if (typeof fetchImpl !== 'function') return { ok: false, error: '这个 Node 运行时没有 fetch，无法开通' }
   let res
+  let ctl = null
+  let timer = null
   try {
-    res = await fetchImpl(provisionUrl(base, 'enroll'), {
+    if (typeof AbortController === 'function') {
+      ctl = new AbortController()
+      timer = setTimeout(() => { try { ctl.abort() } catch { /* 已中止 */ } }, 15000)
+    }
+    res = await withTimeout(fetchImpl(provisionUrl(base, 'enroll'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(name ? { name } : {}),
-    })
+      signal: ctl ? ctl.signal : undefined,
+    }), 15000, '开通服务')
   } catch (error) {
     return { ok: false, error: '开通服务不可达：' + String(error && error.message ? error.message : error) }
+  } finally {
+    if (timer) clearTimeout(timer)
   }
   let text = ''
   try { text = String(await res.text()) } catch { text = '' }
@@ -2062,6 +2090,8 @@ export class PairBox {
     this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
     /** v0.7.8：凭据预检可注入（自测用；默认真的向中继探一次）。 */
     this.verifyCredsFn = deps.verifyCreds || null
+    /** v0.7.9：预检上界（自测可调小，避免用例等 10 秒）。 */
+    this.verifyTimeoutMs = Number(deps.verifyTimeoutMs) > 0 ? Number(deps.verifyTimeoutMs) : 10000
   }
 
   /**
@@ -2103,11 +2133,19 @@ export class PairBox {
         headers: { Authorization: 'Bearer ' + token },
         signal: ctl ? ctl.signal : undefined,
       })
-      if (!res.ok) this.log('凭据预检失败：HTTP ' + res.status + '（topic ' + topic + '）')
-      return !!res.ok
+      if (res.ok) return 'ok'
+      // v0.7.9：区分「明确被拒」与「问不出来」。401/403 是确定无效（换凭据）；其余状态码
+      // 与任何异常都只能说「没核实成功」——两者都要重新开通，但**文案必须不一样**，
+      // 否则用户永远分不清「凭据坏了」和「这台机器连不上中继」。
+      if (res.status === 401 || res.status === 403) {
+        this.log('凭据预检被拒：HTTP ' + res.status + '（topic ' + topic + '，将重新开通）')
+        return 'bad'
+      }
+      this.log('凭据预检没拿到结论：HTTP ' + res.status + '（topic ' + topic + '）')
+      return 'unknown'
     } catch (error) {
       this.log('凭据预检异常：' + String(error && error.message ? error.message : error))
-      return false
+      return 'unknown'
     } finally {
       if (timer) clearTimeout(timer)
     }
@@ -2123,8 +2161,15 @@ export class PairBox {
     this.checkTried = key
     this.prepareError = ''
     try {
-      const ok = await (this.verifyCredsFn ? this.verifyCredsFn() : this.verifyCreds())
-      if (ok) return
+      // 预检也要有上界：注入的/真实的探活一旦不返回，整条开通就挂在半空（同 m21760）。
+      const verdict = await withTimeout(
+        Promise.resolve(this.verifyCredsFn ? this.verifyCredsFn() : this.verifyCreds()),
+        this.verifyTimeoutMs,
+        '凭据预检',
+      )
+      if (verdict === true || verdict === 'ok') return
+      // 'bad' = 明确被拒；'unknown' = 没问到结论。两种都不能拿现有凭据出码：
+      // 前者必然 403，后者可能必然 403，而二维码是「一锤子交付」，不能赌。
       this.enrolling = true
       await this.autoEnroll(key)
     } catch (error) {
@@ -2133,7 +2178,10 @@ export class PairBox {
       this.enrolling = false
     } finally {
       this.preparing = false
-      this.schedule()
+      this.enrolling = false
+      // v0.7.9：直调 refresh()，不走 schedule()。schedule() 里那句 fiberIsActive 守卫会把
+      // 「预检期间经历过热重启」这种情况下的收尾静默丢掉 —— 而收尾就是用户等的那张码。
+      try { this.refresh() } catch { this.schedule() }
     }
   }
 
@@ -2316,9 +2364,18 @@ export class PairBox {
       if (this.checkTried !== keyNow) {
         if (!this.preparing && !this.enrolling) {
           this.preparing = true
+          // v0.7.9：**这里绝不能先 fail()/mirror() 再启动预检**。
+          // 写 volatile 会让本插件 fiber 热重启（见 §7.4 那串踩坑记录），而这次预检正跑在
+          // 即将被丢弃的那个实例上 ⇒ 它跑完调 schedule() 时 `fiberIsActive(旧 ctx)` 恒为 false，
+          // 于是被静默丢弃。用户看到的就是面板永远停在「正在校验凭据…」（m21760 报障）。
+          // 服务端那份「正在校验」的文案交给页面自己的按钮转圈表达，守卫只留最后一次写。
           void this.prepare(keyNow)
         }
-        fail(this.enrolling ? '正在自助开通（免发号密钥），请稍候…' : '正在校验凭据（必要时会自动开通）…')
+        return
+      }
+      if (this.prepareError) {
+        // 预检/开通这一步有真原因就直说，不要退回到「字段在不在」那种笼统判断。
+        fail(this.prepareError)
         return
       }
       if (!payload || payload.length < 12 || topic === '' || token === '') {

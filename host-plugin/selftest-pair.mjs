@@ -405,6 +405,45 @@ function decodeBits(bits, count) {
   check('healthy creds: the existing topic stays in the payload', String(config.pairText).includes('topic=dsh-a'), config.pairText)
 }
 
+// ── 17. v0.7.9: 预检期间绝不能写 volatile，否则会把这次的预检自己打断 ────────
+// 用户 m21760「感觉是卡住了呢」：面板停在「正在校验凭据…」不动。
+// 真因：0.7.8 在启动预检**之前**先 fail() 写了一次 volatile ⇒ 本插件 fiber 热重启 ⇒
+// 预检跑在被丢弃的实例上，跑完调 schedule() 时 fiberIsActive(旧 ctx) 恒假 ⇒ 被静默丢弃。
+{
+  const config = makeConfig({ pairSeq: 'seq-nostatus-1', relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
+  const host = makeHost('')
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, {
+    credentialsPath: '',
+    verifyCreds: () => gate,
+  })
+  box.refresh()
+  check('gate: refresh() writes nothing while the preflight is in flight',
+    config.pairStatus === undefined && config.pairCount === undefined && config.pairDone === undefined,
+    JSON.stringify([config.pairStatus, config.pairCount, config.pairDone]))
+  release(true)
+  await tick(40)
+  check('gate: the QR arrives once the preflight resolves', config.pairCount >= 21, String(config.pairCount))
+}
+
+// ── 18. v0.7.9: 预检自身也必须有不超时的上界，否则整条路径会挂在半空 ──────────
+{
+  const config = makeConfig({ pairSeq: 'seq-hang-1', relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
+  const host = makeHost('')
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, {
+    credentialsPath: '',
+    verifyCreds: () => new Promise(() => {}),   // 永不返回
+    verifyTimeoutMs: 40,
+  })
+  box.refresh()
+  await tick(140)
+  check('hang: a never-settling preflight still ends with a reason',
+    String(config.pairStatus).includes('凭据预检') && String(config.pairStatus).includes('超时'),
+    String(config.pairStatus))
+  check('hang: nothing is drawn from a hung preflight', config.pairCount === 0 || config.pairCount === undefined, String(config.pairCount))
+}
+
 console.log('')
 console.log(String(passed) + '/' + String(passed + failed) + ' checks passed')
 if (failed > 0) process.exitCode = 1
