@@ -249,6 +249,63 @@ function decodeBits(bits, count) {
   pairStore()[first.storeKey()] = undefined
 }
 
+// ── 13. v0.7.4: a fresh fiber must self-heal when pairSeq outlived the fiber that wrote it ──
+// 用户 m20942 报障的复现：浏览器写 pairSeq → 落盘 cordis.patch.yml → 本插件 fiber 热重启，
+// 触发 refresh() 的老 fiber 在重启中被打掉，点阵写进了即将丢弃的旧 config；新 fiber 起来时
+// store 还是空的，而那条 volatile-update 早已派发完毕 ⇒ 页面永远等不到 pairCount/pairBits。
+{
+  const deps = { credentialsPath: 'C:/creds-restart.json' }
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  // 模拟「重启后」：persisted pairSeq 有值，但 store 是空的（老 fiber 的结果丢了）。
+  const fresh = makeConfig({
+    relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a',
+    pairSeq: 'seq-restart-1',
+  })
+  delete pairStore()['pair|alice-host|C:/creds-restart.json']
+  const box = new PairBox(makeCtx(), fresh, { host: 'alice-host' }, host, host.log, deps)
+  box.start()
+  check('restart: a pending pairSeq schedules a catch-up refresh', box.scheduled === true || fresh.pairCount > 0,
+    'scheduled=' + String(box.scheduled) + ' count=' + String(fresh.pairCount))
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  check('restart: the catch-up actually fills the bit-map', fresh.pairCount > 0 && String(fresh.pairBits).length > 16,
+    'count=' + String(fresh.pairCount))
+  check('restart: the catch-up marks the seq done (no restart loop)', String(fresh.pairDone) === 'seq-restart-1',
+    String(fresh.pairDone))
+  // 再起一个 fiber（done === seq 已对账）⇒ 不能重复算，否则每次热重启都白跑一遍。
+  const again = new PairBox(makeCtx(), makeConfig({
+    relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a', pairSeq: 'seq-restart-1',
+  }), { host: 'alice-host' }, host, host.log, deps)
+  again.start()
+  check('restart: an already-finished seq does not recompute', again.scheduled === false, 'scheduled=' + String(again.scheduled))
+  pairStore()[box.storeKey()] = undefined
+}
+
+// ── 14. v0.7.4: start() must wire up even while the fiber is still LOADING ────
+// 用户 m20942 的真因：`apply()` 执行期间 fiber.state 是 LOADING(1) 而不是 ACTIVE(2)，
+// 而 start() 原来第一行就是 `if (!fiberIsActive(ctx)) return` ⇒ 监听器一个都没注册、
+// 冷启动补算也没跑，表现就是「点按钮转 12 秒自己恢复，码和提示都不出现」。
+// 假 ctx 必须用 state=1，否则这条永远测不出来（原来所有用例都用 2，正好把它盖住了）。
+{
+  const deps = { credentialsPath: 'C:/creds-loading.json' }
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  const loadingCtx = { fiber: { state: 1 }, listeners: new Map(), on(e, h) { if (!this.listeners.has(e)) this.listeners.set(e, h) } }
+  const config = makeConfig({
+    relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a',
+    pairSeq: 'seq-loading-1',
+  })
+  delete pairStore()['pair|alice-host|C:/creds-loading.json']
+  const box = new PairBox(loadingCtx, config, { host: 'alice-host' }, host, host.log, deps)
+  box.start()
+  check('loading: start() still subscribes while the fiber is LOADING',
+    loadingCtx.listeners.has('loader/volatile-update'), 'listeners=' + String(loadingCtx.listeners.size))
+  // 真实宿主在下一个宏任务时已经 ACTIVE —— schedule() 里的守卫正是留给这个时刻判断的。
+  loadingCtx.fiber.state = 2
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  check('loading: the catch-up runs while the fiber is LOADING',
+    config.pairCount > 0 && String(config.pairBits).length > 16, 'count=' + String(config.pairCount))
+  pairStore()[box.storeKey()] = undefined
+}
+
 console.log('')
 console.log(String(passed) + '/' + String(passed + failed) + ' checks passed')
 if (failed > 0) process.exitCode = 1

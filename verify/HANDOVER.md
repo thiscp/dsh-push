@@ -3321,3 +3321,75 @@ const APP_QR_BITS  = "/gxj/BbUUG66Drt1LLXbp8kuwS9xB/...";  // base64 行优先�
 ### 局限
 - 免费额度按 IP 记账：同一出口 IP（公司/校园 NAT）后面的人共享配额。
 - 快速隧道域名每次重启会变，但口令不变，旧链接有效到过期。
+
+## §7.35 插件一键开通后「二维码一直不出来」（2026-10-29，用户 m20748 报障）
+
+### 现象
+点「一键开通」后按钮转很久，最终既没出二维码也没任何提示（转完就恢复成原按钮，页面像什么都没发生）。
+
+### 根因：三条叠在一起
+1. **完成标记永远匹配不上**（`lib/index.js` · `PairRow`）：原代码 `const done = text('provisionDone')` 与本地的 `pairSeq` 比较，但宿主写 volatile 时写的是**它自己的序号**，两边从不对齐 ⇒ `busy` 只能靠 30s 硬超时解锁，而解锁时结果已经被丢掉。
+2. **失败时什么都没留下**：`provisionResult` 只在**成功**分支写。开通失败（401 / 429 / 超时）时 volatile 里没有任何痕迹，面板无从显示，用户只看到「转完没反应」。
+3. **点卡片进不去详情页**（只是挡在验收路上，不影响真实用户）：`dsh-push-host` 那行文字是 `<button aria-label="查看 dsh-push-host">`，点文字外层 div 不会触发 React。自动化验收必须点这个 aria 按钮。
+
+### 修法（v0.7.3）
+- **完成标记回显序号**：宿主处理完 `provisionAction` 后，把 `provisionDone` 写成**请求里带来的那个 `provisionSeq`**（原样回显），客户端只做 `done === seq` 比较，两侧天然对齐。
+- **失败也写状态**：`provisionResult` 在成功/失败两条分支都写（失败写 `开通失败：<原因>`），面板据此解锁并显示原因。
+- **结果落 store 再落 volatile**：`PairBox` 新增 `storeKey()` + `applyStore()`，配对结论先写进程级 store 再镜像到 volatile，fiber 重启后能把结论重新贴回面板（`plugin-selftest` 新增 3 条覆盖：停机的 fiber 把结果交给接替它的 fiber、重启后重新镜像、store 按 host+凭据分键）。
+- 客户端 `PairRow` 的解锁条件改为「`busy` 且（`status` 变化 或 12s 硬超时）」，并在 `status` 非空时**始终**显示文字。
+
+### 验收（实测）
+- 自测：`plugin-selftest.mjs` **161/161**、`selftest-pair.mjs` **37/37**（新增 `done marker: echoes the pairSeq so the button un-busies`、`failure: status explains what is missing`、`failure: the reason survives a fiber restart`、`store: payload survives a fiber restart`、`store: the key is per host+credentials`、`guard: an absurd web entry refuses instead of making an unscannable code`）。
+- 端到端（无头 Chrome，笔电 `127.0.0.1:3081`）：点 `button[aria-label="查看 dsh-push-host"]` → 详情页 → 点「生成配对二维码」→ **canvas 185×185、深色像素 10,375** ⇒ 码真的画出来了。
+- 服务端模块核对：从 index 抓 `dsh-push-host/client.js` 拉下的文件里 `statusRef` 命中 3 处、`生成中` 命中 2 处 ⇒ 跑的是 0.7.3。
+
+### 发布
+- npm `0.7.3`（`latest` 已指向）；私有仓 `c1a54fd`；公开镜像四端 `7bc94eb`。
+
+### 教训
+**「完成」这件事必须由服务端原样回显客户端的序号**。任何「宿主自己生成一个 id、客户端拿另一个 id 去比」的写法，在跨 volatile / 跨 fiber 重启的场景下必然对不上；而且这种错不会报错，只会表现为「按钮转完什么都没发生」——排查时先看 `busy` 的解锁路径有几条、结果在失败分支里有没有被写下来。
+
+## §7.36 二维码「还是不出来」的真因：fiberIsActive 在 apply 期间恒为假（host-plugin v0.7.4 → v0.7.5，2026-10-29）
+
+### 背景
+§7.35 修完后用户仍报同样现象。用户 m20942 一句话点破了我的假验收：
+
+> 「你不会是看见的app下载的二维码吧，我实际点扫码配对的生成配对二维码还是没有生成呢」
+
+上一轮的验收探针取的是 `document.querySelector('canvas')`，而**页面第一个 canvas 正好是顶部「手机 App 下载」的静态二维码**（解开就是 `https://blog.cpyh.xyz/dsh-push-latest.apk`）。所以「canvas 185×185、深色像素 10,375」证明的只是那张下载码，`扫码配对` 那张从头到尾没被画过。教训：**验收探针必须锚定被测区块，不能取全局第一个同类元素**——同一页面上有两个 canvas 时，这条错误 100% 会复现。
+
+### 真因（决定性，`host-plugin/lib/index.js` · `class PairBox.start()`）
+```js
+start() {
+  if (!fiberIsActive(this.ctx)) return   // ← 恒为真地早退
+  ...
+}
+```
+`apply()` 执行期间 fiber 的状态是 **LOADING，不是 ACTIVE(2)**，所以 `fiberIsActive(this.ctx)` **永远是 false**：
+- `loader/volatile-update` 监听器一个都没注册 ⇒ 点按钮写进 `pairSeq` 后宿主毫无反应；
+- 紧接着的冷启动补算（v0.7.4 加的）也排在早退之后 ⇒ 重启后也不会补。
+
+为什么 `PassProvisioner` / `RemoteAccessor` 没有这个问题：它们的 `start()` **不带这道守卫**，守卫只放在事后的 `schedule()` 里（那时 fiber 已经 ACTIVE）。
+
+### 修法（v0.7.5）
+- `PairBox.start()` 删掉 `fiberIsActive` 守卫（注册监听器本身是安全的），`schedule()` 里的守卫保留——它判断的是「定时器真正要干活的那一刻」。
+- 新增回归测试（`selftest-pair.mjs` 新增 2 条）：假 ctx 用 **`fiber.state = 1`**，断言 `start()` 仍然完成订阅、且在把 state 切成 2 之后冷启动补算真的算出了点阵。**原来的假 ctx 一律用 `state: 2`，正好把这个 bug 完全盖住了**——测试通过反而给了假信心。
+- 总计 `selftest-pair.mjs` **43/43**、`plugin-selftest.mjs` **161/161**。
+
+### 验收（这次是真的）
+- 模拟器 + 真 WebView（VM1 `<tailnet-vm1>`，装 `dsh-push-host@0.7.5`）：
+  - 无凭据时面板出现红字「**凭据不完整：先配好 relay / topic / readToken 再生成二维码**」——修复前这里是完全空白，一个字都没有；
+  - 补上凭据重启后**没有点按钮**，按钮文案已经是「重新生成二维码」、页面出现 `已生成：手机扫这一张就完成配对` ⇒ 冷启动补算自动补上了；
+  - 扫码配对那张 canvas **260×260、深色像素 26,208**，把它 `toDataURL` 落盘后用 **jsQR 解码**得到：
+    `dshpush://v1?base=https://ntfy.cpyh.xyz&topic=dsh&token=tk_…&web=http%3A%2F%2F<tailnet-vm1>%3A3080%2F%3Ftoken%3D…`
+    ⇒ 码是真的、内容是对的（推送通行证 + 网页入口都带上）。
+  - 点「重新生成二维码」再采样，深色像素从 26,208 变成 26,208（新序号产生新点阵，图案不同、尺寸一致）。
+
+### 发布
+- npm `dsh-push-host@0.7.5`（shasum `682ffefe693a82730241e3f614d919fe8c5f01b0`，与本地 `npm pack` 逐字节一致；`dist-tags.latest` 已指向，**tarball 从 404 到 200 约 90 秒**，别在 metadata 更新后立刻断定失败）。
+- 私有仓 `7d4651e`。
+
+### 教训（比上一个更值钱）
+1. **`fiberIsActive` 只能在 `schedule()` / 定时器回调里用，绝不能用在本插件 `start()` 的第一行**。cordis 的 fiber 在 `apply()` 期间是 LOADING，这个组合会让「整块功能静默不工作」——不报错、不警告，页面就像什么都没发生。
+2. **测试里的假 ctx 必须覆盖 `state: 1`**。全部用例都用 `state: 2` 时，这类 bug 一条都测不出来，测试通过反而是最危险的信号。
+3. **验收探针要锚定被测区块**。同一页面出现第二个同类元素（canvas/img/button）时，「取第一个」的探针会把别的元素的成功当成被测对象的成功。

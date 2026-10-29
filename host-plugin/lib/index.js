@@ -2176,9 +2176,28 @@ export class PairBox {
   }
 
   start() {
-    if (!fiberIsActive(this.ctx)) return
+    // v0.7.4（用户 m20942 报障的真因）：**这里绝不能拿 fiberIsActive 做守卫**。
+    // `apply()` 执行期间 fiber 处于 LOADING，不是 ACTIVE(2) ⇒ fiberIsActive 恒为 false ⇒
+    // 直接早退、监听器一个都没注册、后面的冷启动补算也一起没跑。表现就是「点生成二维码，
+    // 按钮转 12 秒自己恢复，二维码与提示都不出现」。
+    // PassProvisioner / RemoteAccessor 没这个问题，正因为它们的守卫只放在事后的 schedule() 里。
     PAIR_ACTIVE.set(this.storeKey(), this)
     this.applyStore()
+    // v0.7.4：**冷启动补算**。浏览器写 pairSeq 会落到 cordis.patch.yml ⇒ 本插件 fiber 热重启。
+    // 触发那次 refresh() 的老 fiber 在重启中被打掉，它 mirror 出去的点阵写进了即将丢弃的旧
+    // config 对象；新 fiber 的 applyStore() 读到的 store 还是空的，而那条 volatile-update 早已
+    // 派发完毕 ⇒ 页面永远等不到 pairCount/pairBits，按钮转完什么都没发生（用户 m20942 报障）。
+    // 所以新 fiber 必须自己对一次账：持久化的 pairSeq 和 store 里的 done 不一致就补跑一次。
+    // 补跑后 done === seq，再重启也不会形成循环。
+    const pending = String(this.read('pairSeq') || '').trim()
+    if (pending !== '' && PAIR_SEQ_RE.test(pending)) {
+      const saved = pairStore()[this.storeKey()]
+      const finished = saved ? String(saved.done || '') : ''
+      if (pending !== finished) {
+        this.lastSeq = pending
+        this.schedule()
+      }
+    }
     this.ctx.on('loader/volatile-update', (paths) => {
       const touched = Array.isArray(paths) && paths.some((path) =>
         Array.isArray(path) && path[0] === 'pairSeq')
