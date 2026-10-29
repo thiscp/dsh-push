@@ -2045,9 +2045,96 @@ export class PairBox {
      * 免密钥 /enroll，这里记住已经为哪个请求号发起过开通，避免开通失败后被无限重试。
      */
     this.enrollTried = ''
+    /**
+     * v0.7.8：这一次「生成二维码」请求是否已经做过凭据预检。
+     *
+     * 0.7.6 的判据是「relay/topic/token 三个字段是不是空」——而工作台式机实测踩到了反例：
+     * 整机装好后扫码，手机报「通行证被拒(403)」。那台机器字段一个都不缺，缺的是**凭据本身
+     * 已经无效**（历史手工配的 topic/令牌）。⇒ 判据必须从「有没有配」升级成「配的能不能用」。
+     */
+    this.checkTried = ''
+    this.preparing = false
+    this.prepareError = ''
+    /** v0.7.8：本次会话刚开通出来的凭据（优先于 volatile 里的历史值，见 cred()）。 */
+    this.freshCreds = null
     /** v0.7.6：自助开通走这里发起，自测与宿主都可以注入（默认就是真的 /enroll）。 */
     this.enrollCall = deps.enrollCall || enrollCall
     this.writeCreds = deps.writeCredentialsPatch || writeCredentialsPatch
+    /** v0.7.8：凭据预检可注入（自测用；默认真的向中继探一次）。 */
+    this.verifyCredsFn = deps.verifyCreds || null
+  }
+
+  /**
+   * v0.7.8：读一个凭据键，**本次会话刚开通出来的值优先**。
+   *
+   * `readAny()` 的优先级是 volatile > resolved，而 volatile 会把值持久化进 profile 的
+   * `cordis.patch.yml`。旧版通行证面板（0.3.0）写进去的 `topic` 就留在这类文件里，
+   * 于是即使刚刚 /enroll 出一套新凭据，`readAny('topic')` 仍会返回那个历史 topic，
+   * 二维码里就会出现「新令牌 + 旧 topic」这种必然 403 的混合载荷。
+   * 这里让刚开通的值最优先，等于把「历史遗留」按这一次会话压掉。
+   */
+  cred(key) {
+    const fresh = this.freshCreds && this.freshCreds[key]
+    if (fresh !== undefined && fresh !== null && fresh !== '') return String(fresh)
+    return String(this.readAny(key) || '')
+  }
+
+  /**
+   * v0.7.8：凭据能不能真的用——直接拿手机只读令牌向中继订一次。
+   *
+   * 用 `?poll=1&since=1h` 而不是订阅流：一次请求就结束，不会占住连接。
+   * 有效凭据返回 200（哪怕这一个小时没有消息），topic 不存在或令牌不对返回 401/403。
+   * 任何异常一律当「无效」——预检的目的就是宁可多开一次号，也不要放一张扫了没用的码出去。
+   */
+  async verifyCreds() {
+    const base = this.cred('relayBase').replace(/\/+$/, '')
+    const topic = this.cred('topic')
+    const token = this.cred('phoneToken')
+    if (!base || !topic || !token) return false
+    const url = base + '/' + encodeURIComponent(topic) + '/json?poll=1&since=1h'
+    let ctl = null
+    let timer = null
+    try {
+      if (typeof AbortController === 'function') {
+        ctl = new AbortController()
+        timer = setTimeout(() => { try { ctl.abort() } catch { /* 已中止 */ } }, 8000)
+      }
+      const res = await fetch(url, {
+        headers: { Authorization: 'Bearer ' + token },
+        signal: ctl ? ctl.signal : undefined,
+      })
+      if (!res.ok) this.log('凭据预检失败：HTTP ' + res.status + '（topic ' + topic + '）')
+      return !!res.ok
+    } catch (error) {
+      this.log('凭据预检异常：' + String(error && error.message ? error.message : error))
+      return false
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  /**
+   * v0.7.8：一个请求号只预检一次；预检不过就当场免密钥自助开通，然后重算二维码。
+   *
+   * `checkTried` 在**进来第一件事**就置位（不是成功才置），否则开通失败会让 refresh()
+   * 反复触发预检 → 反复 /enroll，把中继的按 IP 日配额烧光。
+   */
+  async prepare(key) {
+    this.checkTried = key
+    this.prepareError = ''
+    try {
+      const ok = await (this.verifyCredsFn ? this.verifyCredsFn() : this.verifyCreds())
+      if (ok) return
+      this.enrolling = true
+      await this.autoEnroll(key)
+    } catch (error) {
+      this.prepareError = '凭据校验异常：' + String(error && error.message ? error.message : error)
+      this.log(this.prepareError)
+      this.enrolling = false
+    } finally {
+      this.preparing = false
+      this.schedule()
+    }
   }
 
   read(key) { return volatileValue(this.config[key], '') }
@@ -2133,6 +2220,9 @@ export class PairBox {
       const out = await this.enrollCall({ base: this.resolved.provisionBase, name })
       if (!out.ok) {
         this.log('生成二维码时自助开通失败：' + out.error)
+        // v0.7.8：把原因留给 prepare()/refresh() —— 否则随后的重算会用一句笼统的
+        // 「自助开通未成功」盖掉真正的原因（中继日配额用尽 / 中继离线 / 服务已满都长一样）。
+        this.prepareError = '自助开通失败：' + out.error
         this.enrolling = false
         try {
           this.remember({ count: 0, bits: '', text: '', status: '自助开通失败：' + out.error, done: '' })
@@ -2169,6 +2259,10 @@ export class PairBox {
         }
       }
       // 内存态立刻生效：resolved 是各组件共享的那个对象，push 链路读的就是它。
+      // v0.7.8：另外单独存一份 freshCreds —— readAny() 的 volatile 优先级更高，历史遗留的
+      // topic/令牌会把它压住，二维码就会拼出「新令牌 + 旧 topic」这种必然 403 的载荷。
+      this.freshCreds = patch
+      this.prepareError = ''
       Object.assign(this.resolved, patch)
       try { this.host.rearm(patch) } catch (error) {
         this.log('开通后启用推送失败：' + String(error && error.message ? error.message : error))
@@ -2178,6 +2272,7 @@ export class PairBox {
       this.schedule()
     } catch (error) {
       this.enrolling = false
+      this.prepareError = '自助开通异常：' + String(error && error.message ? error.message : error)
       this.log('生成二维码时自助开通异常：' + String(error && error.message ? error.message : error))
       try { this.mirror('pairStatus', '自助开通异常：' + String(error && error.message ? error.message : error)) } catch { /* 已记日志 */ }
     }
@@ -2185,9 +2280,9 @@ export class PairBox {
 
   payload() {
     return pairPayload({
-      relayBase: String(this.readAny('relayBase') || ''),
-      topic: String(this.readAny('topic') || ''),
-      readToken: String(this.readAny('phoneToken') || ''),
+      relayBase: this.cred('relayBase'),
+      topic: this.cred('topic'),
+      readToken: this.cred('phoneToken'),
       web: this.webEntry(),
       name: String(this.resolved?.host || ''),
     })
@@ -2202,8 +2297,10 @@ export class PairBox {
       const web = this.webEntry()
       // 空载荷（relayBase/topic/token 都没配）也会拼出 `dshpush://v1?`：扫出来是个「什么都没配」
       // 的方形，比不画更坏。所以这里按「能真正配对」判：topic 与手机只读令牌缺一不可。
-      const topic = String(this.readAny('topic') || '')
-      const token = String(this.readAny('phoneToken') || '')
+      const topic = this.cred('topic')
+      const token = this.cred('phoneToken')
+      const seqNow = String(this.read('pairSeq') || '').trim()
+      const keyNow = seqNow === '' ? 'auto' : seqNow
       const fail = (why) => {
         // 失败也要落 store：applyStore 只从 store 回灌，否则热重启后页面的提示会消失，
         // 用户看到的是「点了没反应」而不是「为什么没成」。
@@ -2213,21 +2310,21 @@ export class PairBox {
         this.mirror('pairText', '')
         this.mirror('pairStatus', why)
       }
+      // v0.7.8：先预检再出码。0.7.6 只在「字段为空」时才走自助开通，于是工作台式机那种
+      // 「字段都在、凭据已失效」的机器会拿到一张必然 403 的码。这里改成：每个请求号先探一次
+      // 中继（见 verifyCreds），探不过就当场 /enroll 换一套新凭据，然后再算二维码。
+      if (this.checkTried !== keyNow) {
+        if (!this.preparing && !this.enrolling) {
+          this.preparing = true
+          void this.prepare(keyNow)
+        }
+        fail(this.enrolling ? '正在自助开通（免发号密钥），请稍候…' : '正在校验凭据（必要时会自动开通）…')
+        return
+      }
       if (!payload || payload.length < 12 || topic === '' || token === '') {
         // v0.7.6：二维码存在的意义就是「不用手工配 relay/topic/readToken」。
-        // 缺凭据时不再报错要用户去填，而是当场走一次免密钥 /enroll 自助开通，成功后自动出码。
-        // 同一个请求号只自动开通一次，避免用户连点把 /enroll 的日配额烧光。
-        const seq = String(this.read('pairSeq') || '').trim()
-        const key = seq === '' ? 'auto' : seq
-        if (this.enrolling) {
-          fail('正在自助开通（免发号密钥），请稍候…')
-          return
-        }
-        if (this.enrollTried !== key) {
-          void this.autoEnroll(key)
-          return
-        }
-        fail('自助开通未成功，请再点一次「生成配对二维码」重试')
+        // 预检判定凭据不可用时，prepare() 已经当场走过一次 /enroll；走到这里还没凭据就是真没成。
+        fail(this.prepareError || '自助开通未成功，请再点一次「生成配对二维码」重试')
         return
       }
       if (web.length > PAIR_WEB_MAX) {

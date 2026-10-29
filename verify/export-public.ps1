@@ -20,7 +20,13 @@ Push-Location $Private
 git archive HEAD --format=tar -o $tmpTar
 if ($LASTEXITCODE -ne 0) { throw "git archive failed" }
 Pop-Location
-tar -xf $tmpTar -C $stage
+# 必须用 Windows 自带的 bsdtar：Git 的 /usr/bin/tar 会把 "C:\..." 当成远程主机名，
+# 报 "Cannot connect to C: resolve failed"，然后 stage 是空目录 ⇒ 后续 secret gate 拿到
+# 空的 $textFiles 直接崩（2026-10-29 实测）。
+$winTar = Join-Path $env:WINDIR 'System32\tar.exe'
+if (-not (Test-Path $winTar)) { throw "missing $winTar (needed to unpack git archive)" }
+& $winTar -xf $tmpTar -C $stage
+if ($LASTEXITCODE -ne 0) { throw "tar failed: $LASTEXITCODE" }
 Remove-Item $tmpTar
 
 # 2. drop private-only files

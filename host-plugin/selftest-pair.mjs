@@ -33,6 +33,21 @@ function makeConfig(values = {}) {
   return { ...values }
 }
 
+/**
+ * v0.7.8：refresh() 现在先做一次异步凭据预检（探中继）再出码。
+ *
+ * 用例里不能真去探 `ntfy.example.test`，所以两条注入口：
+ * - `verifyCreds: async () => true`  —— 模拟「凭据有效」，用于所有只关心渲染/解码的用例；
+ * - `verifyCreds: async () => false` —— 模拟「凭据失效」，用于断言会自动重新开通的用例。
+ * 注入之后 prepare() 仍要跨一个微任务，所以断言前统一 `await tick()`。
+ */
+const verifyOk = async () => true
+const verifyBad = async () => false
+
+function tick(ms = 30) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 /** Minimal cordis-ish ctx: records listeners so the test can fire volatile-update. */
 function makeCtx() {
   const listeners = new Map()
@@ -143,8 +158,9 @@ function decodeBits(bits, count) {
 {
   const config = makeConfig({ relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
-  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json' })
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json', verifyCreds: verifyOk })
   box.refresh()
+  await tick()
   check('refresh: carries the module count', typeof config.pairCount === 'number' && config.pairCount >= 21, String(config.pairCount))
   check('refresh: carries the bit-map', typeof config.pairBits === 'string' && config.pairBits.length > 100, String(config.pairBits).length)
   check('refresh: carries the payload text', typeof config.pairText === 'string' && config.pairText.startsWith('dshpush://v1?'), config.pairText)
@@ -162,14 +178,15 @@ function decodeBits(bits, count) {
   const calls = []
   const box = new PairBox(makeCtx(), config, {}, host, host.log, {
     credentialsPath: 'C:/creds.json',
+    verifyCreds: verifyBad,
     enrollCall: async (opts) => { calls.push(opts); return { ok: false, error: 'quota exceeded' } },
   })
   box.refresh()
   box.refresh()   // 同一请求号不得重复开通，否则连点会把日配额烧光
+  await tick()
   check('missing creds: module count stays zero', config.pairCount === 0, String(config.pairCount))
   check('missing creds: no bit-map', (config.pairBits ?? '') === '', String(config.pairBits))
   check('missing creds: auto-enroll fires exactly once', calls.length === 1, JSON.stringify(calls.length))
-  await new Promise((r) => setTimeout(r, 30))
   check('missing creds: failure is explained in status', String(config.pairStatus).includes('自助开通失败'), String(config.pairStatus))
 }
 
@@ -181,6 +198,7 @@ function decodeBits(bits, count) {
   const written = []
   const box = new PairBox(makeCtx(), config, resolved, host, host.log, {
     credentialsPath: '',
+    verifyCreds: verifyBad,
     enrollCall: async () => ({ ok: true, data: { topic: 'dsh-auto', readToken: 'tk_read', writeToken: 'tk_write', relayBase: 'https://ntfy.example.test' } }),
     writeCredentialsPatch: (path, patch) => { written.push(patch); return { path } },
   })
@@ -197,7 +215,7 @@ function decodeBits(bits, count) {
   const config = makeConfig({ relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
   const ctx = makeCtx()
-  const box = new PairBox(ctx, config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json' })
+  const box = new PairBox(ctx, config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json', verifyCreds: verifyOk })
   box.start()
   const fire = ctx.listeners.get('loader/volatile-update')
   check('start: listens for volatile updates', typeof fire === 'function')
@@ -223,9 +241,10 @@ function decodeBits(bits, count) {
 {
   const config = makeConfig({ relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
-  const deps = { credentialsPath: 'C:/creds.json' }
+  const deps = { credentialsPath: 'C:/creds.json', verifyCreds: verifyOk }
   const first = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, deps)
   first.refresh()
+  await tick()
   const want = { count: config.pairCount, bits: config.pairBits, text: config.pairText }
   const fresh = makeConfig({})
   const second = new PairBox(makeCtx(), fresh, { host: 'alice-host' }, host, host.log, deps)
@@ -244,9 +263,11 @@ function decodeBits(bits, count) {
   const host = makeHost('')
   const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, {
     credentialsPath: 'C:/creds.json',
+    verifyCreds: verifyOk,
     accessor: makeAccessor({ mode: 'tunnel', url: long, secret: 'x' }),
   })
   box.refresh()
+  await tick()
   check('guard: an absurd web entry refuses instead of making an unscannable code', config.pairCount === 0 && String(config.pairStatus).includes('过长'), String(config.pairStatus).slice(0, 80))
 }
 
@@ -254,8 +275,9 @@ function decodeBits(bits, count) {
 {
   const config = makeConfig({ relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a', pairSeq: 'seq-abc_1' })
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
-  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json' })
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, { credentialsPath: 'C:/creds.json', verifyCreds: verifyOk })
   box.refresh()
+  await tick()
   // 页面靠 `done === seq` 解锁按钮。以前 done 是 Date.now()，这个等式永远不成立，
   // 只能干等 30s 硬超时 —— 用户看到的就是「点了转很久」。
   check('done marker: echoes the pairSeq so the button un-busies', String(config.pairDone) === 'seq-abc_1', String(config.pairDone))
@@ -268,6 +290,7 @@ function decodeBits(bits, count) {
   const host = makeHost('')
   const first = new PairBox(makeCtx(), config, { host: 'fail-host' }, host, host.log, {
     ...deps,
+    verifyCreds: verifyBad,
     enrollCall: async () => ({ ok: false, error: 'offline' }),
   })
   first.refresh()
@@ -286,7 +309,7 @@ function decodeBits(bits, count) {
 // 触发 refresh() 的老 fiber 在重启中被打掉，点阵写进了即将丢弃的旧 config；新 fiber 起来时
 // store 还是空的，而那条 volatile-update 早已派发完毕 ⇒ 页面永远等不到 pairCount/pairBits。
 {
-  const deps = { credentialsPath: 'C:/creds-restart.json' }
+  const deps = { credentialsPath: 'C:/creds-restart.json', verifyCreds: verifyOk }
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
   // 模拟「重启后」：persisted pairSeq 有值，但 store 是空的（老 fiber 的结果丢了）。
   const fresh = makeConfig({
@@ -318,7 +341,7 @@ function decodeBits(bits, count) {
 // 冷启动补算也没跑，表现就是「点按钮转 12 秒自己恢复，码和提示都不出现」。
 // 假 ctx 必须用 state=1，否则这条永远测不出来（原来所有用例都用 2，正好把它盖住了）。
 {
-  const deps = { credentialsPath: 'C:/creds-loading.json' }
+  const deps = { credentialsPath: 'C:/creds-loading.json', verifyCreds: verifyOk }
   const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
   const loadingCtx = { fiber: { state: 1 }, listeners: new Map(), on(e, h) { if (!this.listeners.has(e)) this.listeners.set(e, h) } }
   const config = makeConfig({
@@ -336,6 +359,50 @@ function decodeBits(bits, count) {
   check('loading: the catch-up runs while the fiber is LOADING',
     config.pairCount > 0 && String(config.pairBits).length > 16, 'count=' + String(config.pairCount))
   pairStore()[box.storeKey()] = undefined
+}
+
+// ── 15. v0.7.8: 凭据「看着配好了但已经失效」→ 必须重新开通，不能放出会 403 的码 ──
+// 工作台式机实测（用户 m21547）：装好插件点生成二维码，出码成功，手机扫完报
+// 「通行证被拒(403)」。那台机器 relay/topic/token 一个都不缺，缺的是**凭据已经无效**
+// （历史手工配的 topic `dsh` + 早已轮换的令牌）。0.7.6 的判据只看「字段空不空」，
+// 于是放出了一张必然被拒的码。0.7.8 改成先探一次中继，探不过就当场 /enroll。
+{
+  const config = makeConfig({ pairSeq: 'seq-stale-1', relayBase: 'https://ntfy.example.test', topic: 'dsh', phoneToken: 'tk_stale' })
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  const resolved = { host: 'dsh' }
+  const calls = []
+  const box = new PairBox(makeCtx(), config, resolved, host, host.log, {
+    credentialsPath: '',
+    verifyCreds: verifyBad,
+    enrollCall: async (opts) => {
+      calls.push(opts)
+      return { ok: true, data: { host: 'dsh-work', topic: 'dsh-work', readToken: 'tk_fresh', writeToken: 'tk_w_fresh', relayBase: 'https://ntfy.example.test' } }
+    },
+    writeCredentialsPatch: (path, patch) => ({ path }),
+  })
+  box.refresh()
+  await tick(60)
+  check('stale creds: preflight failure triggers exactly one enroll', calls.length === 1, JSON.stringify(calls.length))
+  check('stale creds: the QR is drawn instead of being skipped', typeof config.pairCount === 'number' && config.pairCount >= 21, String(config.pairCount))
+  check('stale creds: payload carries the fresh topic (not the stale one)', String(config.pairText).includes('topic=dsh-work') && !String(config.pairText).includes('topic=dsh&'), config.pairText)
+  check('stale creds: payload carries the fresh read token', String(config.pairText).includes('token=tk_fresh'), config.pairText)
+  check('stale creds: memory resolved follows the enroll', resolved.topic === 'dsh-work', String(resolved.topic))
+}
+
+// ── 16. v0.7.8: 凭据有效时不得白白消耗 /enroll 配额 ───────────────────────────
+{
+  const config = makeConfig({ pairSeq: 'seq-good-1', relayBase: 'https://ntfy.example.test', topic: 'dsh-a', phoneToken: 'tk_a' })
+  const host = makeHost('http://100.64.0.7:3081/?token=LOCAL')
+  let enrolled = 0
+  const box = new PairBox(makeCtx(), config, { host: 'alice-host' }, host, host.log, {
+    credentialsPath: '',
+    verifyCreds: verifyOk,
+    enrollCall: async () => { enrolled += 1; return { ok: true, data: { topic: 'unused', readToken: 'unused' } } },
+  })
+  box.refresh()
+  await tick()
+  check('healthy creds: no enroll is spent', enrolled === 0, String(enrolled))
+  check('healthy creds: the existing topic stays in the payload', String(config.pairText).includes('topic=dsh-a'), config.pairText)
 }
 
 console.log('')
