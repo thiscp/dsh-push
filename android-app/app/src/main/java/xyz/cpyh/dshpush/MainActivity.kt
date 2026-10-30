@@ -43,6 +43,9 @@ class MainActivity : Activity() {
     private lateinit var tokenCard: LinearLayout
     private lateinit var tokenInput: EditText
     private lateinit var tokenState: TextView
+    // v1.34.0：多设备清单卡片（每个配对过的机器一行，可单独吊销）
+    private lateinit var deviceCard: LinearLayout
+    private lateinit var deviceBox: LinearLayout
     // v1.33.35：用户手动打开的卡片不被 refresh() 的「有证即隐藏」关掉（推送到达会触发 refresh）
     private var tokenCardPinned = false
     private lateinit var headerPet: ImageView
@@ -60,7 +63,10 @@ class MainActivity : Activity() {
         return if (tv.resourceId != 0) resources.getColor(tv.resourceId, theme) else tv.data
     }
     private fun prefs() = getSharedPreferences(PushService.PREF, MODE_PRIVATE)
-    private fun hasToken() = !prefs().getString(PushService.KEY_TOKEN, "").isNullOrEmpty()
+    // v1.34.0：有设备清单也算「已配置」——多设备后凭据的权威来源是清单，老偏好只是兼容旧版本
+    private fun hasToken() =
+        Devices.subs(this).isNotEmpty() ||
+            !prefs().getString(PushService.KEY_TOKEN, "").isNullOrEmpty()
 
     /**
      * 是不是「从桌面点图标进来」这种最朴素的启动意图：ACTION_MAIN + CATEGORY_LAUNCHER，且不带任何
@@ -280,6 +286,28 @@ class MainActivity : Activity() {
         tokenCard.visibility = if (hasToken()) View.GONE else View.VISIBLE
         content.addView(tokenCard)
 
+        // 设备清单（v1.34.0）：配对过的机器都在这里，每台一行，能单独吊销。
+        // 没有设备时整张卡隐藏，不占版面。
+        deviceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        deviceCard = card(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(context).apply {
+                text = "已连接的设备"
+                textSize = 15f
+                setTextColor(c(R.attr.dshTextPrimary))
+                setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+            })
+            addView(TextView(context).apply {
+                text = "每一台都能单独吊销；吊销后它再推什么都不会进来，要恢复就重新扫它的码。"
+                textSize = 11f
+                setTextColor(c(R.attr.dshTextSecondary))
+                setPadding(0, dp(4), 0, 0)
+            })
+            addView(deviceBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        }, dp(14))
+        deviceCard.visibility = View.GONE
+        content.addView(deviceCard)
+
         msgList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
         // 空状态：睡觉鲸鱼娘 + 鱼片文案
@@ -485,6 +513,8 @@ class MainActivity : Activity() {
                 // 清令牌时把 v1.33.0 的 topic/base 一起清掉，免得下次粘老通行证还留着旧频道
                 prefs().edit().putString(PushService.KEY_TOKEN, "")
                     .remove(PushService.KEY_TOPIC).remove(PushService.KEY_BASE).apply()
+                // v1.34.0：设备清单也一起清（只是不想收某一台的话，用上面清单里的「吊销」）
+                Devices.all(this).forEach { Devices.remove(this, it.id) }
                 tokenInput.setText("")
                 startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
                 toast(getString(R.string.token_cleared))
@@ -528,10 +558,27 @@ class MainActivity : Activity() {
             ed.putString(PushService.KEY_WEB, web)
         }
         ed.apply()
+        // ★ v1.34.0：配对 = 往设备清单里登记一台（不再覆盖上一台）。
+        // 同一个 base+topic 重复扫码是「更新」，吊销过的那台会被顺带恢复。
+        val added = Devices.upsert(
+            this,
+            name = cfg.name ?: "",
+            base = cfg.base ?: PushService.BASE,
+            topic = newTopic,
+            token = cfg.token,
+            web = web ?: "",
+        )
         tokenCardPinned = false
         tokenCard.visibility = View.GONE
         startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
-        toast(if (newTopic != PushService.DEFAULT_TOPIC) "通行证收好，大肥鱼盯着 " + newTopic else "通行证收好，大肥鱼出发")
+        val who = cfg.name?.takeIf { it.isNotBlank() }
+        toast(
+            when {
+                who != null -> "收好，" + who + " 的推送来了我喊你"
+                newTopic != PushService.DEFAULT_TOPIC -> "通行证收好，大肥鱼盯着 $newTopic"
+                else -> "通行证收好，大肥鱼出发"
+            }
+        )
         refresh()
     }
 
@@ -547,8 +594,14 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_SCAN || resultCode != RESULT_OK) return
-        val raw = data?.getStringExtra(ScanPairActivity.EXTRA_PASS)?.trim().orEmpty()
+        if (requestCode != REQ_SCAN) return
+        val raw0 = data?.getStringExtra(ScanPairActivity.EXTRA_PASS)?.trim().orEmpty()
+        android.util.Log.i(
+            ScanPairActivity.TAG,
+            "定点结果 result=$resultCode 载荷长度=" + raw0.length
+        )
+        if (resultCode != RESULT_OK) return
+        val raw = raw0
         if (raw.isEmpty()) return
         val (cfg, err) = PushService.parsePass(raw)
         if (cfg == null) { toast(err); return }
@@ -924,6 +977,7 @@ class MainActivity : Activity() {
         val pm = getSystemService(PowerManager::class.java)
         val batteryOk = pm.isIgnoringBatteryOptimizations(packageName)
         if (hasToken() && !tokenCardPinned) tokenCard.visibility = View.GONE
+        renderDevices()
 
         msgList.removeAllViews()
         val arr = try {
@@ -953,7 +1007,12 @@ class MainActivity : Activity() {
                 setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
             })
             row.addView(TextView(this).apply {
-                text = time
+                // v1.34.0：多设备之后，「这条是谁发来的」必须能看出来。
+                // dev 是 Devices.id；记录被清掉时查不到就只显示时间，不占位。
+                val devId = m.optString("dev", "")
+                val who = if (devId.isEmpty()) "" else
+                    (Devices.byId(this@MainActivity, devId)?.label ?: "")
+                text = if (who.isEmpty()) time else "$time · $who"
                 textSize = 11f
                 setTextColor(c(R.attr.dshTextSecondary))
                 setPadding(0, dp(3), 0, 0)
@@ -1088,6 +1147,91 @@ class MainActivity : Activity() {
      * （真机实测：粘完显示「等待通行证」，直到冷启动才变「已连接」）。停留时每 2 秒只刷这张卡，
      * 不重建消息列表。
      */
+    /**
+     * 画设备清单（v1.34.0）。
+     *
+     * 一行一台：名字 + 「topic · 连接状态」，右边一颗按钮（未吊销 = 吊销，已吊销 = 重新扫码）。
+     * 名字那块可点：有网页直链就进那台机器的 DSH 网页，没有就提示。
+     * 连接状态来自 [PushService.stateOfTopic]（Service 在 companion 里维护，界面不必持有它）。
+     */
+    private fun renderDevices() {
+        if (!::deviceBox.isInitialized || !::deviceCard.isInitialized) return
+        deviceBox.removeAllViews()
+        val all = Devices.all(this)
+        // 一台都没有就整张卡收起来；只有一台且未吊销时也不占版面（首页已经够挤）
+        val visible = all.size > 1 || all.any { it.revoked }
+        deviceCard.visibility = if (visible) View.VISIBLE else View.GONE
+        if (!visible) return
+        for (d in all.sortedWith(compareBy({ it.revoked }, { it.addedAt }))) {
+            val raw = PushService.stateOfTopic(d.topicKey)
+            val st = when {
+                d.revoked -> "已吊销"
+                raw.isEmpty() -> "连接中…"
+                else -> raw
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(7), 0, dp(7))
+            }
+            val col = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = d.label
+                    textSize = 15f
+                    setTextColor(c(if (d.revoked) R.attr.dshTextSecondary else R.attr.dshTextPrimary))
+                    setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = "${d.topic} · $st" + if (d.web.isNotEmpty()) " · 点这里进它的网页" else ""
+                    textSize = 11f
+                    setTextColor(c(R.attr.dshTextSecondary))
+                    setPadding(0, dp(3), 0, 0)
+                })
+            }
+            col.setOnClickListener {
+                if (d.web.isNotEmpty()) openWebUrl(d.web)
+                else toast("这台还没推过网页链接，等它推一条就能进")
+            }
+            row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(pill(Button(this)).apply {
+                text = if (d.revoked) "重新扫码" else "吊销"
+                setOnClickListener {
+                    if (d.revoked) startScan() else confirmRevoke(d)
+                }
+            }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+            deviceBox.addView(row)
+        }
+        deviceBox.addView(pill(Button(this)).apply {
+            text = "＋ 再加一台设备的码"
+            setOnClickListener { startScan() }
+        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+    }
+
+    /** 吊销前问一句：这是个会让人「推送突然没了」的动作，误触很难自查 */
+    private fun confirmRevoke(d: Devices.Dev) {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("吊销这台设备？")
+            .setMessage(
+                (if (d.name.isNotBlank()) d.name else d.topic) +
+                    " 之后推过来的消息都不会进这台手机；记录留着，想看谁被吊销了就翻这份清单。" +
+                    "要恢复就重新扫一次它的配对码。"
+            )
+            .setNegativeButton("算了", null)
+            .setPositiveButton("吊销") { _, _ ->
+                Devices.revoke(this, d.id)
+                // 让 Service 按新的清单重连（会掐掉它的订阅）
+                runCatching {
+                    startForegroundService(
+                        Intent(this, PushService::class.java).setAction("reload")
+                    )
+                }
+                toast("已吊销，不再收它的推送")
+                refresh()
+            }
+            .show()
+    }
+
     private fun renderStatus(unread: Int, batteryOk: Boolean) {
         // 未读计数回到正文首行（v1.32.33：胶囊改竖排后不再有首行）；vivo 上 emoji 渲染差，
         // 故用实心圆点（v1.9.9）。正文右侧要让给两颗竖排胶囊（约 224px），所以几行文案改短，
@@ -1101,6 +1245,9 @@ class MainActivity : Activity() {
                 通行证：${if (hasToken()) "已配置 ✔（点头像换）" else "未配置 ✘（下面填一张）"}
                 白名单：${if (batteryOk) "已加入 ✔" else "未加入 ✘（vivo 易杀）"}
             """.trimIndent())
+            // 多设备（v1.34.0）：一台以上才补这行，单机时不必占字
+            val n = Devices.subs(this@MainActivity).size
+            if (n > 1) append("\n设备：$n 台在线（下方清单可单独吊销）")
         }
         statusText.setTextColor(if (batteryOk) c(R.attr.dshTextPrimary) else c(R.attr.dshWarn))
         // 一键全部已读（v1.32.9）：仅在有未读时出现；点完 unread 归零，listener 再刷时自己隐藏

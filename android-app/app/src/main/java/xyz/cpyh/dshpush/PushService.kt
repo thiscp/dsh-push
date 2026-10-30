@@ -79,16 +79,27 @@ class PushService : Service() {
             return v
         }
         // ---- v1.33.0：一人一 topic。地址从偏好派生，缺省 = 老行为（默认中继 + topic dsh）----
+        // v1.34.0：多设备后「发一条出去」（作答、答题回声）走主设备，所以先问设备清单；
+        // 清单为空时才退回旧偏好，保证升级前的老状态照样能发出去。
         fun topicOf(ctx: android.content.Context): String {
+            Devices.primary(ctx)?.let { return it.topic }
             val t = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
                 .getString(KEY_TOPIC, "")?.trim() ?: ""
             return if (t.isEmpty()) DEFAULT_TOPIC else t
         }
 
         fun baseOf(ctx: android.content.Context): String {
+            Devices.primary(ctx)?.let { return it.base }
             val b = ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
                 .getString(KEY_BASE, "")?.trim() ?: ""
             return if (b.isEmpty()) BASE else b
+        }
+
+        /** 发推送用的通行证：主设备优先（v1.34.0） */
+        fun tokenOf(ctx: android.content.Context): String {
+            Devices.primary(ctx)?.let { return it.token }
+            return ctx.getSharedPreferences(PREF, android.content.Context.MODE_PRIVATE)
+                .getString(KEY_TOKEN, "")?.trim() ?: ""
         }
 
         /** 订阅地址：把 base 的 scheme 换成 ws/wss，再接上本机存着的 topic。 */
@@ -97,6 +108,15 @@ class PushService : Service() {
             val host = b.removePrefix("https://").removePrefix("http://")
             val scheme = if (b.startsWith("http://")) "ws://" else "wss://"
             return "$scheme$host/${topicOf(ctx)}/ws"
+        }
+
+        /** 多设备版（v1.34.0）：地址由**这台设备自己的** base/topic 拼，不读偏好里的单套凭据。 */
+        fun wsUrl(base: String, topic: String): String {
+            val b = base.trim().trimEnd('/').ifEmpty { BASE }
+            val host = b.removePrefix("https://").removePrefix("http://")
+            val scheme = if (b.startsWith("http://")) "ws://" else "wss://"
+            val t = topic.trim().ifEmpty { DEFAULT_TOPIC }
+            return "$scheme$host/$t/ws"
         }
 
         /**
@@ -124,7 +144,12 @@ class PushService : Service() {
                 if (topic.isNotEmpty() && !Regex("^[A-Za-z0-9_-]{1,64}$").matches(topic)) {
                     return null to "这条通行证的 topic 名字用不了：" + topic
                 }
-                val base = parts["base"] ?: ""
+                // base 可能被 percent-encoding 过（第三方二维码工具、手工拼的链接都会这么做），
+                // 2026-10-30 实测：`base=https%3A%2F%2Fntfy.cpyh.xyz` 会被判成"中继地址不对"。
+                // 这里先解码再看协议头，插件原样给的和编码过的都能吃。
+                val baseRaw = parts["base"] ?: ""
+                val base = if (baseRaw.isEmpty()) "" else
+                    runCatching { java.net.URLDecoder.decode(baseRaw, "UTF-8") }.getOrDefault(baseRaw)
                 if (base.isNotEmpty() && !base.startsWith("http://") && !base.startsWith("https://")) {
                     return null to "这条通行证的中继地址不对（要以 http:// 或 https:// 开头）"
                 }
@@ -151,6 +176,12 @@ class PushService : Service() {
         val listeners = java.util.Collections.synchronizedList(ArrayList<MsgListener>())
         @Volatile var state = "未启动"
         @Volatile var lastMessage = ""
+        /**
+         * 每个 `base|topic` 的最近连接状态（v1.34.0）。
+         * 放 companion 是为了让主界面的设备清单不必持有 Service 实例就能读到「已连接 / 通行证被拒」。
+         */
+        val subStates = java.util.Collections.synchronizedMap(HashMap<String, String>())
+        fun stateOfTopic(topicKey: String): String = subStates[topicKey] ?: ""
         val linkRegex = Regex("https://ntfy\\.cpyh\\.xyz/answer/(\\S+)")
         // 机器 trailer 用 MULTILINE：#web 在 #opts 之前，行序不敏感（v1.9.2）
         val optsRegex = Regex("\n#opts (.+)$", RegexOption.MULTILINE)
@@ -242,10 +273,18 @@ class PushService : Service() {
         }
     }
 
-    private var ws: WebSocket? = null
+    /**
+     * 多设备（v1.34.0）：一个 `base|topic` 一条 WebSocket。
+     *
+     * 为什么按 topic 而不是按设备：同一个 topic 的多台机器共用一条订阅流（历史上三台都用 `dsh`），
+     * 开两条就是同一批消息收两遍、通知互相顶替。设备与消息的对应关系由正文 trailer 反查
+     * （见 [attribute]）—— 每条推送自带 `#name` / `#web`，天然指认它来自哪台机器。
+     */
+    private val conns = HashMap<String, WebSocket>()
+    /** 每个频道的重连退避：一台机器网络差不该把另一台也拖慢 */
+    private val backoff = HashMap<String, Long>()
     private var client: OkHttpClient? = null
     private var prefs: SharedPreferences? = null
-    private var reconnectDelay = 2000L
     private var running = false
     private var gen = 0
     private val handler = Handler(Looper.getMainLooper())
@@ -264,7 +303,9 @@ class PushService : Service() {
         // 转正放 onStartCommand 做：startForegroundService 起的实例系统要求 5 秒内 startForeground，
         // 在 onCreate 里把异常吞掉不调用会换来 ForegroundServiceDidNotStartInTimeException 首崩
         // （Android 16 模拟器实测，v1.22.2）
-        connect()
+        // v1.34.0：老用户那套单凭证先迁成一台设备，免得升级后"推送突然没了"
+        Devices.migrateLegacy(this)
+        connectAll()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -277,13 +318,12 @@ class PushService : Service() {
         // MainActivity 保存/清空通行证后发来 reload：掐掉旧连接，带新令牌重连
         if (intent?.action == "reload") {
             gen++
-            ws?.cancel()
-            reconnectDelay = 2000L
+            backoff.clear()
             // 换主题后 MainActivity 也发 reload：刷新渠道着色并重发常驻通知换色
             createChannels()
             getSystemService(NotificationManager::class.java)
                 .notify(NOTIF_SERVICE_ID, serviceNotification())
-            connect()
+            connectAll()
         }
         return START_STICKY
     }
@@ -291,7 +331,8 @@ class PushService : Service() {
     override fun onDestroy() {
         running = false
         handler.removeCallbacksAndMessages(null)
-        ws?.cancel()
+        conns.values.forEach { it.cancel() }
+        conns.clear()
         state = "已停止"
         super.onDestroy()
     }
@@ -417,11 +458,21 @@ class PushService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
-    private fun connect() {
+    /**
+     * 全量（重）连：按设备清单逐条建连。
+     *
+     * v1.34.0 起一个 App 可以同时订阅多台机器，所以「连接」从单例变成 N 条；
+     * 每条的退避、游标、状态各自独立，一台掉线不牵连其它（旧实现共用一个 `reconnectDelay`）。
+     */
+    private fun connectAll() {
         running = true
-        val myGen = ++gen
-        val token = prefs?.getString(KEY_TOKEN, "") ?: ""
-        if (token.isEmpty()) {
+        gen++
+        conns.values.forEach { runCatching { it.cancel() } }
+        conns.clear()
+        backoff.clear()
+        subStates.clear()
+        val devs = Devices.subs(this)
+        if (devs.isEmpty()) {
             // 还没把通行证交给大肥鱼：服务保持前台运行，不连接、不重连
             state = "等待通行证"
             getSystemService(NotificationManager::class.java)
@@ -429,19 +480,30 @@ class PushService : Service() {
             return
         }
         state = "连接中…"
-        val since = prefs?.getLong("lastTs", 0L) ?: 0L
-        // v1.33.0：订阅地址按本机存的 base + topic 派生（多人各一个 topic）。
-        val url = wsUrlOf(this) + "?since=" + if (since > 0) since.toString() else "latest"
+        devs.forEach { connectOne(it) }
+        notifyService()
+    }
+
+    /** 建一条订阅（按 topic 归并：同 topic 的若干设备共用一条流） */
+    private fun connectOne(dev: Devices.Dev) {
+        val key = dev.topicKey
+        if (conns.containsKey(key)) return
+        val myGen = gen
+        // 游标按设备存：换设备、重连都只补自己那台漏掉的
+        val since = prefs?.getLong("lastTs:" + dev.id, 0L) ?: 0L
+        val url = wsUrl(dev.base, dev.topic) + "?since=" + if (since > 0) since.toString() else "latest"
         val req = Request.Builder().url(url)
-            .header("Authorization", "Bearer $token").build()
-        ws = client!!.newWebSocket(req, object : WebSocketListener() {
+            .header("Authorization", "Bearer ${dev.token}").build()
+        subStates[key] = "连接中…"
+        conns[key] = client!!.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                state = "已连接"
-                reconnectDelay = 2000L
+                subStates[key] = "已连接"
+                backoff[key] = 2000L
+                publishState(notify = true)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleMessage(text)
+                handleMessage(text, key, dev.id)
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -449,22 +511,58 @@ class PushService : Service() {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                state = "对端关闭($code)"
-                if (running && myGen == gen) {
-                    handler.postDelayed({ if (running && myGen == gen) connect() }, reconnectDelay)
-                    reconnectDelay = minOf(reconnectDelay * 2, 60000L)
-                }
+                retryLater(key, "对端关闭($code)", myGen)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                state = if (response?.code == 401 || response?.code == 403)
-                    "通行证被拒(${response.code})" else "断开: ${t.message}"
-                if (running && myGen == gen) {
-                    handler.postDelayed({ if (running && myGen == gen) connect() }, reconnectDelay)
-                    reconnectDelay = minOf(reconnectDelay * 2, 60000L)
-                }
+                val code = response?.code ?: 0
+                val st = if (code == 401 || code == 403) "通行证被拒($code)"
+                else "断开: ${t.message}"
+                retryLater(key, st, myGen)
             }
         })
+    }
+
+    /** 单个频道失败后按自己的退避重连 */
+    private fun retryLater(key: String, st: String, myGen: Int) {
+        subStates[key] = st
+        publishState(notify = false)
+        val d = backoff[key] ?: 2000L
+        backoff[key] = minOf(d * 2, 60000L)
+        handler.postDelayed({
+            if (!running || myGen != gen) return@postDelayed
+            conns.remove(key)
+            val dev = Devices.subs(this).firstOrNull { it.topicKey == key } ?: return@postDelayed
+            connectOne(dev)
+        }, d)
+    }
+
+    /** 把各频道状态汇总成一句话（老的 [state] 仍是这句话，界面兼容） */
+    private fun publishState(notify: Boolean) {
+        val devs = Devices.subs(this)
+        state = when {
+            devs.isEmpty() -> "等待通行证"
+            else -> {
+                val sts = devs.map { subStates[it.topicKey] ?: "连接中…" }
+                val ok = sts.count { it == "已连接" }
+                val bad = sts.firstOrNull { it.startsWith("通行证被拒") }
+                when {
+                    ok == devs.size && devs.size == 1 -> "已连接"
+                    ok == devs.size -> "已连接 ${devs.size} 台"
+                    bad != null && ok == 0 && devs.size == 1 -> bad
+                    else -> "已连接 $ok/${devs.size} 台"
+                }
+            }
+        }
+        runCatching { listeners.forEach { it.onNewMsg() } }
+        if (notify) notifyService()
+    }
+
+    private fun notifyService() {
+        runCatching {
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIF_SERVICE_ID, serviceNotification())
+        }
     }
 
     // 立绘合成到主题色圆角底：OriginOS 无视 colorized 卡片染色（v1.7.6 实测），
@@ -483,7 +581,13 @@ class PushService : Service() {
         return out
     }
 
-    private fun handleMessage(raw: String) {
+    /**
+     * 处理一条推送。
+     *
+     * @param key   这条流对应的 `base|topic`（[connectOne] 建立时知道的）
+     * @param devId 该频道首选设备的 id，用于「同 topic 多台机器」无法靠 `#name` 区分时兜底
+     */
+    private fun handleMessage(raw: String, key: String, devId: String) {
         try {
             val o = JSONObject(raw)
             if (o.optString("event") != "message") return
@@ -491,7 +595,10 @@ class PushService : Service() {
             val body = o.optString("message", "")
             val prio = o.optInt("priority", 3)
             val ts = o.optLong("time", System.currentTimeMillis() / 1000)
-            prefs?.edit()?.putLong("lastTs", ts + 1)?.apply()
+            prefs?.edit()?.putLong("lastTs:" + devId, ts + 1)?.apply()
+            // 这台机器是谁：钩子写的 `#name` trailer 优先，其次按频道回指（v1.34.0）
+            val hostName0 = nameRegex.find(body)?.groupValues?.get(1)?.trim() ?: ""
+            val attrId = Devices.resolve(this, hostName0, devId)
             lastMessage = "$title：$body"
 
             // 作答回声（v1.13.0）：relay 在任意端作答成功后发 priority=1 静默消息——
@@ -558,6 +665,8 @@ class PushService : Service() {
                 m.put("title", title); m.put("body", displayBody); m.put("ts", ts)
                 // 显式已读的主键（v1.18.0）：所有消息都存，不再只挂在 callId 分支里
                 m.put("mid", nid)
+                // 来源设备（v1.34.0）：主页据此排序/标注「哪台发来的」，吊销时也能看清是谁
+                if (attrId.isNotEmpty()) m.put("dev", attrId)
                 // 新消息默认未读：主界面标题前带强调色圆点，看过后由 MainActivity 置 true（v1.9.9）
                 m.put("read", false)
                 // 每条消息自带自己那台机器的网页直达链接（v1.9.4）
@@ -586,7 +695,7 @@ class PushService : Service() {
             if (webLink.isNotEmpty()) {
                 // 实例清单登记（v1.29.0）：每台推送过的 DSH 都留一条，供主页/常驻通知的
                 // 「DSH 入口」选择器用；名称取 `#name` 尾巴（缺省 host:port）
-                val hostName = nameRegex.find(body)?.groupValues?.get(1)?.trim()
+                val hostName = hostName0.takeIf { it.isNotEmpty() }
                 val grew = DshHosts.upsert(this, webLink, hostName)
                 val webChanged = webLink != prefs?.getString(KEY_WEB, "")
                 if (webChanged) prefs?.edit()?.putString(KEY_WEB, webLink)?.apply()

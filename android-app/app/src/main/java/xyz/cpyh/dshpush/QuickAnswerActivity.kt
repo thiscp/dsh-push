@@ -64,8 +64,8 @@ class QuickAnswerActivity : Activity() {
         val t0 = android.os.SystemClock.elapsedRealtime()
         Thread {
             try {
-                val tk = getSharedPreferences(PushService.PREF, MODE_PRIVATE)
-                    .getString(PushService.KEY_TOKEN, "") ?: ""
+                // v1.34.0：多设备下通行证以设备清单为准（主设备那条），老偏好只作兜底
+                val tk = PushService.tokenOf(this)
                 val req = Request.Builder()
                     .url("${PushService.baseOf(this)}/answer/${URLEncoder.encode(callId, "UTF-8")}/json")
                     .header("Authorization", "Bearer $tk")

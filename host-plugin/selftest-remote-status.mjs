@@ -254,6 +254,48 @@ function makeAccessor(makeEngine) {
   ra.dispose()
 }
 
+// ── 11. 上游端口认错（v0.7.17）：401 空正文的邻居服务不能被当成 DSH ─────────────
+{
+  const ra = new RemoteAccess({ log: () => {}, secret: 'x'.repeat(43), webLog: join(tmpdir(), 'nope-web.log') })
+  // 邻居：401 + 空正文（实测工作台式机 51512/51513 就是这种）
+  const neighbour = http.createServer((req, res) => { res.writeHead(401); res.end('') })
+  // 真 DSH 网页：401 + 那句英文
+  const real = http.createServer((req, res) => {
+    res.writeHead(401, { 'content-type': 'text/plain' })
+    res.end('dsh web authentication required; reopen the URL printed by dsh web.')
+  })
+  await new Promise((done) => neighbour.listen(0, '127.0.0.1', done))
+  await new Promise((done) => real.listen(0, '127.0.0.1', done))
+  const neighbourPort = neighbour.address().port
+  const realPort = real.address().port
+  // 故意把邻居排在前面：旧实现会挑中它
+  ra.listeningPorts = () => [neighbourPort, realPort]
+  ra.logWebEntries = () => []
+  const picked = await ra.discoverUpstream()
+  check(picked === realPort, '11 邻居服务排在前面也不会被认成 DSH 网页', String(picked) + ' vs ' + String(realPort))
+  check(ra.upstreamPort === realPort, '11 upstreamPort 落在真 DSH 上', String(ra.upstreamPort))
+
+  // 换顺序（真 DSH 在前）仍然只能是它
+  ra.upstreamPort = 0
+  ra.listeningPorts = () => [realPort, neighbourPort]
+  check(await ra.discoverUpstream() === realPort, '11 顺序反过来也认对', '')
+  neighbour.close()
+  real.close()
+
+  // 只有一个弱候选时允许选中，但判定里必须写明它是弱指纹（排障要看得出）
+  const lone = http.createServer((req, res) => { res.writeHead(401); res.end('') })
+  await new Promise((done) => lone.listen(0, '127.0.0.1', done))
+  const lonePort = lone.address().port
+  ra.upstreamPort = 0
+  ra.dshCookie = ''
+  ra.listeningPorts = () => [lonePort]
+  const gotLone = await ra.discoverUpstream()
+  check(gotLone === lonePort, '11 只剩弱候选时仍能选出端口（不让隧道彻底空转）', String(gotLone))
+  check(/weak/.test(ra.upstreamNote), '11 弱指纹写进上游判定里', ra.upstreamNote)
+  lone.close()
+  ra.dispose()
+}
+
 console.log('')
 console.log('remote-status: ' + String(pass) + ' passed, ' + String(fail) + ' failed')
 process.exit(fail === 0 ? 0 : 1)

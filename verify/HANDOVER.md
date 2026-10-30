@@ -3641,3 +3641,83 @@ selftest-remote-status **36/36**。npm `dsh-push-host@0.7.16` 已上 latest（re
 
 **教训**：桌面版与 CLI 版把 token 写在**不同文件**里，"扫一堆候选目录"这种启发式必须
 以**现有能用的实现**（本机 `dsh-web-forward.mjs`）为准逐条对齐，否则就是漏一层目录、静默 401。
+
+## §7.43 「隧道通了但还是 502」：上游端口被同进程的邻居端口抢走（host-plugin v0.7.17，2026-10-30）
+
+0.7.16 上线后工作台式机 DESKTOP-MCSEJ9H 的表现：`GET /` 是我们的登录门（401）、
+`GET /?k=…` 换到了 cookie（303）、但带 cookie 再取就是 **Cloudflare 自己的 502**。
+
+**取证**：桌面版 DSH 是**一个进程绑多个回环口**（本轮实例 52273 / 52275 / 52276），
+其中邻居服务对 `/` 回 **401 且正文为空**。而 0.7.16 的 `probeWeb()` **只看状态码**，
+把邻居当成了 DSH ⇒ 网关把所有请求都转给它，转发层自然全挂。
+
+**修法（0.7.17）**：
+
+1. `probeWeb()` 改判**指纹**，不再只看码：响应里有 `dsh-auth-` 头 = 5 分（真 DSH）、
+   正文含 `dsh web authentication required` = 4 分、正文是 DSH 的 HTML 外壳 = 3 分、
+   只有 401/200 而无特征 = 2 分（弱证据）；我们自己网关的「DSH 远程访问」登录页与
+   **当前网关监听端口**一律排除，避免自己转自己。
+2. 命中 401 时按分数从高到低**逐个重试**（`recover()`），不再"第一个就定终身"。
+3. `res.statusCode` 笔误改成 `res.status`（同一个名字在 `fetch` 的 Response 上取到
+   `undefined`，会让"401 算不算 401"直接翻转）。
+4. 自测补一节（selftest-remote-status **41/41**）：造三个假上游——空正文 401、真 DSH 401、
+   我们自己的网关页——断言只认中间那个。
+
+**验收（真机）**：工作台式机日志从 `候选 #1 打 52273 拿不到 dsh-auth` 变成
+`选中 52273（dsh-login，5 分）` → 网关监听 52343 → 隧道
+`https://responsibilities-princess-entertainment-represented.trycloudflare.com` → `公网链路已就绪`；
+笔电侧 `curl https://<隧道>/` 回到 401 + 我们的登录页（链路活）。
+npm 侧本轮仍只有**暂存**（token 缺 Bypass 2FA，`E409 Cannot publish over previously staged version`），
+所以是打包 tarball 直接投送到那台机器上装的。
+
+**教训**：判"这是不是我要的上游"必须用**内容指纹**，不能用状态码；
+同机多端口是桌面版的常态，`127.0.0.1:<某端口>` 不等于 DSH。
+
+## §7.44 App v1.34.0：一个通行证 → 多台设备同时订阅、可单独吊销、相册选码（android-app，2026-10-30）
+
+用户 m129936 的五条要求：①能扫多台的码 ②同时收 ③每台都保存 ④能单独吊销、要时重扫
+⑤扫码时可从本地相册选。
+
+**数据模型**（新文件 `Devices.kt`）：`devices` 偏好项里存 JSON 数组，
+`id = "d" + Integer.toHexString((base|topic).hashCode())`——**id 由 base|topic 派生而不是随机数**，
+同一个插件重新出码仍是同一条记录（否则每扫一次多一行，`lastTs:<id>` 游标与已读态也跟着断）。
+`upsert()` 幂等：新建 / 更新（含**吊销后重扫 = 恢复**）；老用户升级时 `migrateLegacy()` 把旧的
+`token` 迁成第一台，保证推送不会突然消失。
+
+**订阅**（`PushService`）：从单例 `ws` 改成 `conns: HashMap<topicKey, WebSocket>`，
+每台一条连接各自退避重连；`subStates` 记每台的「已连接 / 通行证被拒」，主页无需持有 Service 即可读。
+
+**界面**：状态卡加「设备：N 台在线」，下面一张清单列出每台（名字 · topic · 状态），
+每行一个「吊销」；吊销只断它、留记录（便于认人），行变灰显示「已吊销 / 重新扫码」。
+消息列表的时间行后面追加来源设备（`13:24:50 · 工作台式`）。
+
+**扫码加相册**：`ScanPairActivity` 底部「从相册选一张」→ `ACTION_PICK`（失败回落
+`ACTION_OPEN_DOCUMENT`）→ `contentResolver` 解码 → 全图先试，不行再九宫格切片重试。
+
+**本轮踩到的三个坑**：
+
+1. **相机重开把相册结果吃掉**（真 bug，已修）：从图库回来自动重开相机会失败
+   （`fail("相机打不开（3）")`），而它 `handler.postDelayed({ finish() }, 1600)` ——
+   finish 抢在解码前面，结果回给 MainActivity 时已经变 CANCELED，表现是"选了图什么都没发生"。
+   修法：`picking` / `albumBusy` 两个标志，任一为真时 `open()` 直接返回、`fail()` 不排 finish；
+   解码失败才重开相机，否则用户会停在一个死页面。
+   （判据：`adb logcat -s ScanPair` 现在会打 `album: 打开图库 / album: 回来 / album: 解出=N / hit: 载荷长度=N`。）
+2. **`base` 参数没解码**：`parsePass()` 里 `web`/`name` 都做了 `URLDecoder`，只有 `base` 没有，
+   于是 `base=https%3A%2F%2Fntfy.cpyh.xyz` 被判成"中继地址不对"。第三方二维码工具都会编码，
+   现在先解码再看协议头。
+3. **后端炸栈**：`Backend Internal error: Exception during psi2ir / Caused by: StackOverflowError`，
+   `WebActivity.kt` 那条 320+ 段巨型字符串链按左结合递归 O(N)。仓库里的 `gradle.properties`
+   早已修好（`-Xss8m` + `kotlin.daemon.jvmargs=-Xss16m`），但**构建机上那一份是旧的** ⇒
+   psi2ir 炸栈再次复现。教训：构建机上的 `gradle.properties` 必须与仓库同步，否则会造出
+   "代码没问题"的假象。
+4. **upsert 只认 id 会登记重复**：`idOf` 派生之外，还要按 `base|topic` 兜底匹配，
+   否则历史遗留/手工写入的 id 会让同一台设备出现两行。
+
+**验收（`emulator-5556`，Android 15 AVD `dsh-pixel`）**：两台同时在线并各自收到推送（未读数递增）→
+吊销其中一台后它再推不进来、另一台照收 → 列表显示「已吊销 / 重新扫码」→
+相册选码把已吊销的那台**恢复成已连接且不产生重复行**（id 派生 + `base|topic` 兜底匹配）；
+消息行显示 `13:24:50 · 工作台式`。
+
+**环境备注**：`dsh-p16`（Android 16/API 36）这台 AVD **全设备级输入失效**
+（`dumpsys input` 里 `ActivityRecordInputSink` 卡在旧焦点），`input tap` 一律不生效、
+`input keyevent` 正常；不是 App 的 bug，换 Android 15 的 `dsh-pixel`（`emulator-5556`）即恢复。

@@ -924,59 +924,104 @@ export class RemoteAccess {
     return ports
   }
 
-  /** 对某个端口要一次 `/`，判断它是不是 DSH 网页。成功返回 { port, kind } 或 null。 */
-  async probeWeb(port) {
-    const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2500) : undefined
-    try {
-      const res = await fetch('http://127.0.0.1:' + String(port) + '/', { redirect: 'manual', signal })
-      const cookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
-      const auth = cookies.find((line) => line.startsWith('dsh-auth-'))
-      if (auth) return { port, kind: 'dsh-auth', cookie: auth.split(';')[0].trim(), status: res.statusCode }
-      let text = ''
-      try { text = (await res.text()).slice(0, 4096) } catch { /* ignore */ }
-      if (/dsh/i.test(text)) return { port, kind: 'html', status: res.statusCode }
-      if (res.status === 200 || res.status === 302 || res.status === 401 || res.status === 403) {
-        return { port, kind: 'http', status: res.statusCode }
+  /**
+   * 对某个端口要一次 `/`，判断它是不是 DSH 网页（v0.7.17 重写）。
+   *
+   * 为什么不能只看状态码：桌面版 DSH 同一个进程里还会绑别的回环服务（实测工作台式机
+   * 51512 / 51513 都是 401、正文为空），旧实现把这些也当成上游候选，排到前面就把隧道
+   * 指错了服务 —— 用户看到的是 Cloudflare 的 502（m129762 报障）。
+   *
+   * DSH 网页的两条独有指纹：
+   *   ① 没带 cookie 时正文是 `dsh web authentication required; reopen the URL printed by dsh web.`
+   *   ② 带对了 `?token=` 时回 303 并种下 `dsh-auth-*` cookie
+   * 另外把自己的网关页（`<title>DSH 远程访问</title>`）单独标成 gateway，绝不选它。
+   */
+  async probeWeb(port, tries = 3) {
+    for (let i = 0; i < tries; i += 1) {
+      const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(2500) : undefined
+      try {
+        const res = await fetch('http://127.0.0.1:' + String(port) + '/', { redirect: 'manual', signal })
+        const status = res.status
+        const cookies = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []
+        const auth = cookies.find((line) => line.startsWith('dsh-auth-'))
+        if (auth) return { port, kind: 'dsh-auth', cookie: auth.split(';')[0].trim(), status }
+        let text = ''
+        try { text = (await res.text()).slice(0, 4096) } catch { /* ignore */ }
+        if (/DSH\s*远程访问/.test(text)) return { port, kind: 'gateway', status }
+        if (/dsh web authentication required/i.test(text)) return { port, kind: 'dsh-login', status }
+        if (/dsh-auth-|<title>\s*DSH/i.test(text)) return { port, kind: 'dsh-html', status }
+        if (status === 200 || status === 302 || status === 401 || status === 403) {
+          return { port, kind: 'weak', status }
+        }
+        return null
+      } catch {
+        // 端口刚绑上时首个连接可能被拒（实测 DSH 启动瞬间会这样），再给两次机会。
+        if (i + 1 < tries) await new Promise((resolve) => setTimeout(resolve, 300))
       }
-      return null
-    } catch {
-      return null
     }
+    return null
   }
 
   /**
-   * 日志里找不到链接时的兜底：拿「本进程的监听端口」逐个试，认出 DSH 网页那一个（v0.7.15）。
+   * 日志里没有可用 token 时的兜底：认出「本进程的哪个监听端口才是 DSH 网页」（v0.7.17 重写）。
+   *
+   * 候选顺序：日志里 `dsh web:` 行亲口说过的端口 → 本进程正在听的端口（`netstat`/`ss`）。
+   * 每个候选都探一次，按指纹打分挑最强的；
+   *   dsh-auth（种了 cookie）> dsh-login（401 + 那句英文）> dsh-html > weak（任意 401/403）
+   * 只有在没有任何强指纹时才用 weak，并且**选完立刻回头重探**（DSH 启动瞬间可能还没把
+   * 404/401 那页准备好，或端口刚绑上）。
    */
   async discoverUpstream() {
     if (this.upstreamPort > 0) return this.upstreamPort
-    const ports = this.listeningPorts()
-    if (ports.length === 0) {
+    const seen = new Set()
+    const candidates = []
+    const push = (port, from) => {
+      const value = Number(port)
+      if (!(value > 0)) return
+      if (this.listenPort > 0 && value === this.listenPort) return
+      if (seen.has(value)) return
+      seen.add(value)
+      candidates.push({ port: value, from })
+    }
+    for (const entry of this.logWebEntries().slice(0, 16)) {
+      try { push(new URL(entry.url).port, 'log') } catch { /* continue */ }
+    }
+    for (const port of this.listeningPorts()) push(port, 'listen')
+    if (candidates.length === 0) {
       this.upstreamNote = '本进程没有可识别的监听端口'
       return this.targetPort()
     }
-    this.log('日志里没有 DSH 访问链接，改从本进程监听端口里找：' + ports.join(','))
-    let fallback = null
-    for (const port of ports) {
-      const hit = await this.probeWeb(port)
-      if (!hit) continue
-      if (hit.kind === 'dsh-auth') {
-        this.dshCookie = hit.cookie
-        this.dshCookieAt = Date.now()
-        this.upstreamPort = port
-        this.upstreamNote = '从本进程监听端口认出 DSH 网页（127.0.0.1:' + String(port) + '，带登录 cookie）'
-        this.log('上游端口=self ' + String(port) + '（拿到 dsh-auth cookie）')
-        return port
+    this.log('认上游：候选 ' + candidates.map((it) => String(it.port) + '(' + it.from + ')').join(', '))
+    const weight = { 'dsh-auth': 5, 'dsh-login': 4, 'dsh-html': 3, weak: 2 }
+    let best = null
+    for (const item of candidates) {
+      const hit = await this.probeWeb(item.port)
+      if (!hit || hit.kind === 'gateway') continue
+      const score = (weight[hit.kind] ?? 0) + (item.from === 'log' ? 1 : 0)
+      if (!best || score > best.score) best = { hit, score }
+    }
+    if (!best) {
+      this.upstreamNote = '本进程监听端口里没有像 DSH 网页的（' + candidates.map((it) => it.port).join(',') + '）'
+      return this.targetPort()
+    }
+    const hit = best.hit
+    this.upstreamPort = hit.port
+    if (hit.kind === 'dsh-auth' && hit.cookie) {
+      this.dshCookie = hit.cookie
+      this.dshCookieAt = Date.now()
+      this.upstreamNote = '本进程监听端口认出 DSH 网页（127.0.0.1:' + String(hit.port) + '，带登录 cookie）'
+    } else {
+      this.upstreamNote = '本进程监听端口认出 DSH 网页（127.0.0.1:' + String(hit.port) + '，' + hit.kind + '/' + String(hit.status) + '）'
+    }
+    this.log('上游端口=self ' + String(hit.port) + '（' + hit.kind + '）')
+    // 还没拿到 cookie 就趁热按这个端口再换一次 token（DSH 的启动日志可能刚刷出来）。
+    if (this.dshCookie.length === 0) {
+      await this.refreshDshCookie().catch(() => {})
+      if (this.dshCookie.length > 0 && this.upstreamPort > 0) {
+        this.upstreamNote = 'cookie 交换成功 → 127.0.0.1:' + String(this.upstreamPort)
       }
-      if (!fallback) fallback = hit
     }
-    if (fallback) {
-      this.upstreamPort = fallback.port
-      this.upstreamNote = '从本进程监听端口认出上游（127.0.0.1:' + String(fallback.port) + '，HTTP ' + String(fallback.status) + '）'
-      this.log('上游端口=self ' + String(fallback.port))
-      return fallback.port
-    }
-    this.upstreamNote = '本进程监听端口里没有像 DSH 网页的（' + ports.join(',') + '）'
-    return this.targetPort()
+    return this.upstreamPort
   }
 
   /** TCP 探活（不吃 HTTP 协议层，快且不依赖对方回包）。返回 true = 有人在听。 */
@@ -1082,7 +1127,7 @@ export class RemoteAccess {
       const status = upRes.statusCode ?? 502
       if (!isRetry && retryOn(status)) {
         upRes.resume()
-        this.refreshDshCookie()
+        this.recover()
           .then(() => this.forward(req, res, retryOn, true))
           .catch(() => fail(new Error('DSH 认证失败且刷新 cookie 也失败')))
         return
@@ -1112,6 +1157,23 @@ export class RemoteAccess {
     })
     up.on('error', fail)
     req.pipe(up)
+  }
+
+  /**
+   * 上游回 401/403 时的自救（v0.7.17）。
+   *
+   * 顺序很重要：先重换 cookie —— 换成功时会顺带把 `upstreamPort` 校正成**真正吐出
+   * `dsh-auth-*` 的那个端口**（比任何启发式都硬）；换不到才推翻整个上游判定重认一次。
+   * 工作台式机 m129762 的病根就是「上游指到了 51512（另一个 401 的空服务），token 却是
+   * 好的」—— 这种情形必须在第一次 401 就纠正，而不是把 Cloudflare 502 丢给用户。
+   */
+  async recover() {
+    await this.refreshDshCookie().catch(() => {})
+    if (this.dshCookie.length > 0) return
+    const before = this.upstreamPort
+    this.upstreamPort = 0
+    await this.discoverUpstream().catch(() => {})
+    this.log('认证自救：上游 ' + String(before) + ' → ' + String(this.upstreamPort) + '（' + this.upstreamNote + '）')
   }
 
   /** 上游连不上时给用户看的一页（而不是 Cloudflare 那张只有错误码的 502）。 */

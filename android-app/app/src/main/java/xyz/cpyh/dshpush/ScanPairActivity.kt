@@ -55,6 +55,10 @@ class ScanPairActivity : Activity() {
     companion object {
         const val EXTRA_PASS = "pass"
         private const val REQ_CAMERA = 21
+        private const val REQ_ALBUM = 22
+
+        /** 相册这条路的排障入口：adb logcat -s ScanPair */
+        const val TAG = "ScanPair"
     }
 
     private lateinit var preview: TextureView
@@ -71,6 +75,20 @@ class ScanPairActivity : Activity() {
     /** 命中一次就停：解码是后台线程，连拍几帧会重复回调。 */
     private val done = AtomicBoolean(false)
     private var decoding = AtomicBoolean(false)
+
+    /**
+     * v1.34.0：相册选图期间必须挂住相机与「失败即退出」两条逻辑。
+     *
+     * 实测故障（模拟器 Android 15，2026-10-30）：点「从相册选一张」→ 系统图库盖上来 →
+     * 本页暂停 → 选完图回来时相机要重开，重开失败会走 [fail] → 1.6s 后 finish()；
+     * 而解码线程还在跑，两边抢 `finish()`，最后这条结果以 CANCELED 回到主页，
+     * 用户看到的就是「选了图，什么都没发生」。
+     *
+     * 所以：picking = 正在等图库回调；albumBusy = 正在解这张图。两者任一为真时
+     * 不重开相机、也不许 fail() 自动关页面。
+     */
+    @Volatile private var picking = false
+    @Volatile private var albumBusy = false
 
     private val qrReader = MultiFormatReader().apply {
         setHints(
@@ -111,6 +129,26 @@ class ScanPairActivity : Activity() {
         }
         bar.addView(hint)
         root.addView(bar, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+
+        // v1.34.0：相册选图。常见场景是插件那张码在电脑屏幕上，用户截了图/拍了照，
+        // 或者干脆是别人发微信里的一张图——举着手机对着另一块屏拍反而更难对准。
+        val album = TextView(this).apply {
+            text = "从相册选一张"
+            setTextColor(0xFF0E1620.toInt())
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(dp(24), dp(13), dp(24), dp(13))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(24).toFloat()
+                setColor(0xFFB9C6D6.toInt())
+            }
+        }
+        album.setOnClickListener { pickFromAlbum() }
+        root.addView(
+            album,
+            FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                .apply { bottomMargin = dp(40) }
+        )
         setContentView(root)
 
         preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
@@ -127,6 +165,9 @@ class ScanPairActivity : Activity() {
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
     private fun open() {
+        // 从图库回来时相机会连同 TextureView 一起重建；这时候再开相机既没必要，
+        // 失败还会触发 fail() 把刚拿到的图扔掉（见 picking/albumBusy 注释）。
+        if (picking || albumBusy) return
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.CAMERA), REQ_CAMERA)
             return
@@ -272,8 +313,108 @@ class ScanPairActivity : Activity() {
         }
     }
 
+    /** 相册解码用独立实例：相机线程可能还在跑，共用一个 reader 会互相 reset 打断。 */
+    private val albumReader = MultiFormatReader().apply {
+        setHints(mapOf(DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE)))
+    }
+
+    /**
+     * 相册选图（v1.34.0）。
+     *
+     * 优先 `ACTION_PICK`（各家图库都实现得最好），拿不到就退 `ACTION_OPEN_DOCUMENT`（文件选择器），
+     * 两个都没有才提示——比直接崩掉好。
+     */
+    private fun pickFromAlbum() {
+        picking = true
+        android.util.Log.i(TAG, "album: 打开图库")
+        val pick = Intent(Intent.ACTION_PICK).setType("image/*")
+        val ok = runCatching { startActivityForResult(pick, REQ_ALBUM) }.isSuccess
+        if (ok) return
+        val open = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+        }
+        val ok2 = runCatching { startActivityForResult(open, REQ_ALBUM) }.isSuccess
+        if (!ok2) {
+            picking = false
+            hint.text = "这台设备没有可用的相册/文件选择器"
+        }
+    }
+
+    @Deprecated("Camera2 运行时权限与相册回传都是老式 result 回调，API 33 仍未废弃这条链路")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_ALBUM) return
+        android.util.Log.i(TAG, "album: 回来 result=$resultCode uri=" + data?.data)
+        // 用户在图库里点了返回/取消：解除挂起，把相机重新拉起来接着扫。
+        if (resultCode != RESULT_OK || data?.data == null) {
+            picking = false
+            open()
+            return
+        }
+        val uri = data.data!!
+        albumBusy = true
+        hint.setTextColor(0xFFB9C6D6.toInt())
+        hint.text = "正在识别这张图…"
+        Thread {
+            val text = runCatching { decodeUri(uri) }.getOrNull()
+            runOnUiThread {
+                android.util.Log.i(TAG, "album: 解出=" + (text?.length ?: -1))
+                albumBusy = false
+                picking = false
+                if (text == null) {
+                    hint.text = "这张图里没找到二维码，换一张清楚点的试试"
+                    hint.setTextColor(0xFFFF9C9C.toInt())
+                    open()   // 解不出来就继续用相机扫，别把一个死页面留给用户
+                } else {
+                    done.set(false)   // 相册这条路之前可能已判过码
+                    hit(text)
+                }
+            }
+        }.start()
+    }
+
+    /** 读图 → 先整图解，解不出再按 3×3 分块解（截图带大片桌面/聊天背景时整图二值化会糊掉码） */
+    private fun decodeUri(uri: android.net.Uri): String? {
+        val bmp = contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it)
+        } ?: return null
+        decodeBitmap(bmp)?.let { return it }
+        val w = bmp.width
+        val h = bmp.height
+        if (w < 60 || h < 60) return null
+        val cw = w / 3
+        val ch = h / 3
+        for (row in 0..2) for (col in 0..2) {
+            val x = (col * cw).coerceAtLeast(0)
+            val y = (row * ch).coerceAtLeast(0)
+            val bw = minOf(cw, w - x)
+            val bh = minOf(ch, h - y)
+            if (bw < 40 || bh < 40) continue
+            val piece = runCatching {
+                android.graphics.Bitmap.createBitmap(bmp, x, y, bw, bh)
+            }.getOrNull() ?: continue
+            decodeBitmap(piece)?.let { return it }
+        }
+        return null
+    }
+
+    private fun decodeBitmap(src: android.graphics.Bitmap): String? {
+        val w = src.width
+        val h = src.height
+        if (w <= 0 || h <= 0) return null
+        val px = IntArray(w * h)
+        src.getPixels(px, 0, w, 0, 0, w, h)
+        val rgb = com.google.zxing.RGBLuminanceSource(w, h, px)
+        runCatching { albumReader.reset() }
+        return runCatching {
+            albumReader.decodeWithState(BinaryBitmap(HybridBinarizer(rgb)))?.text
+        }.getOrNull()
+    }
+
     private fun hit(text: String) {
         if (!done.compareAndSet(false, true)) return
+        android.util.Log.i(TAG, "hit: 载荷长度=" + text.length + " 前缀=" + text.take(24))
         val (cfg, error) = PushService.parsePass(text)
         if (cfg == null) {
             handler?.post {
@@ -287,11 +428,14 @@ class ScanPairActivity : Activity() {
     }
 
     private fun fail(message: String) {
+        android.util.Log.w(TAG, "fail: " + message + " picking=" + picking + " busy=" + albumBusy)
         if (done.getAndSet(true)) return
         runOnUiThread {
             hint.text = message
             hint.setTextColor(0xFFFF9C9C.toInt())
         }
+        // 相册流程（等图库/解码中）不算失败：这时 finish() 会把用户刚选的图连同结果一起丢掉。
+        if (picking || albumBusy) return
         handler?.postDelayed({ finish() }, 1600)
     }
 
@@ -300,8 +444,9 @@ class ScanPairActivity : Activity() {
         if (res.isNotEmpty() && res[0] == PackageManager.PERMISSION_GRANTED) {
             open()
         } else {
-            Toast.makeText(this, "没有相机权限就扫不了码；也可以在通行证框里手工粘贴", Toast.LENGTH_LONG).show()
-            finish()
+            // v1.34.0：没给相机权限不再直接滚蛋——相册这条路照样能配。
+            Toast.makeText(this, "没有相机权限，可以点下面的「从相册选一张」", Toast.LENGTH_LONG).show()
+            hint.text = "没有相机权限；点下面的按钮从相册选二维码图片"
         }
     }
 
