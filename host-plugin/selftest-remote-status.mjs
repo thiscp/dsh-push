@@ -140,6 +140,74 @@ function makeAccessor(makeEngine) {
   ra.dispose()
 }
 
+// ── 8. v0.7.12：fiber 热重启后新实例必须**继承**旧引擎（地址不变、不留僵尸进程）────
+{
+  const built = []
+  const makeFake = (tag) => (options) => {
+    built.push(tag)
+    return {
+      url: '',
+      disposed: false,
+      secret: '',
+      setSecret(secret) { this.secret = secret },
+      async start() {
+        this.url = 'https://keep-me.trycloudflare.com'
+        options.onUrl(this.url)
+        return { running: true, url: this.url, error: '' }
+      },
+      dispose() { this.disposed = true },
+    }
+  }
+  const make = (tag) => {
+    const config = {}
+    const acc = new RemoteAccessor(
+      { fiber: { state: 2 }, on() {} },
+      config,
+      { host: 'probehost', remoteEnabled: 'on', remoteSecret: 's'.repeat(32) },
+      { log() {} },
+      () => {},
+      { makeEngine: makeFake(tag) },
+    )
+    acc.saveStore = () => {}
+    return { acc, config }
+  }
+
+  const a = make('first')
+  a.acc.start()
+  await tick(60)
+  check(a.config.remoteUrl === 'https://keep-me.trycloudflare.com',
+    '8 第一个实例拿到公网地址', String(a.config.remoteUrl))
+
+  const firstEngine = a.acc.engine
+  clearTimeout(a.acc.watchTimer)
+  a.acc.watchTimer = null
+
+  const b = make('second')
+  b.acc.start()
+  await tick(60)
+  check(built.length === 1, '8 新实例继承旧引擎、不另起一个', JSON.stringify(built))
+  check(b.acc.engine === firstEngine, '8 两个实例指向同一个引擎对象')
+  check(a.acc.engine === null, '8 旧实例交出引擎（不会再抢着写设置行）')
+  check(firstEngine.disposed === false, '8 继承时不会把还在跑的隧道掐掉')
+  check(b.config.remoteUrl === 'https://keep-me.trycloudflare.com',
+    '8 新实例的设置行立刻有地址（不用再等一次隧道）', String(b.config.remoteUrl))
+  clearTimeout(b.acc.watchTimer)
+  b.acc.watchTimer = null
+}
+
+// ── 9. v0.7.12：无超时的 await 必须被 withDeadline 兜住 ────────────────────────
+{
+  const ra = new RemoteAccess({ log: () => {}, secret: 'x'.repeat(43) })
+  const began = Date.now()
+  let message = ''
+  await ra.withDeadline(new Promise(() => {}), 120, '取 cookie').catch((error) => { message = String(error?.message ?? error) })
+  const spent = Date.now() - began
+  check(message.includes('超时'), '9 卡死的 await 会以「超时」结束', message || '(没有报错)')
+  check(message.includes('取 cookie'), '9 报错里带上是哪一步', message)
+  check(spent >= 100 && spent < 2000, '9 到点就返回，不会真的等下去', String(spent) + 'ms')
+  ra.dispose()
+}
+
 console.log('')
 console.log('remote-status: ' + String(pass) + ' passed, ' + String(fail) + ' failed')
 process.exit(fail === 0 ? 0 : 1)

@@ -109,7 +109,14 @@ export class RemoteAccess {
    * @param {(url: string) => void} [options.onUrl] 公网地址变化时回调（用于推送手机）。
    */
   constructor(options) {
-    this.log = options.log ?? (() => {})
+    this.sink = options.log ?? (() => {})
+    // v0.7.12：插件自己的日志以前只进 DSH 的 logger，用户那边（和我在另一台机器上）都看不到，
+    // 「卡在正在连接…」就完全没法定位（2026-10-30 笔电复现）。现在同时落一份文件：
+    // 谁都能 tail 它，出问题时不用再猜。
+    this.log = (message) => {
+      try { this.sink(message) } catch { /* host logger 挂了不该拖累隧道 */ }
+      this.fileLog(message)
+    }
     this.secret = String(options.secret ?? '')
     this.binPath = String(options.binPath ?? '')
     this.webLog = String(options.webLog ?? join(homedir(), '.dsh', 'web.log'))
@@ -222,8 +229,14 @@ export class RemoteAccess {
     }
     if (this.server) return this.state()
 
+    const began = Date.now()
+    this.log('start(): 取 DSH 登录 cookie …')
     // 先把 DSH 的 cookie 拿到，网关一起来就能直接放行；拿不到不算致命（请求时会再试）。
-    await this.refreshDshCookie().catch(() => {})
+    // v0.7.12：加硬上界。这里没有超时的 fetch 曾经能让整个 start() 永不返回，界面就停在
+    // 「正在连接…」，而且连 75 秒兜底都轮不到（那时候兜底还没被挂上）。
+    await this.withDeadline(this.refreshDshCookie(), 20000, '取 DSH cookie')
+      .catch(() => {})
+    this.log('start(): cookie 阶段结束（' + String(Date.now() - began) + 'ms）')
 
     await new Promise((resolve, reject) => {
       const server = http.createServer((req, res) => {
@@ -249,15 +262,40 @@ export class RemoteAccess {
 
     // v0.5.0（用户 m16379）：真要起隧道之前才确保 cloudflared 在本机。
     // 已经装好的机器走缓存分支，不联网也不变慢；只有真缺的时候才下载。
-    const bin = await this.prepareBin()
+    this.log('start(): 准备 cloudflared …')
+    const bin = await this.withDeadline(this.prepareBin(), 240000, '准备 cloudflared').catch((error) => {
+      this.reportError('准备 cloudflared 失败：' + String(error?.message ?? error))
+      return ''
+    })
     if (this.disposed) return this.state()
     if (!bin) {
       if (!this.lastError) this.lastError = '找不到 cloudflared，自动安装也没成功'
       return this.state()
     }
 
+    this.log('start(): 起隧道（' + bin + '）')
     this.spawnTunnel()
     return this.state()
+  }
+
+  /**
+   * 给任意 promise 加硬上界（v0.7.12）。
+   *
+   * 病根：`refreshDshCookie()` 与 `prepareBin()` 里的 fetch / 下载都没有超时，
+   * 一旦对端不回应，`start()` 就永不 resolve —— 面板停在「正在连接…」，
+   * 而 0.7.11 的 75 秒兜底看门狗排在 `await start()` **之后**，根本轮不到执行。
+   */
+  withDeadline(promise, ms, label) {
+    let timer = null
+    const guard = new Promise((_, reject) => {
+      // 这里**不能** unref：解绑之后，如果此刻事件循环里只剩下这个 await（比如自测进程），
+      // 定时器永远不会触发，进程会带着 unsettled await 直接退出（实测踩到）。
+      // 正常路径在 finally 里 clearTimeout，不会白占一个 240 秒的定时器。
+      timer = setTimeout(() => reject(new Error(label + '超时（' + String(Math.round(ms / 1000)) + ' 秒）')), ms)
+    })
+    return Promise.race([promise, guard]).finally(() => {
+      if (timer !== null) clearTimeout(timer)
+    })
   }
 
   /** 停网关 + 隧道（可重复调用）。 */
@@ -306,7 +344,10 @@ export class RemoteAccess {
       turn += 1
       let ok = false
       try {
-        const res = await fetch(url + path, { redirect: 'manual' })
+        // v0.7.12：这里也没有超时。边缘还没路由时连接可能既不回 530 也不 RST，
+        // 一次 fetch 挂住就把整个 60 秒预算拖过了头 —— 设置行于是永远停在「隧道建立中…」。
+        const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(8000) : undefined
+        const res = await fetch(url + path, { redirect: 'manual', signal })
         // 401 = 我们网关的登录门；200 = 已经能出内容。404/530 都是边缘还没路由。
         ok = res.status === 401 || res.status === 200
       } catch {
@@ -328,6 +369,25 @@ export class RemoteAccess {
   }
 
   /** 记一次失败：写 lastError + 通知设置行（v0.7.11）。 */
+  /**
+   * 把一行日志追加到 `~/.dsh/logs/dsh-push-remote.log`（v0.7.12）。
+   *
+   * 为什么需要它：0.7.11 把隧道失败上报到了设置行，但**如果流程自己卡住**（某个 await 不返回），
+   * 设置行只会停在「正在连接…」，既没有错误也没有线索。文件日志能把「走到哪一步」留下来。
+   * 超过 2MB 直接重开（这份日志只用于排障，不做审计）。
+   */
+  fileLog(message) {
+    try {
+      const dir = join(homedir(), '.dsh', 'logs')
+      mkdirSync(dir, { recursive: true })
+      const file = join(dir, 'dsh-push-remote.log')
+      try {
+        if (statSync(file).size > 2 * 1024 * 1024) renameSync(file, file + '.1')
+      } catch { /* 文件还不存在 */ }
+      appendFileSync(file, new Date().toISOString() + ' ' + String(message) + '\n')
+    } catch { /* 落盘失败不影响隧道 */ }
+  }
+
   reportError(message) {
     this.lastError = String(message || '隧道建立失败')
     this.log(this.lastError)
@@ -543,10 +603,20 @@ export class RemoteAccess {
       }
       // 只在回环上取 cookie：绝不用隧道域名去自打（那会再撞一次 Host/Origin 栅栏）。
       target.hostname = '127.0.0.1'
+      // v0.7.12：`fetch` 默认**没有超时**。web.log 里那些过期链接指向的端口未必还在听，
+      // 万一被防火墙静默丢弃（不是 RST），一次 fetch 能挂几分钟到永久 —— 这就是「正在连接…」
+      // 一动不动的最可能来源。逐个候选给 4 秒，并且把每次尝试写进文件日志。
       let res
       try {
-        res = await fetch(target.toString(), { redirect: 'manual', headers: { 'cache-control': 'no-store' } })
-      } catch {
+        this.log('尝试用 cand#' + String(urls.indexOf(raw) + 1) + ' 换取 DSH cookie：' + target.toString())
+        const signal = typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(4000) : undefined
+        res = await fetch(target.toString(), {
+          redirect: 'manual',
+          headers: { 'cache-control': 'no-store' },
+          signal,
+        })
+      } catch (error) {
+        this.log('cand#' + String(urls.indexOf(raw) + 1) + ' 取 cookie 失败：' + String(error?.message ?? error))
         continue
       }
       const list = typeof res.headers.getSetCookie === 'function' ? res.headers.getSetCookie() : []

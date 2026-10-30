@@ -3561,3 +3561,50 @@ inode（配置没生效，往它写还报 `Read-only file system`）。必须**�
 **教训**：给 **stream** 段加 `proxy_protocol` 等于给**所有**上游加，而 TLS 上游（derper）不会被 nginx 自动忽略；
 凡是「A 站点需要、B 站点不接受」的 L4 差异，只能在 nginx 与上游之间插一层转换，不能靠配置开关。
 
+
+## §7.41 公网隧道「卡在正在连接…」：三个无超时的 await + 一个实例泄漏（host-plugin v0.7.12/v0.7.13，2026-10-30）
+
+用户 m129237：笔电升到 0.7.11 后仍然「一直无法正常创建公网隧道」。
+
+**现场取证的第一个事实：隧道其实是通的。** 设置行显示「正在连接…」的同时，
+`curl https://<那条隧道>/` 返回 **401**（我们网关的登录门）——链路活着，坏的是**状态显示**。
+第二个事实：同一台机器的 DSH 进程里听着 **5 个网关端口**（1462/7327/7328/8693/8714）、
+挂着 **4 个 cloudflared**。
+
+**根因链**（缺一条都解释不了「地址有、界面空」）：
+
+1. **实例泄漏**：每次浏览器写 volatile（点「重建隧道」= `remoteSeq`/`remoteAction` 落进
+   `cordis.patch.yml`）都会热重启本插件 fiber ⇒ 新建 `RemoteAccessor` + `RemoteAccess`，
+   旧实例的 http server 与 cloudflared 子进程**没有任何人 dispose**。多个实例抢着往
+   设置行写 phase，而真正拿到地址的是已经没人读的旧实例。
+2. **三处没有超时的 await**：`refreshDshCookie()` 的 `fetch`（默认无超时，web.log 里过期链接
+   指向的端口可能被静默丢弃而不是 RST）、`prepareBin()` 的下载、`waitPublic()` 的探活
+   `fetch`（边缘还没路由时既不回 530 也不 RST）。
+3. **看门狗排错位置**：0.7.11 的 75 秒兜底排在 `await this.engine.start()` **之后**——
+   start() 一卡，兜底文案永远轮不到执行。
+
+**修法（0.7.12 / 0.7.13）**：
+
+- 新实例**继承**旧实例的引擎（`REMOTE_ACTIVE` 进程级 Map）：地址不变、不掐还在跑的隧道、
+  也不留僵尸进程；继承后必须**重新接线** `onUrl`/`onPhase`/`onError`——它们还指着已死 fiber
+  的 config 对象（写进去等于扔进黑洞）。
+- `withDeadline(promise, ms, label)` 统一上界：cookie 20 秒（单候选 4 秒）、
+  cloudflared 准备 240 秒、`waitPublic` 每次探活 8 秒。
+- 看门狗改为**先挂再 await**。
+- 日志双写 `~/.dsh/logs/dsh-push-remote.log`（2MB 轮转）：
+  `start(): 取 DSH 登录 cookie …` → `cand#N 换取 cookie` → `cookie 阶段结束（42ms）` →
+  `准备 cloudflared` → `起隧道（路径）`。下次卡住直接 tail 就能看出停在哪一步，
+  不必再靠猜（上一轮就是因为插件日志只进 DSH logger，在别的机器上根本看不到）。
+
+**验收**：本机驱动器 `C:/Temp/probe_acc.mjs`（不起插件、直接驱动已安装/repo 的
+`RemoteAccessor`）跑通全链：cookie 42ms → 网关监听 → cloudflared → **URL 3.3 秒**
+→ 边缘路由 30 秒 → phase `已就绪`。
+自测：plugin-selftest 161、credentials 54、pair 59、remote-bin 21、
+remote-status **29**（新增两组：引擎继承、`withDeadline` 超时兜底）。
+
+**坑（只在自测里会暴露）**：`withDeadline` 的定时器**不能 `unref()`**——
+事件循环里只剩这个 await 时进程会带着 unsettled top-level await 直接退出，
+看起来像「超时逻辑没生效」。正常路径在 `finally` 里 clearTimeout，不会白占定时器。
+
+**遗留**：这台笔电上 0.7.12 之前创建的 5 个僵尸网关与 4 个 cloudflared 仍在
+（`REMOTE_ACTIVE` 只认它上线之后创建的实例），要清干净需重启一次 DSH；不影响新版本工作。

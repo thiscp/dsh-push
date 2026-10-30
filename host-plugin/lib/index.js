@@ -1762,6 +1762,19 @@ export class RemoteAccessor {
     }
   }
 
+  /** 停掉本实例的网关与隧道（v0.7.12：被新实例接管时调用，也供设置行「关闭远程访问」复用）。 */
+  disposeEngine(reason) {
+    if (this.watchTimer) {
+      clearTimeout(this.watchTimer)
+      this.watchTimer = null
+    }
+    const engine = this.engine
+    this.engine = null
+    if (!engine) return
+    try { engine.dispose() } catch { /* 已经停了 */ }
+    this.log('远程访问：已停掉本实例的网关与隧道（' + String(reason || '') + '）')
+  }
+
   /**
    * 把值写进 volatile，但**不让自己的 volatile-update 监听把它当成用户操作**（否则会再跑一遍
    * persistEnabled/up，无限自激）。设置行读的是 volatile，开机时必须回灌一次，否则口令框是空的、
@@ -1785,8 +1798,7 @@ export class RemoteAccessor {
   }
 
   /** 落盘（凭据文件）；用于口令与开关，避免它们进 cordis.patch.yml。 */
-  persist(patch) {
-    if (!this.credentialsPath) return
+  persist(patch) {    if (!this.credentialsPath) return
     try {
       const saved = this.writeCreds(this.credentialsPath, patch)
       this.log('远程访问设置已写回凭据文件 ' + saved.path)
@@ -1827,6 +1839,24 @@ export class RemoteAccessor {
     }
     const secret = this.ensureSecret()
     this.mirror('remoteSecret', secret)
+    // v0.7.11（用户 m128886「远程访问一直卡住」）：隧道层的失败以前只进日志、不进设置行，
+    // 于是 cloudflared 起不来时用户看到的是「隧道建立中…」永远转下去。
+    // v0.7.12：这三个回调抽出来单放，因为继承来的引擎里它们还指着**旧实例**的 config
+    // （旧 fiber 已经死了，写进去等于扔进黑洞）——必须每次 up() 重新接线。
+    const callbacks = {
+      onUrl: (url) => this.onUrl(url),
+      onError: (message) => {
+        const text = String(message || '').trim()
+        if (text === '') return
+        this.write('remotePhase', '隧道未建立')
+        this.write('remoteStatus', text)
+        this.saveStore()
+      },
+      onPhase: (phase) => {
+        this.write('remotePhase', String(phase))
+        this.saveStore()
+      },
+    }
     if (!this.engine) {
       this.engine = this.makeEngine({
         log: this.log,
@@ -1834,28 +1864,26 @@ export class RemoteAccessor {
         binPath: String(this.readAny('remoteBin') || ''),
         webLog: this.resolved.webLog,
         port: Number(this.readAny('remotePort') || 0) || 0,
-        onUrl: (url) => this.onUrl(url),
-        // v0.7.11（用户 m128886「远程访问一直卡住」）：隧道层的失败以前只进日志、不进设置行，
-        // 于是 cloudflared 起不来时用户看到的是「隧道建立中…」永远转下去。
-        onError: (message) => {
-          const text = String(message || '').trim()
-          if (text === '') return
-          this.write('remotePhase', '隧道未建立')
-          this.write('remoteStatus', text)
-          this.saveStore()
-        },
-        onPhase: (phase) => {
-          this.write('remotePhase', String(phase))
-          this.saveStore()
-        },
+        ...callbacks,
       })
     } else {
       this.engine.setSecret(secret)
+      this.engine.onUrl = callbacks.onUrl
+      this.engine.onError = callbacks.onError
+      this.engine.onPhase = callbacks.onPhase
+      // 继承来的引擎可能已经拿到地址了：立刻回灌，别让设置行空着再去等一次。
+      if (String(this.engine.url || '') !== '') this.onUrl(this.engine.url)
     }
+    this.log('远程访问：开始拉隧道（up）')
     this.write('remotePhase', '正在连接…')
     this.write('remoteStatus', '')
+    // v0.7.12：看门狗**先挂上**再 await。0.7.11 挂在 start() 之后，而 start() 内部的
+    // fetch / 下载没有超时，一旦卡住连兜底文案都轮不到（2026-10-30 笔电实测就停在这句上）。
+    this.watchUrl(75000)
     try {
       const state = await this.engine.start()
+      this.log('远程访问：start() 返回 running=' + String(state.running) +
+        ' url=' + JSON.stringify(state.url || '') + ' error=' + JSON.stringify(state.error || ''))
       if (state.running === false) {
         this.write('remotePhase', '未运行')
         this.write('remoteStatus', state.error || '启动失败')
@@ -2011,6 +2039,29 @@ export class RemoteAccessor {
   }
 
   start() {
+    // v0.7.12：**新实例接管旧实例的网关与隧道**。
+    // 每次浏览器写 volatile（连不上就点「重建隧道」= remoteSeq/remoteAction 落进 cordis.patch.yml）
+    // 都会热重启本插件 fiber，于是新建一个 RemoteAccessor + RemoteAccess；旧实例的 http server
+    // 与 cloudflared 子进程没有人 dispose —— 2026-10-30 笔电实测积累了 5 个网关端口
+    // （1462/7327/7328/8693/8714）和 4 个 cloudflared。它们抢着往设置行写 phase，界面就会一会儿
+    // 「正在连接…」一会儿「隧道建立中…」，而真正拿到的地址挂在已经没人看的旧实例上。
+    const previous = REMOTE_ACTIVE.get(this.storeKey())
+    REMOTE_ACTIVE.set(this.storeKey(), this)
+    if (previous && previous !== this) {
+      // 优先**继承**旧实例的引擎：地址不变、用户手里的链接不用换，也不留僵尸进程。
+      // 只有旧引擎已经停了才走「接管 + 销毁」这条兜底。
+      if (previous.engine && previous.engine.disposed !== true) {
+        this.engine = previous.engine
+        previous.engine = null
+        if (previous.watchTimer) {
+          clearTimeout(previous.watchTimer)
+          previous.watchTimer = null
+        }
+        this.log('远程访问：继承上一个实例的网关与隧道（公网地址保持不变）')
+      } else {
+        try { previous.disposeEngine('新实例接管') } catch { /* 旧 fiber 已经死了 */ }
+      }
+    }
     this.applyStore()
     const enabled = this.isEnabled()
     // 设置行的开关读的是 volatile 的 `remoteAccess`；开机时它总是默认 false，而真值在凭据文件里。
@@ -2514,6 +2565,14 @@ export function remoteStore() {
   if (!g[REMOTE_STORE_KEY]) g[REMOTE_STORE_KEY] = {}
   return g[REMOTE_STORE_KEY]
 }
+
+/**
+ * 每个 profile 只有一个「当前」远程访问实例（v0.7.12）。
+ *
+ * 为什么必须记：volatile 写入会热重启本插件 fiber，新实例不知道旧实例还在跑着自己的
+ * http server 和 cloudflared 子进程。不接管就只能在端口列表里看到一片僵尸网关。
+ */
+const REMOTE_ACTIVE = new Map()
 
 export function apply(ctx, config = {}) {
   const { resolved, file } = resolvePluginConfig(config)
