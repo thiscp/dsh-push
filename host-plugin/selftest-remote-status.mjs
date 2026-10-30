@@ -15,6 +15,7 @@ import { RemoteAccessor } from './lib/index.js'
 import { RemoteAccess } from './lib/remote.js'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import http from 'node:http'
 
 let pass = 0
 let fail = 0
@@ -205,6 +206,51 @@ function makeAccessor(makeEngine) {
   check(message.includes('超时'), '9 卡死的 await 会以「超时」结束', message || '(没有报错)')
   check(message.includes('取 cookie'), '9 报错里带上是哪一步', message)
   check(spent >= 100 && spent < 2000, '9 到点就返回，不会真的等下去', String(spent) + 'ms')
+  ra.dispose()
+}
+
+// ── 10. v0.7.14：上游端口要「验证过」才用，连不上要给可读的一页 ────────────────
+{
+  const ra = new RemoteAccess({ log: () => {}, secret: 'x'.repeat(43) })
+
+  // 没有验证过的端口时，targetPort 退回日志里的第一个（这里没有日志 → 3081 兜底）
+  check(ra.upstreamPort === 0, '10 起步时没有任何验证过的上游端口', String(ra.upstreamPort))
+
+  // 验证过的端口优先于日志推断
+  ra.upstreamPort = 5555
+  check(ra.targetPort() === 5555, '10 验证过的端口优先', String(ra.targetPort()))
+
+  // 探活：本机一定有人在听的端口（用刚起的一个 http server）应返回 true，空端口 false
+  const srv = http.createServer((_req, res) => res.end('ok'))
+  await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve))
+  const live = srv.address().port
+  check(await ra.probePort(live), '10 探活能认出在听的端口', String(live))
+  await new Promise((resolve) => srv.close(resolve))
+  check(!(await ra.probePort(live, 300)), '10 探活能认出已经关掉的端口', String(live))
+
+  // 上游连不上时不该无声挂着：forward 立刻回一页，页里带上端口与判定
+  ra.upstreamPort = 1 // 几乎不可能有人在听
+  ra.upstreamNote = '测试用'
+  const served = await new Promise((resolve) => {
+    const host = http.createServer((req, res) => ra.forward(req, res, () => false))
+    host.listen(0, '127.0.0.1', async () => {
+      const port = host.address().port
+      const body = await new Promise((done) => {
+        const r = http.request({ host: '127.0.0.1', port, path: '/', method: 'GET' }, (res) => {
+          let text = ''
+          res.on('data', (chunk) => { text += chunk })
+          res.on('end', () => done({ status: res.statusCode, text }))
+        })
+        r.on('error', () => done({ status: 0, text: '' }))
+        r.end()
+      })
+      host.close()
+      resolve(body)
+    })
+  })
+  check(served.status === 502, '10 上游连不上时回 502 而不是挂着', String(served.status))
+  check(served.text.includes('127.0.0.1:1'), '10 错误页写明转发到哪个端口', served.text.slice(0, 120))
+  check(served.text.includes('测试用'), '10 错误页带上上游判定', '')
   ra.dispose()
 }
 

@@ -3608,3 +3608,36 @@ remote-status **29**（新增两组：引擎继承、`withDeadline` 超时兜底
 
 **遗留**：这台笔电上 0.7.12 之前创建的 5 个僵尸网关与 4 个 cloudflared 仍在
 （`REMOTE_ACTIVE` 只认它上线之后创建的实例），要清干净需重启一次 DSH；不影响新版本工作。
+
+### §7.42 0.7.16：桌面版换不到 DSH 登录 cookie（工作台式机「隧道通了但进不去」）
+
+**报障**（m129470 / m129601）：工作台式机 `DESKTOP-MCSEJ9H` 升级 0.7.15 后重建隧道，
+`GET /?k=…` 能协商 cookie、`/__dshpush/status` 200 且 `running:true`，但带 cookie 再 `GET /`
+返回 **502 + Cloudflare 错误页**（笔电侧远程实测）。用户看到的是浏览器里 DSH 自己那句
+`dsh web authentication required; reopen the URL printed by dsh web.`
+
+**根因**：桌面版 DSH 的访问链接（含 per-process token）**不在** `~/.dsh/web.log`，
+而在 `~/.dsh/web/dsh-desktop-stdout.log`（本机现成的 `DshWebForward` 就是读这个文件——
+`WEB_DIR = path.join(HOME, '.dsh', 'web')`、`STDOUT_LOG = path.join(WEB_DIR, 'dsh-desktop-stdout.log')`）。
+`webLogCandidates()` 扫了 `~/.dsh`、`~/.dsh/logs`、tmpdir、execPath、cwd、LOCALAPPDATA、APPDATA、TMP，
+**唯独漏了 `~/.dsh/web` 这一层** ⇒ 拿不到 token ⇒ 没有 cookie ⇒ 上游 DSH 拒绝。
+
+**修法**（`host-plugin/lib/remote.js`）：
+1. `webLogCandidates()` 的 `extraDirs` 加 `join(homedir(), '.dsh', 'web')`。
+2. 新增 `logWebEntries()`：扫全部候选日志，返回 `{url, token}`（新的在前，取
+   `new URL(raw).searchParams.get('token')`）——把 **token 与端口解耦**。桌面版端口每次
+   启动都换，旧实现只按日志里那条 URL 原样换 cookie，端口一过期整条失败。
+3. `refreshDshCookie()` 重写：候选 = 日志原样（hostname→127.0.0.1）+ 每个 token × 每个端口
+   （日志里出现过的 + `listeningPorts()`），每个 4s（`AbortSignal.timeout(4000)`），累计上限 24 次；
+   成功即记 `dshCookie` / `upstreamPort` / `upstreamNote = 'cookie 交换成功：候选 #N → 127.0.0.1:port'`。
+4. `forward()`：刷新重试后仍 401/403 时不再透传上游英文，改写
+   `upstreamErrorPage('本机 DSH 拒绝登录 cookie：没能从日志里换到 token（…）')`（502，text/html）。
+
+**验收**：`C:/Temp/verify_cookie.mjs` 在本机实跑——`logWebEntries()` 50 条，候选 #1 打 `127.0.0.1:3080`
+（转发代理，无 `dsh-auth-`），候选 #2 打 `127.0.0.1:3081` → 拿到 `dsh-auth-…`（len 224）、
+`upstreamPort=3081`、note `cookie 交换成功：候选 #2 → 127.0.0.1:3081`。
+自测：plugin-selftest **161/161**、selftest-pair **59/59**、selftest-remote-bin **21/21**、
+selftest-remote-status **36/36**。npm `dsh-push-host@0.7.16` 已上 latest（registry `time` = 06:52:50Z）。
+
+**教训**：桌面版与 CLI 版把 token 写在**不同文件**里，"扫一堆候选目录"这种启发式必须
+以**现有能用的实现**（本机 `dsh-web-forward.mjs`）为准逐条对齐，否则就是漏一层目录、静默 401。
