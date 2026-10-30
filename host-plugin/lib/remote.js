@@ -135,6 +135,13 @@ export class RemoteAccess {
     this.downloadPhase = ''
     /** 阶段回调（RemoteAccessor 用它把文案镜像到设置行）。 */
     this.onPhase = options.onPhase ?? (() => {})
+    /**
+     * 失败回调（v0.7.11）。隧道层的失败以前**只写日志、不回设置行**：用户看到的是
+     * 「隧道建立中…」永远转下去（m128886 报障）。传空串代表「已恢复」。
+     */
+    this.onError = options.onError ?? (() => {})
+    /** 连续失败次数（拿到地址就清零）；到上限就停手，别让用户盯着一个无限转的圈。 */
+    this.failStreak = 0
     /** DSH 自己的登录 cookie 缓存：`dsh-auth-xxx=v1.…`。 */
     this.dshCookie = ''
     this.dshCookieAt = 0
@@ -320,6 +327,35 @@ export class RemoteAccess {
     return false
   }
 
+  /** 记一次失败：写 lastError + 通知设置行（v0.7.11）。 */
+  reportError(message) {
+    this.lastError = String(message || '隧道建立失败')
+    this.log(this.lastError)
+    try { this.onError(this.lastError) } catch { /* caller's problem */ }
+  }
+
+  /** 从 cloudflared 自己的日志里挑一行最像原因的（给用户看的必须是原文，不是「失败」两个字）。 */
+  logTail(lines = 24) {
+    try {
+      const text = readFileSync(join(homedir(), '.dsh', 'logs', 'cloudflared-remote.log'), 'utf8')
+      const all = text.split(/\r?\n/).filter((line) => line.trim() !== '')
+      const recent = all.slice(-Math.max(4, lines))
+      const pick = recent.filter((line) => /(ERR|WRN|error|failed|Unable|refused|forbidden|403|429|dial)/i.test(line))
+      const chosen = pick.length > 0 ? pick[pick.length - 1] : recent[recent.length - 1]
+      if (!chosen) return ''
+      // 去掉时间戳前缀，只留人话；太长就截断。
+      const body = chosen.replace(/^\S+\s+\S+\s+/, '').trim()
+      return body.length > 180 ? body.slice(0, 180) + '…' : body
+    } catch {
+      return ''
+    }
+  }
+
+  /** 连续失败太多次就停手：无限转圈比明确报错更糟。 */
+  canRetry() {
+    return this.failStreak < 3
+  }
+
   killTunnel() {
     if (!this.child) return
     const child = this.child
@@ -354,8 +390,8 @@ export class RemoteAccess {
     try {
       child = spawn(bin, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })
     } catch (error) {
-      this.lastError = '起不了 cloudflared：' + String(error?.message ?? error)
-      this.log(this.lastError)
+      this.failStreak += 1
+      this.reportError('起不了 cloudflared（' + bin + '）：' + String(error?.message ?? error))
       this.scheduleRestart()
       return
     }
@@ -376,7 +412,9 @@ export class RemoteAccess {
       settled = true
       this.url = hit[0]
       this.lastError = ''
+      this.failStreak = 0
       this.log('公网地址：' + this.url)
+      try { this.onError('') } catch { /* caller's problem */ }
       try { this.onUrl(this.url) } catch { /* caller's problem */ }
     }
 
@@ -385,8 +423,9 @@ export class RemoteAccess {
     const giveUp = setTimeout(() => {
       if (settled) return
       settled = true
-      this.lastError = 'cloudflared 60 秒内没有给出公网地址'
-      this.log(this.lastError)
+      this.failStreak += 1
+      const why = this.logTail()
+      this.reportError('隧道 60 秒没有建起来' + (why ? '：' + why : '（cloudflared 没给出公网地址）'))
     }, 60000)
 
     child.on('exit', (code) => {
@@ -395,15 +434,21 @@ export class RemoteAccess {
       if (this.child === child) this.child = null
       if (this.disposed) return
       this.url = ''
-      if (!settled) this.lastError = 'cloudflared 退出，code=' + String(code)
-      this.log('cloudflared 退出 code=' + String(code) + '，准备重连')
+      if (!settled) {
+        // 一次都没建起来就退出：这才是「起不来」的证据，必须让用户看见原文。
+        this.failStreak += 1
+        const why = this.logTail()
+        this.reportError('cloudflared 退出（code=' + String(code) + '）' + (why ? '：' + why : ''))
+      } else {
+        this.log('cloudflared 退出 code=' + String(code) + '，准备重连')
+      }
       this.scheduleRestart()
     })
     child.on('error', (error) => {
       clearInterval(timer)
       clearTimeout(giveUp)
-      this.lastError = 'cloudflared 启动失败：' + String(error?.message ?? error)
-      this.log(this.lastError)
+      this.failStreak += 1
+      this.reportError('cloudflared 启动失败：' + String(error?.message ?? error))
       this.scheduleRestart()
     })
   }
@@ -411,6 +456,12 @@ export class RemoteAccess {
   /** 隧道断了就退避重连（10s → 20s → 40s，封顶 60s）；地址变了会重新推送。 */
   scheduleRestart() {
     if (this.disposed || this.restartTimer !== null) return
+    // v0.7.11：连续 3 次都没建起来就停手并说明原因。以前这里会一直重试，用户看到的是
+    // 「隧道建立中…」永远转下去（m128886），既不知道该等还是该动手。
+    if (!this.canRetry()) {
+      this.reportError(this.lastError + '（已连续失败 ' + String(this.failStreak) + ' 次，停止自动重试；点「重建隧道」再来一次）')
+      return
+    }
     const delay = Math.min(60000, 10000 * Math.pow(2, Math.min(3, this.tunnelStarts - 1)))
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null

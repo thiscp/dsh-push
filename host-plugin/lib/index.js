@@ -1713,6 +1713,10 @@ export class RemoteAccessor {
     this.pushedUrl = ''
     /** 正在把凭据文件里的开关状态回写进 volatile（此时的 volatile-update 不是用户操作）。 */
     this.mirroring = false
+    /** 引擎工厂（自测注入；生产就是 new RemoteAccess）。 */
+    this.makeEngine = typeof deps.makeEngine === 'function' ? deps.makeEngine : (options) => new RemoteAccess(options)
+    /** 「隧道迟迟没有地址」的兜底看门狗。 */
+    this.watchTimer = null
   }
 
   read(key) { return volatileValue(this.config[key], '') }
@@ -1824,14 +1828,22 @@ export class RemoteAccessor {
     const secret = this.ensureSecret()
     this.mirror('remoteSecret', secret)
     if (!this.engine) {
-      this.engine = new RemoteAccess({
+      this.engine = this.makeEngine({
         log: this.log,
         secret,
         binPath: String(this.readAny('remoteBin') || ''),
         webLog: this.resolved.webLog,
         port: Number(this.readAny('remotePort') || 0) || 0,
         onUrl: (url) => this.onUrl(url),
-        // 下载 cloudflared 的阶段文案要出现在设置行，否则用户会以为卡死了（40MB）。
+        // v0.7.11（用户 m128886「远程访问一直卡住」）：隧道层的失败以前只进日志、不进设置行，
+        // 于是 cloudflared 起不来时用户看到的是「隧道建立中…」永远转下去。
+        onError: (message) => {
+          const text = String(message || '').trim()
+          if (text === '') return
+          this.write('remotePhase', '隧道未建立')
+          this.write('remoteStatus', text)
+          this.saveStore()
+        },
         onPhase: (phase) => {
           this.write('remotePhase', String(phase))
           this.saveStore()
@@ -1849,13 +1861,44 @@ export class RemoteAccessor {
         this.write('remoteStatus', state.error || '启动失败')
         return
       }
+      // v0.7.11：网关起来了但**隧道没起来**（找不到 cloudflared、下载失败、spawn 失败）时
+      // 以前被当成「还在建立」，`state.error` 被无声丢弃 —— 这是 m128886「一直卡住」的另一半。
+      if (state.error) {
+        this.write('remotePhase', '隧道未建立')
+        this.write('remoteStatus', String(state.error))
+        this.saveStore()
+        return
+      }
       // 地址可能比 server.listen 晚几秒才拿到（等 cloudflared），先给个中间态。
-      if (!state.url) this.write('remotePhase', '隧道建立中…')
+      if (!state.url) {
+        this.write('remotePhase', '隧道建立中…')
+        this.watchUrl(75000)
+      }
     } catch (error) {
       this.write('remotePhase', '未运行')
       this.write('remoteStatus', '启动失败：' + String(error?.message ?? error))
       this.log('远程访问启动失败：' + String(error?.message ?? error))
     }
+  }
+
+  /**
+   * 兜底看门狗（v0.7.11）：75 秒还拿不到公网地址就给一句人话。
+   * 隧道层的失败现在由 engine 的 onError 实时上报，这里只处理「三者都没说话」的静默卡死。
+   */
+  watchUrl(ms) {
+    if (this.watchTimer) clearTimeout(this.watchTimer)
+    this.watchTimer = setTimeout(() => {
+      this.watchTimer = null
+      try {
+        if (String(this.read('remoteUrl') || '') !== '') return
+        if (String(this.read('remoteStatus') || '').trim() !== '') return
+        this.write('remotePhase', '隧道未建立')
+        this.write('remoteStatus', '隧道 ' + String(Math.round(ms / 1000)) + ' 秒还没建起来（cloudflared 没有任何回应）。' +
+          '点「重建隧道」再试；这台机器要能访问 api.trycloudflare.com')
+        this.saveStore()
+      } catch { /* fiber 已经走了 */ }
+    }, ms)
+    if (typeof this.watchTimer.unref === 'function') this.watchTimer.unref()
   }
 
   /** 引擎拿到公网地址（或换了地址）时：镜像 + 首次/变更时推手机。 */

@@ -57,3 +57,38 @@ cp -a /root/edge/conf.d/edge-http.conf.bak-provision-<ts> /root/edge/conf.d/edge
 docker exec edge nginx -t && docker exec edge nginx -s reload
 docker exec ntfy ntfy user del dsh-provision   # 一次性建的 admin 账号
 ```
+
+## derp-strip：剥掉 PROXY 头，让 DERP 与真实客户端 IP 同时成立（2026-10-30）
+
+文件：`relay/derp-strip.py`（服务器上在 `/usr/local/bin/derp-strip.py`，md5
+`ad284dc22c5ca46046ebc10bb1343e44`）+ `relay/derp-strip.service`。
+
+**背景**：边缘 nginx 的 `stream` 段开了 `proxy_protocol on`（为了让 9443 的 HTTPS vhost 拿到真实客户端
+IP），而这是 **server 级**指令、不能按上游关。derper **不支持 PROXY 协议**，收到 `PROXY TCP4 …`
+当成 TLS 开头直接 reset ⇒ 所有客户端都报 `could not connect to the 'Aliyun China' relay server`。
+症状极具误导性：公网入口（SSH / ntfy）全都正常，只有走 DERP 的路径全死。
+
+**部署**：
+
+```bash
+install -m 0755 derp-strip.py /usr/local/bin/derp-strip.py
+install -m 0644 derp-strip.service /etc/systemd/system/derp-strip.service
+systemctl daemon-reload && systemctl enable --now derp-strip
+ss -lntp | grep 4431            # 必须有 python3 在听
+```
+
+然后把 `/root/edge/nginx.conf` 里 stream 的 map 改成 `derp.cpyh.xyz → 127.0.0.1:4431`、`default → 127.0.0.1:4431`。
+**注意那是单文件 bind mount：绝不能用 `sed -i`**（换 inode 后容器里还是旧配置，往它写报 `Read-only file
+system`）。要么 `cat new > /root/edge/nginx.conf`，要么改完 `docker restart edge`（约 3 秒停机）。
+
+**验收**：
+
+```bash
+tailscale ping aliyun-relay     # pong ... via DERP(aliyun-cn) in 8ms
+tailscale status --json | jq '.Health'    # []
+docker logs --since 5m edge | grep derp   # 不再出现 recv() failed (104: ...)
+```
+
+取舍：想拿真实客户端 IP 且 DERP 活着，**只能**在 nginx 与 derper 之间插这一层；
+不要把 `proxy_protocol` 关掉（9443 那批 vhost 会直接连不上）。
+

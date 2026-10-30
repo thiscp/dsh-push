@@ -3486,3 +3486,78 @@ if (this.checkTried !== keyNow) {
 1. **异步操作不能与「会重启自己的副作用」同时存在于一次调用里**。这个项目已经为此踩了三次（0.7.3 二维码不出、0.7.4 `fiberIsActive` 恒假、这次 0.7.9）。判据很简单：**这一轮里我写过 volatile 吗？写过就说明后续的 `schedule()` 已经不可信了**。
 2. **「用户按了按钮在等」的每一跳都必须有上界**。没有超时的 `fetch` 在真实机器上就是「一直转」；本地自测永远看不出来（本地网络总是秒回）。
 3. **发布后要回读注册表**：`npm publish` 打印 `+ pkg@0.7.9` 时版本可能还在 staging（再发就 E409 `Cannot publish over previously staged version`）。判据是 `npm view dsh-push-host version` 真的变了，而不是发布命令的退出码。
+
+## §7.39 「远程访问一直卡住不动」的真因：隧道层的失败从来没回到设置行（host-plugin v0.7.10 → v0.7.11，2026-10-30）
+
+**用户报障（m128886 / m128888）**：工作台式机插件页 `状态：隧道建立中…` 永远不动；同屏 `包含的组件`
+是「`dsh-push-host` 运行中」、版本 0.7.10。用户 m128946 另外报告 Tailscale 也好几个不通（那是另一件事，
+见 §7.40）。
+
+**真因（不是网络，是「没人回话」）**：`lib/remote.js` 的 `spawnTunnel()` 有四条失败路径 —— spawn 抛出、
+child `exit`（还没拿到地址时）、child `error`、60 秒 `giveUp` —— 它们**只写 `this.lastError` 和日志**，
+从不回调上层；`lib/index.js` 的 `up()` 又只判 `state.running === false`，于是「网关起来了但隧道没起来」
+这种最常见的形态被当成「还在建立」，`state.error` 被无声丢弃。用户面对的是一句永远不动的「隧道建立中…」，
+既不知道该等还是该动手。
+
+**修法（v0.7.11）**：
+
+1. `RemoteAccess` 新增 `onError` 回调 + `failStreak` 计数；四条失败路径统一走 `reportError(message)`，
+   文案自动拼上 `logTail()`（读 `~/.dsh/logs/cloudflared-remote.log` 末尾，挑最后一行含
+   `ERR/WRN/error/failed/Unable/refused/forbidden/403/429/dial` 的，去时间戳、截 180 字）。
+2. `scheduleRestart()` 连败 **3 次**就停手，并在文案里直接写「点重建隧道再来一次」——以前是无限重试，
+   表现就是永远转圈。
+3. `RemoteAccessor.up()` 现在会 `state.error` → `remotePhase='隧道未建立'` + `remoteStatus=原因`；
+   `up()` 里多一条 75 秒静默兜底 `watchUrl()`，专治「引擎、cloudflared、回调三方都不说话」。
+4. 拿到地址时 `failStreak = 0` 且 `onError('')` 清空（访问器里空串直接忽略，不会把已显示的原因擦掉）。
+5. 为离线验证加了注入口 `deps.makeEngine`（生产路径不变，仍是 `new RemoteAccess(options)`）。
+
+**自测**：`161/161` + `59/59` + `21/21` + 新增 `selftest-remote-status.mjs` **20/20**，并已进 `npm test`。
+新用例钉住：引擎交回 `state.error` 时必须显示、网关失败显示「未运行」、`onError` 实时落行、空回调不清原因、
+20ms 看门狗给出可操作文案、`failStreak>=3` 停手且不留定时器、真实 spawn 一个不存在的 cloudflared 会上报并计数。
+
+**正向回归**（本机 `C:/Temp/probe_remote.mjs`，新代码）：`cloudflared 已启动` → **4.5s** 拿到
+`https://trusts-the-techniques-ballot.trycloudflare.com`，`onError` 收到空串 ⇒ happy path 没被改坏。
+
+**教训**：
+
+1. **「状态没变」和「状态没写」在 UI 上长得一模一样**。这个项目里凡是用户能看到的阶段（配对、开通、隧道、
+   部署）都必须有「失败也要写一行」的不变式，并且失败文案要能被离线测试直接断言。
+2. **重试策略要有止损**。带退避的无限重试看起来很稳，实际上把「确定失败」伪装成「还在进行」；3 次止损 +
+   明确动作，比第 100 次重试有用。
+3. **异常信息要带原文**。`logTail()` 那一行 `failed to dial api.trycloudflare.com:443` 比我们自己编的
+   「隧道建立失败」值钱得多 —— 用户可以直接照着判断是网络还是防火墙。
+
+## §7.40 顺带修掉的：Tailscale 全都不通，是边缘 nginx 的 PROXY 协议打崩了 derper（aliyun-relay，2026-10-30）
+
+**现象**：笔电 `tailscale status` Health = `Tailscale could not connect to the 'Aliyun China' relay server`，
+`Self.Relay = aliyun-cn`；`tailscale ping aliyun-relay`（<tailnet-relay>）与 `ssh root@<tailnet-relay>` 全 timeout。
+但同一台机器**公网入口是好的**（`ntfy.cpyh.xyz` 200、`root@47.109.50.167` SSH 正常），而 `desktop-mcsej9h`
+的 pong 直连 12ms ⇒ **只有经 DERP 的路径死了**。
+
+**真因**：`/root/edge/nginx.conf` 的 `stream` 段里有 `proxy_protocol on`（2026-10-29 那批 real-ip 改造加的，
+mtime 15:39），而 derper **不认 PROXY 协议头**，收到即 reset。证据是 `docker logs edge`：
+
+```
+"derp.cpyh.xyz" -> 127.0.0.1:4430 status=200 sent=0 recv=1517
+recv() failed (104: Connection reset by peer) while proxying and reading from upstream
+```
+
+直连 `openssl s_client -connect 127.0.0.1:4430 -servername derp.cpyh.xyz` 握手正常、LE 证书有效 ⇒ 服务本身没病。
+nginx 的 `proxy_protocol` 是 server 级指令，而 9443 那侧**必须**要它（`edge-http.conf` 全是
+`listen 127.0.0.1:9443 ssl proxy_protocol;`），所以不能简单关掉。
+
+**修法**：加一层 PROXY 头剥离代理 `/usr/local/bin/derp-strip.py`（纯 ASCII、无第三方依赖），
+`127.0.0.1:4431 → 127.0.0.1:4430`，先 peek 12 字节判 v1（读到 CRLF）/v2（16 字节定长 + 2 字节长度 + 地址块），
+无头则原样透传；systemd `derp-strip.service`（`Restart=always`）已 enable；edge 的 map 把
+`derp.cpyh.xyz` 与 `default` 都改到 `127.0.0.1:4431`。
+
+**★ 踩到的坑**：`/root/edge/nginx.conf` 是**单文件 bind mount**，`sed -i` 换的是 inode ⇒ 容器里看到的还是旧
+inode（配置没生效，往它写还报 `Read-only file system`）。必须**截断写**（`cat new > file`）或改完
+`docker restart edge`（约 3 秒停机，ntfy/git/blog 一并恢复）。
+
+**验收**：`tailscale ping aliyun-relay` → `pong … via DERP(aliyun-cn) in 8ms`；`Health: []`；
+`ntfy.cpyh.xyz/v1/health` 仍 200。
+
+**教训**：给 **stream** 段加 `proxy_protocol` 等于给**所有**上游加，而 TLS 上游（derper）不会被 nginx 自动忽略；
+凡是「A 站点需要、B 站点不接受」的 L4 差异，只能在 nginx 与上游之间插一层转换，不能靠配置开关。
+

@@ -1,0 +1,12 @@
+[Unit]
+Description=Strip PROXY protocol header before derper
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -u /usr/local/bin/derp-strip.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

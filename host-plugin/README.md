@@ -407,6 +407,12 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
   表现就是「手机打开链接一直要求重新登录」。现在 `refreshDshCookie()` 会把 `~/.dsh` 与系统临时
   目录里名字像 `dsh`/`web` 的 `.log` 全当候选（按 mtime 从新到旧），逐个试到真能换出 `dsh-auth-*`。
 - 隧道换了域名会自动重推；`remotePhase` 是给人看的一句话（未开启 / 正在连接 / 隧道建立中 / 已就绪）。
+- **v0.7.11：隧道层的失败必须回到设置行，否则用户永远停在「隧道建立中…」**（用户 2026-10-30
+  m128886 报障）。以前 `spawnTunnel()` 的四种失败（spawn 抛出 / child `exit` / child `error` /
+  60 秒 `giveUp`）只写 `lastError` 进日志，`up()` 又只看 `state.running`、把 `state.error` 丢掉
+  ⇒ 面板上没有任何线索。现在：`reportError()` 通过 `onError` 回调把文案写进 `remoteStatus`，
+  并拼上 `logTail()`（cloudflared 日志里最后一行的 ERR/failed/dial）；连败 **3 次**就停手，文案里
+  直接写「点重建隧道」；再有 75 秒静默兜底 `watchUrl()`，专治「三方都不说话」。
 - **`linkMode` 的 schema 默认值必须是 `''` 而不是 `'tailnet'`**：`resolvePluginConfig` 的 `explicit`
   只丢掉 `''`/`undefined`/`null`，非空默认值会把凭据文件里用户选的 `tunnel` 反压回去（与
   `remoteEnabled` 是同一个坑，2026-10-28 第二次踩到）。空串在 `readMode()` 里按 `tunnel` 解释。

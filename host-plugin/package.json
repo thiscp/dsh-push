@@ -1,6 +1,6 @@
 {
   "name": "dsh-push-host",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "description": "DSH host-side phone push: question events to ntfy + in-process answering via relay polling (replaces the external notifier + answer bridge)",
   "keywords": [
     "dsh",
@@ -62,7 +62,7 @@
     "url": "https://github.com/thiscp/dsh-push/issues"
   },
   "scripts": {
-    "test": "node plugin-selftest.mjs && node selftest-pair.mjs && node selftest-remote-bin.mjs",
+    "test": "node plugin-selftest.mjs && node selftest-pair.mjs && node selftest-remote-bin.mjs && node selftest-remote-status.mjs",
     "pair": "node lib/pairing.mjs"
   },
   "dsh": {
