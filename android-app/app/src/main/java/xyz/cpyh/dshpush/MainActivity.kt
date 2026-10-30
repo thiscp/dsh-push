@@ -43,11 +43,10 @@ class MainActivity : Activity() {
     private lateinit var tokenCard: LinearLayout
     private lateinit var tokenInput: EditText
     private lateinit var tokenState: TextView
-    // v1.34.0：多设备清单卡片（每个配对过的机器一行，可单独吊销）
-    private lateinit var deviceCard: LinearLayout
-    private lateinit var deviceBox: LinearLayout
     // v1.33.35：用户手动打开的卡片不被 refresh() 的「有证即隐藏」关掉（推送到达会触发 refresh）
     private var tokenCardPinned = false
+    // v1.34.2：设备清单弹窗（点头像唤起，只列未吊销的）
+    private var devicesDialog: AlertDialog? = null
     private lateinit var headerPet: ImageView
     private var starsView: View? = null
     private var breathX: ObjectAnimator? = null
@@ -160,9 +159,9 @@ class MainActivity : Activity() {
             // v1.33.35：点头像开/关凭证卡片，长按=打开卡片换新证（**不再直接清空**——
             // 用户「长按头像直接提示清空了凭证必须重新输入。应该不清空吧…可以进去替换」）。
             // 清空改为卡片内显式按钮 + 确认框。
-            setOnClickListener {
-                if (tokenCard.visibility == View.VISIBLE) closeTokenCard() else openTokenCard()
-            }
+            // v1.34.2：用户「已连接设备的框能只在点开头像时显示吗…下次可以点头像再次扫码进行」
+            // ⇒ 点一下弹设备清单（含「加一台」「换通行证」），长按仍直接开凭证卡片。
+            setOnClickListener { showDevices() }
             setOnLongClickListener { openTokenCard(); true }
         }
         header.addView(headerPet, LinearLayout.LayoutParams(dp(46), dp(46)))
@@ -286,27 +285,8 @@ class MainActivity : Activity() {
         tokenCard.visibility = if (hasToken()) View.GONE else View.VISIBLE
         content.addView(tokenCard)
 
-        // 设备清单（v1.34.0）：配对过的机器都在这里，每台一行，能单独吊销。
-        // 没有设备时整张卡隐藏，不占版面。
-        deviceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        deviceCard = card(LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(context).apply {
-                text = "已连接的设备"
-                textSize = 15f
-                setTextColor(c(R.attr.dshTextPrimary))
-                setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
-            })
-            addView(TextView(context).apply {
-                text = "每一台都能单独吊销；吊销后它再推什么都不会进来，要恢复就重新扫它的码。"
-                textSize = 11f
-                setTextColor(c(R.attr.dshTextSecondary))
-                setPadding(0, dp(4), 0, 0)
-            })
-            addView(deviceBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        }, dp(14))
-        deviceCard.visibility = View.GONE
-        content.addView(deviceCard)
+        // v1.34.2：设备清单不再常驻首页（用户「已连接设备的框能只在点开头像时显示吗」），
+        // 改成点头像弹出 showDevices()。这里不留任何占位控件。
 
         msgList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -977,7 +957,6 @@ class MainActivity : Activity() {
         val pm = getSystemService(PowerManager::class.java)
         val batteryOk = pm.isIgnoringBatteryOptimizations(packageName)
         if (hasToken() && !tokenCardPinned) tokenCard.visibility = View.GONE
-        renderDevices()
 
         msgList.removeAllViews()
         val arr = try {
@@ -1148,41 +1127,51 @@ class MainActivity : Activity() {
      * 不重建消息列表。
      */
     /**
-     * 画设备清单（v1.34.0）。
+     * 设备清单弹窗（v1.34.2）。
      *
-     * 一行一台：名字 + 「topic · 连接状态」，右边一颗按钮（未吊销 = 吊销，已吊销 = 重新扫码）。
-     * 名字那块可点：有网页直链就进那台机器的 DSH 网页，没有就提示。
-     * 连接状态来自 [PushService.stateOfTopic]（Service 在 companion 里维护，界面不必持有它）。
+     * 用户原话：「已连接设备的框能只在点开头像时显示吗，还有吊销后的设备就不要显示了，
+     * 下次可以点头像再次扫码进行」。所以首页不再挂那张常驻卡片，改由头像唤起。
+     *
+     * - 只列**未吊销**的设备（吊销掉的直接不出现，留档在 prefs 里，见 Devices.revoke）
+     * - 每行：名字 + 「topic · 连接状态」，右边一颗「吊销」
+     * - 底部：扫码／从相册加一台、换通行证
      */
-    private fun renderDevices() {
-        if (!::deviceBox.isInitialized || !::deviceCard.isInitialized) return
-        deviceBox.removeAllViews()
-        val all = Devices.all(this)
-        // 一台都没有就整张卡收起来；只有一台且未吊销时也不占版面（首页已经够挤）
-        val visible = all.size > 1 || all.any { it.revoked }
-        deviceCard.visibility = if (visible) View.VISIBLE else View.GONE
-        if (!visible) return
-        for (d in all.sortedWith(compareBy({ it.revoked }, { it.addedAt }))) {
+    private fun showDevices() {
+        val ctx = this
+        val subs = Devices.all(ctx).filter { !it.revoked }
+        val revoked = Devices.all(ctx).count { it.revoked }
+
+        val box = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(6), dp(18), dp(2))
+        }
+
+        if (subs.isEmpty()) {
+            box.addView(TextView(ctx).apply {
+                text = "还没有配对过设备。" +
+                    "点下面「加一台」扫那台机器插件页上的二维码，就能收它的推送。"
+                textSize = 13f
+                setTextColor(c(R.attr.dshTextSecondary))
+                setLineSpacing(0f, 1.25f)
+            })
+        }
+        for (d in subs.sortedBy { it.addedAt }) {
             val raw = PushService.stateOfTopic(d.topicKey)
-            val st = when {
-                d.revoked -> "已吊销"
-                raw.isEmpty() -> "连接中…"
-                else -> raw
-            }
-            val row = LinearLayout(this).apply {
+            val st = if (raw.isEmpty()) "连接中…" else raw
+            val row = LinearLayout(ctx).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(7), 0, dp(7))
+                setPadding(0, dp(9), 0, dp(9))
             }
-            val col = LinearLayout(this).apply {
+            val col = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                addView(TextView(this@MainActivity).apply {
+                addView(TextView(ctx).apply {
                     text = d.label
                     textSize = 15f
-                    setTextColor(c(if (d.revoked) R.attr.dshTextSecondary else R.attr.dshTextPrimary))
+                    setTextColor(c(R.attr.dshTextPrimary))
                     setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
                 })
-                addView(TextView(this@MainActivity).apply {
+                addView(TextView(ctx).apply {
                     text = "${d.topic} · $st" + if (d.web.isNotEmpty()) " · 点这里进它的网页" else ""
                     textSize = 11f
                     setTextColor(c(R.attr.dshTextSecondary))
@@ -1190,22 +1179,62 @@ class MainActivity : Activity() {
                 })
             }
             col.setOnClickListener {
+                dismissDevices()
                 if (d.web.isNotEmpty()) openWebUrl(d.web)
                 else toast("这台还没推过网页链接，等它推一条就能进")
             }
             row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(pill(Button(this)).apply {
-                text = if (d.revoked) "重新扫码" else "吊销"
-                setOnClickListener {
-                    if (d.revoked) startScan() else confirmRevoke(d)
-                }
+            row.addView(pill(Button(ctx)).apply {
+                text = "吊销"
+                setOnClickListener { confirmRevoke(d) }
             }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
-            deviceBox.addView(row)
+            box.addView(row)
         }
-        deviceBox.addView(pill(Button(this)).apply {
-            text = "＋ 再加一台设备的码"
-            setOnClickListener { startScan() }
-        }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(6) })
+
+        if (revoked > 0) {
+            box.addView(TextView(ctx).apply {
+                text = "已吊销 $revoked 台（不在上面显示）；要恢复就重新扫它的码。"
+                textSize = 11f
+                setTextColor(c(R.attr.dshTextSecondary))
+                setPadding(0, dp(8), 0, 0)
+            })
+        }
+
+        val addRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(14), 0, 0)
+        }
+        addRow.addView(pill(Button(ctx)).apply {
+            text = "＋ 加一台（扫码/相册）"
+            setOnClickListener {
+                dismissDevices()
+                startScan()
+            }
+        }, LinearLayout.LayoutParams(-2, -2))
+        addRow.addView(pill(Button(ctx)).apply {
+            text = "换通行证"
+            setOnClickListener {
+                dismissDevices()
+                openTokenCard()
+            }
+        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        box.addView(addRow)
+
+        val scroll = ScrollView(ctx).apply {
+            isFillViewport = false
+            addView(box)
+        }
+        devicesDialog = AlertDialog.Builder(ctx)
+            .setTitle("设备")
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .create()
+        devicesDialog?.show()
+    }
+
+    private fun dismissDevices() {
+        runCatching { devicesDialog?.dismiss() }
+        devicesDialog = null
     }
 
     /** 吊销前问一句：这是个会让人「推送突然没了」的动作，误触很难自查 */
@@ -1228,6 +1257,9 @@ class MainActivity : Activity() {
                 }
                 toast("已吊销，不再收它的推送")
                 refresh()
+                // 清单里立刻消失（v1.34.2）：先关掉旧弹窗，还剩别的设备就重新列一遍
+                dismissDevices()
+                if (Devices.all(this).any { !it.revoked }) window.decorView.postDelayed({ showDevices() }, 150)
             }
             .show()
     }
@@ -1247,7 +1279,7 @@ class MainActivity : Activity() {
             """.trimIndent())
             // 多设备（v1.34.0）：一台以上才补这行，单机时不必占字
             val n = Devices.subs(this@MainActivity).size
-            if (n > 1) append("\n设备：$n 台在线（下方清单可单独吊销）")
+            if (n > 1) append("\n设备：$n 台在线（点头像看清单）")
         }
         statusText.setTextColor(if (batteryOk) c(R.attr.dshTextPrimary) else c(R.attr.dshWarn))
         // 一键全部已读（v1.32.9）：仅在有未读时出现；点完 unread 归零，listener 再刷时自己隐藏

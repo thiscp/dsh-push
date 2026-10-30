@@ -20,6 +20,7 @@ param(
     [string]$DeployNote   = "",
     [switch]$DryRun,
     [switch]$SkipExport,
+    [switch]$Fresh,
     [switch]$SkipOnlineCheck
 )
 $ErrorActionPreference = "Continue"
@@ -69,6 +70,7 @@ if (-not $needGradle) {
 # ---------- 2. deploy (the existing chain, not a new one) ----------
 Step "2" "deploy via the existing pipeline"
 $deployCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$verifyDir\dsh-app-verify.ps1`" -Deploy"
+if ($Fresh) { $deployCmd += " -Fresh" }
 if ($DeployNote) { $deployCmd += " -DeployNote `"$DeployNote`"" }
 Say ("  cmd: {0}" -f $deployCmd)
 Say "  expected: SUMMARY: 9/9 passed, then it prints the ?v=<versionCode> download link"

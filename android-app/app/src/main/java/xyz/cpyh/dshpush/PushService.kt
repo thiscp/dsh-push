@@ -491,7 +491,12 @@ class PushService : Service() {
         val myGen = gen
         // 游标按设备存：换设备、重连都只补自己那台漏掉的
         val since = prefs?.getLong("lastTs:" + dev.id, 0L) ?: 0L
-        val url = wsUrl(dev.base, dev.topic) + "?since=" + if (since > 0) since.toString() else "latest"
+        // 还没有游标时不要用 latest：`latest` 只给「订阅之后新产生的」，而订阅本身要花时间
+        // （首次启动、pm clear 后重启、弱网重连都可能几秒到几十秒）。这段时间里推来的消息
+        // 会被永久错过 —— 2026-10-30 的 QA 就是这么假的：推送 21:48:13 发出、12 秒后订阅才成，
+        // 消息在 21:48:46 才补进来，而断言早已读过 prefs。改成回看 10 分钟，宁可多补几条历史，
+        // 也不要丢通知（ntfy 的 since 支持 `10m` 这种时长写法）。
+        val url = wsUrl(dev.base, dev.topic) + "?since=" + if (since > 0) since.toString() else "10m"
         val req = Request.Builder().url(url)
             .header("Authorization", "Bearer ${dev.token}").build()
         subStates[key] = "连接中…"
