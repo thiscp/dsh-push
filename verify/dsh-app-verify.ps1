@@ -247,7 +247,12 @@ stat -c %s app/build/outputs/apk/debug/app-debug.apk
 '@
   $f = "$OutDir\vm1-build.sh"
   [IO.File]::WriteAllText($f, $vm1Build, (New-Object Text.UTF8Encoding $false))
-  $bd = Invoke-Watched "build-vm1" ("ssh -F NUL " + $SSH_OPTS + " " + $Vm1 + " `"tr -d '\r' | bash -s`"") $BuildTimeoutSec $f
+  # "-F NUL" only works with Windows' own OpenSSH. When "ssh" resolves to the DSH-bundled
+  # /usr/bin/ssh it fails with: Can't open user config file NUL. A real empty file works for both.
+  # Do NOT use $env:TEMP here: it can be empty when PowerShell is spawned from some hosts.
+  $sshCfg = "C:\Windows\Temp\dsh-ssh-empty.cfg"
+  if (-not (Test-Path $sshCfg)) { [IO.File]::WriteAllText($sshCfg, "", (New-Object Text.UTF8Encoding $false)) }
+  $bd = Invoke-Watched "build-vm1" ("ssh -F `"$sshCfg`" " + $SSH_OPTS + " " + $Vm1 + " `"tr -d '\r' | bash -s`"") $BuildTimeoutSec $f
   $size = ($bd.OutText -split "`r?`n" | Where-Object { $_ -match '^\d{6,}$' } | Select-Object -Last 1)
   if (-not $size) { Abort-Step "build-vm1" "gradle produced no apk size line" $bd.Cmd $bd.ErrText $bd.OutText }
   Invoke-Watched "fetch-apk" ("scp " + $SSH_OPTS + " `"${Vm1}:work/projects/dsh-push/android-app/app/build/outputs/apk/debug/app-debug.apk`" `"$localApk`"") $SshTimeoutSec $null | Out-Null
@@ -429,7 +434,9 @@ $hits = 0
 $t0 = Get-Date
 while (((Get-Date) - $t0).TotalSeconds -lt $assertSec) {
   $p = A ($S + @("shell","cat","/data/data/xyz.cpyh.dshpush/shared_prefs/dshpush.xml"))
-  $m = [regex]::Matches($p, "auto-verify " + $epoch + ".*?mid&quot;:(-?\d+),&quot;read&quot;:(\w+)")
+  # [^}]*? (not .*?) keeps the match inside ONE message object: v1.34.0 inserted a "dev" field
+  # between "mid" and "read", so the old "mid&quot;:N,&quot;read&quot;" pattern matched nothing.
+  $m = [regex]::Matches($p, "auto-verify " + $epoch + ".*?mid&quot;:(-?\d+),[^}]*?&quot;read&quot;:(\w+)")
   if ($m.Count -ge 1) {
     foreach ($x in $m) { "MID=" + $x.Groups[1].Value + " READ=" + $x.Groups[2].Value }
     $hits = $m.Count
