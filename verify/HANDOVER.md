@@ -3750,3 +3750,34 @@ npm 侧本轮仍只有**暂存**（token 缺 Bypass 2FA，`E409 Cannot publish o
 **教训（这条最值钱）**：`9/9 passed` 与「真的部署了没」是两件事——看 `DBG rows=8 fail=N` 那行，
 `deploy` 一旦被 skip，SUMMARY 仍然好看。凡是我说"发布完成"之前，必须先确认
 `?v=<versionCode>` 的 md5/size 与我构建的包一致。
+
+## §7.46 设备清单从首页收进头像弹窗（App v1.34.2 / versionCode 162，2026-10-31）
+
+**用户原话**（m131217）：
+
+> 已连接设备的框能只在点开头像时显示或者在有时间点击dsh网页时显示吗，还有吊销后的设备就不要
+> 显示了，下次可以点头像再次扫码进行
+
+### 改法
+- 首页不再挂 `deviceCard`（v1.34.0 那张「已连接的设备」卡片整块删掉，`renderDevices()` 同步移除，
+  `refresh()` 里那一行调用也删掉）。原来 `deviceBox`/`deviceCard` 两个字段一起删干净。
+- 新增 `showDevices()`：`AlertDialog` + `ScrollView`，标题「设备」。
+  - **只列未吊销的设备**（`Devices.all().filter { !it.revoked }`）；有吊销记录时底部补一句
+    「已吊销 N 台（不在上面显示）；要恢复就重新扫它的码。」
+  - 每行：`label` + 「`topic` · 连接状态」；点名字进那台机器的 DSH 网页（有 `web` 才可点）。
+  - 右侧「吊销」→ 仍走 `confirmRevoke()`；**吊销成功后先 `dismissDevices()`，还剩别的设备就
+    `window.decorView.postDelayed({ showDevices() }, 150)` 重开**，这样被吊销的那行当场消失。
+  - 底部两颗：「＋ 加一台（扫码/相册）」（`startScan()`）与「换通行证」（`openTokenCard()`）。
+- 头像：`setOnClickListener { showDevices() }`（原来是开/关凭证卡片）；**长按仍然直接开凭证卡片**，
+  两个入口都在。状态卡里那句「下方清单可单独吊销」改成「点头像看清单」。
+
+### 坑
+1. **用 Python 改 Kotlin 字符串字面量里的 `\n` 会被二次反转义**：`<<'PYEOF'` heredoc 里写的
+   `"\n"` 落到文件里变成了真换行，Kotlin 报 `expecting '"'`（MainActivity.kt:1151）。
+   ⇒ 这种跨行的文案改用 `"第一句" + "第二句"` 拼接，别在字符串里塞 `\n`。
+2. 弹窗重开依赖 `window.decorView.postDelayed`：不能在 `AlertDialog` 的按钮回调里同步 `show()`，
+   否则旧窗口 dismiss 的新消息会把新窗口一起带走。
+
+### 结果
+`SUMMARY: 10/10 passed`，`?v=162` 线上 `Content-Length: 16921605`；
+四个公共远端镜像到 `4e09959`；更新通知 id `cd6NL4FYRBb9`。
