@@ -3721,3 +3721,32 @@ npm 侧本轮仍只有**暂存**（token 缺 Bypass 2FA，`E409 Cannot publish o
 **环境备注**：`dsh-p16`（Android 16/API 36）这台 AVD **全设备级输入失效**
 （`dumpsys input` 里 `ActivityRecordInputSink` 卡在旧焦点），`input tap` 一律不生效、
 `input keyevent` 正常；不是 App 的 bug，换 Android 15 的 `dsh-pixel`（`emulator-5556`）即恢复。
+
+## §7.45 发布闸卡了五轮：一个正则、一个 `-F NUL`、一个空 `$env:TEMP`（App 1.34.1，2026-10-30）
+
+`SUMMARY: 9/9 passed` 打得好听，但 `deploy` 行被三连挡（`push-received` / `mid-unique` /
+`entry-unread` 全 False），APK 一直没上传。逐层剥出来的五个坑，按发现顺序：
+
+1. **验证器只在 `-Fresh` 时才写种子**，而我先在 5554 上留了多设备测试偏好（topic `dsh-mtest-a/b`），
+   它却往 `dsh` 里推 ⇒ 永远收不到。
+2. **`since=latest` 会吃掉启动窗口里的推送**：消息发出时 App 还没连上，`latest` 只给"订阅之后
+   新产生的"，那条就永久丢了。改成 **`since=10m`**（多设备时代每台都有自己的游标，重连补历史更重要）。
+3. **真正的拦路虎是断言正则**：`auto-verify <epoch>.*?mid&quot;:N,&quot;read&quot;:` 依赖 `mid` **紧跟** `read`，
+   而 v1.34.0 在中间插了 `dev`（来源设备）⇒ 匹配 0 条。改成 `[^}]*?`（不跨越消息对象边界）。
+   教训：**断言不要和消息字段顺序耦合**，用 `[^}]*?` 限定在同一对象内。
+4. **`ssh -F NUL` 只有 Windows 自带 OpenSSH 认**：本机 `ssh` 解析到 DSH 自带的 `/usr/bin/ssh`
+   ⇒ `Can't open user config file NUL`，构建步 rc=255。改成真实空文件
+   `C:\Windows\Temp\dsh-ssh-empty.cfg`（两种 ssh 都吃）。
+5. **`$env:TEMP` 在该上下文是空的**，`Join-Path $env:TEMP ...` 得到空串 ⇒ `ssh -F ""`。
+   **而且**我第一版把空文件路径写成 `Join-Path $OutDir`，`$OutDir` 也是空 —— 用字面路径最稳。
+6. **PS 5.1 按 GBK 读 `.ps1`**：我新加的中文注释被误解码，行尾字节吃掉换行，**把下一行
+   `$sshCfg = ...` 整行吞进注释** ⇒ 变量恒空、报 `Test-Path : 路径为 Null`。
+   `.ps1` 一律纯 ASCII（AGENTS.md 早写了，这次是复读）。
+
+**最终**：`SUMMARY: 10/10 passed` → `[PASS] deploy` → `?v=161` 线上
+`Content-Length: 16920953`、md5 与验证器安装的那个包完全一致（`0af6b439008bd44c412ecf760c47708d`），
+更新通知 id `AvJrdN7vCCJn`；四个公共远端镜像到 `975ac90`。
+
+**教训（这条最值钱）**：`9/9 passed` 与「真的部署了没」是两件事——看 `DBG rows=8 fail=N` 那行，
+`deploy` 一旦被 skip，SUMMARY 仍然好看。凡是我说"发布完成"之前，必须先确认
+`?v=<versionCode>` 的 md5/size 与我构建的包一致。
