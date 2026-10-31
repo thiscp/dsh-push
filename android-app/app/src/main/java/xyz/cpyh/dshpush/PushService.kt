@@ -702,6 +702,10 @@ class PushService : Service() {
                 // 「DSH 入口」选择器用；名称取 `#name` 尾巴（缺省 host:port）
                 val hostName = hostName0.takeIf { it.isNotEmpty() }
                 val grew = DshHosts.upsert(this, webLink, hostName)
+                // v1.34.3：设备清单里那一行的「点这里进它的网页」要跟**这台机器**的最新链接走。
+                // DSH Web 每次重启 token 必变，扫码那一刻存的 web 会过期；认得出这条推送是谁发的
+                // （attrId 非空）才写，认不出不瞎写，免得又把别人的链接盖到这一行上。
+                if (attrId.isNotEmpty()) Devices.setWeb(this, attrId, webLink)
                 val webChanged = webLink != prefs?.getString(KEY_WEB, "")
                 if (webChanged) prefs?.edit()?.putString(KEY_WEB, webLink)?.apply()
                 // 清单变了也要重发常驻通知，否则新增的「DSH 入口」动作要等下次状态刷新才出现

@@ -47,6 +47,9 @@ class MainActivity : Activity() {
     private var tokenCardPinned = false
     // v1.34.2：设备清单弹窗（点头像唤起，只列未吊销的）
     private var devicesDialog: AlertDialog? = null
+    // v1.34.3：从清单里点「加一台」去扫码的，回来自动把清单再开一次（用户：扫完还得自己
+    // 再点头像，看着像「没加上」）
+    private var reopenDevicesAfterScan = false
     private lateinit var headerPet: ImageView
     private var starsView: View? = null
     private var breathX: ObjectAnimator? = null
@@ -554,6 +557,8 @@ class MainActivity : Activity() {
         val who = cfg.name?.takeIf { it.isNotBlank() }
         toast(
             when {
+                // 同名同频道 = 同一台在重出码，不是新增：说清楚，别让用户以为加了两台
+                who != null && !added -> who + " 本来就在清单里，已更新它的通行证"
                 who != null -> "收好，" + who + " 的推送来了我喊你"
                 newTopic != PushService.DEFAULT_TOPIC -> "通行证收好，大肥鱼盯着 $newTopic"
                 else -> "通行证收好，大肥鱼出发"
@@ -580,14 +585,19 @@ class MainActivity : Activity() {
             ScanPairActivity.TAG,
             "定点结果 result=$resultCode 载荷长度=" + raw0.length
         )
-        if (resultCode != RESULT_OK) return
+        if (resultCode != RESULT_OK) { reopenDevicesAfterScan = false; return }
         val raw = raw0
-        if (raw.isEmpty()) return
+        if (raw.isEmpty()) { reopenDevicesAfterScan = false; return }
         val (cfg, err) = PushService.parsePass(raw)
-        if (cfg == null) { toast(err); return }
+        if (cfg == null) { reopenDevicesAfterScan = false; toast(err); return }
         // 让用户在通行证框里看见到底收下了什么（扫错机器时能立刻发现）。
         tokenInput.setText(raw)
         applyPass(cfg)
+        // v1.34.3：从设备清单来的，配完直接把清单弹回来，新登记的那台当场看得见
+        if (reopenDevicesAfterScan) {
+            reopenDevicesAfterScan = false
+            window.decorView.postDelayed({ showDevices() }, 300)
+        }
     }
 
     // 卡片自带链接直达：各条消息指向自己那台机器的 DSH Web（v1.9.4）；
@@ -1207,6 +1217,7 @@ class MainActivity : Activity() {
         addRow.addView(pill(Button(ctx)).apply {
             text = "＋ 加一台（扫码/相册）"
             setOnClickListener {
+                reopenDevicesAfterScan = true
                 dismissDevices()
                 startScan()
             }

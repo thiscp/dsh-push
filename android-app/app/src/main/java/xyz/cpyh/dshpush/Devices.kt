@@ -23,8 +23,13 @@ object Devices {
     /**
      * 一台可订阅的设备。
      *
-     * [id] 由 `base|topic` 派生而不是随机数：同一个插件重新出码，设备应当是**同一条**，
+     * [id] 由 `base|topic|name` 派生而不是随机数：同一台机器重新出码，设备应当是**同一条**，
      * 否则每扫一次码就多一条记录、回路里还多一条游标（lastTs:<id>），历史消息的已读态也会断。
+     *
+     * ⚠ v1.34.2 及以前 id 只含 `base|topic`，而**多台机器共用一个 topic 是常态**（我们三台都叫
+     * `dsh`）⇒ 扫第二台的码会把第一台**顶掉**：清单里还是那一行（看着像「没新增」），
+     * 但那一行的 web 已被换成新机器，点进去就成了别人的网页（用户 2026-11-01）。
+     * 机器名进 id 之后才是「一台一行」。
      */
     data class Dev(
         val id: String,
@@ -45,7 +50,13 @@ object Devices {
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
-    fun idOf(base: String, topic: String): String =
+    /** 现行 id：base|topic|机器名（大小写无关）。同名同频道同中继 = 同一台，重扫即更新 */
+    fun idOf(base: String, topic: String, name: String): String =
+        "d" + Integer.toHexString(
+            (base.trimEnd('/') + "|" + topic.trim() + "|" + name.trim().lowercase()).hashCode())
+
+    /** ≤v1.34.2 的老 id：只含 base|topic。只用于认旧记录，不再拿它生成新记录 */
+    fun legacyIdOf(base: String, topic: String): String =
         "d" + Integer.toHexString((base.trimEnd('/') + "|" + topic.trim()).hashCode())
 
     /** 全部记录（含已吊销），主页要能把吊销过的也列出来认人 */
@@ -61,7 +72,7 @@ object Devices {
                 val token = o.optString("token", "").trim()
                 if (base.isEmpty() || token.isEmpty()) return@mapNotNull null
                 Dev(
-                    id = o.optString("id", "").ifEmpty { idOf(base, topic) },
+                    id = o.optString("id", "").ifEmpty { idOf(base, topic, o.optString("name", "")) },
                     name = o.optString("name", ""),
                     base = base,
                     topic = topic.ifEmpty { PushService.DEFAULT_TOPIC },
@@ -107,6 +118,9 @@ object Devices {
     /**
      * 扫码登记（幂等）。
      *
+     * 判定「是不是同一台」：**同中继 + 同频道 + 同机器名**（大小写无关）。
+     * 名字不同就是另一台 —— 三台机器共用 `topic=dsh` 是常态，只按 base|topic 认会把上一台顶掉。
+     *
      * @return `true` = 新增一台，`false` = 更新了已有的一台（含「吊销后重扫 = 恢复」）
      */
     fun upsert(
@@ -119,19 +133,30 @@ object Devices {
     ): Boolean {
         val b = base.trim().trimEnd('/').ifEmpty { PushService.BASE }
         val t = topic.trim().ifEmpty { PushService.DEFAULT_TOPIC }
-        val id = idOf(b, t)
+        val nm = name.trim()
+        val id = idOf(b, t, nm)
         val list = all(ctx).toMutableList()
-        // 先按 id 找；找不到再按 base|topic 找（旧记录里的 id 可能是历史遗留/手工写进去的，
-        // 只认 id 会让同一台设备被登成两条 —— 2026-10-30 实测踩到过）。
+        // ① 先按 id 找（同 base|topic|机器名 = 同一台）。
         var idx = list.indexOfFirst { it.id == id }
-        if (idx < 0) {
-            idx = list.indexOfFirst { it.base.trimEnd('/') == b && it.topic == t }
+        if (idx < 0 && nm.isNotEmpty()) {
+            // ② 同 base|topic 且机器名一致：旧记录里的 id 可能是历史遗留/手工写进去的，
+            //    只认 id 会让同一台设备被登成两条（2026-10-30 实测踩到过）。
+            idx = list.indexOfFirst {
+                it.base.trimEnd('/') == b && it.topic == t &&
+                    it.name.trim().equals(nm, ignoreCase = true)
+            }
         }
-        val nm = name.trim().ifEmpty { list.getOrNull(idx)?.name ?: "" }
+        if (idx < 0 && nm.isEmpty()) {
+            // ③ 载荷没带机器名（旧插件 / 手粘一串 tk_）：认不出是谁，就退回 v1.34.0 的老逻辑
+            //    ——同 base|topic 的第一条。宁可更新别人，也别给老用户凭空多一行重复设备。
+            idx = list.indexOfFirst { it.id == legacyIdOf(b, t) }
+            if (idx < 0) idx = list.indexOfFirst { it.base.trimEnd('/') == b && it.topic == t }
+        }
         if (idx >= 0) {
             val old = list[idx]
+            // id 保持旧值不动：lastTs:<id> 游标、已读态都挂在它上面，换 id 等于把历史抹掉
             list[idx] = old.copy(
-                name = nm,
+                name = nm.ifEmpty { old.name },
                 token = token.trim(),
                 web = web.ifBlank { old.web },
                 revoked = false,   // 重扫即恢复
