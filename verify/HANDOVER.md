@@ -3828,5 +3828,8 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
 
 ### 结果
 
-（待填：线上 `?v=163` 校验、更新通知 id、公开镜像同步）
+`release-fast.ps1` 全程 55s（gradle 38s），APK `16922469` 字节；
+线上 `?v=163` 返回 200、大小与 sha256 都与本地产物一致，`blog.cpyh.xyz/dsh-push-latest.apk` 同步 OK；
+更新通知 id `41WBsLxtennA`；公开镜像（gitee / github / origin / github main）同步到 `153abf7`。
+**没跑模拟器 QA** —— 单人模式下这轮由用户真机自测（同 topic 两台是这次唯一的复现路径，模拟器上反而造不出来）。
 
