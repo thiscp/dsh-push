@@ -44,8 +44,15 @@ object Devices {
         /** 合并键：同一个 base+topic 只需一条 WebSocket（多台机器共用一个 topic 是常态） */
         val topicKey: String get() = base.trimEnd('/') + "|" + topic
 
-        /** 界面显示名：插件给了机器名就用它，否则退化成 topic */
-        val label: String get() = if (name.isNotBlank()) name else topic
+        /** 界面显示名：机器名 → 网页地址的主机名 → topic（插件 ≤0.7.17 的二维码不带机器名） */
+        val label: String get() = when {
+            name.isNotBlank() -> name
+            webHost.isNotEmpty() -> webHost
+            else -> topic
+        }
+
+        /** 网页地址里的主机名，只当显示名用（解析不出来就是空串） */
+        val webHost: String get() = hostOf(web)
     }
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -58,6 +65,39 @@ object Devices {
     /** ≤v1.34.2 的老 id：只含 base|topic。只用于认旧记录，不再拿它生成新记录 */
     fun legacyIdOf(base: String, topic: String): String =
         "d" + Integer.toHexString((base.trimEnd('/') + "|" + topic.trim()).hashCode())
+
+    /**
+     * 网页地址的「机器指纹」：`scheme://host:port`（小写、默认端口归一）。
+     *
+     * 同一台机器重启 DSH 只会换 token，不会换 host:port ⇒ 拿它能认出「同一个 topic 下的另一台机器」，
+     * 哪怕二维码里没带机器名（插件 ≤0.7.17 就不带：手工配的实例没有 host，2026-11-01 实测扫 VM1
+     * 把 laptop 那行顶掉了）。解析不出来就返回空串，不参与判定。
+     */
+    /** 网页地址里的主机名（显示名与提示用；解析不出来返回空串） */
+    fun hostOf(web: String): String = try {
+        java.net.URI(web.trim()).host ?: ""
+    } catch (e: Exception) {
+        ""
+    }
+
+    fun webOrigin(web: String): String {
+        val s = web.trim()
+        if (s.isEmpty()) return ""
+        return try {
+            val u = java.net.URI(s)
+            val host = u.host ?: return ""
+            val scheme = (u.scheme ?: "").lowercase()
+            if (host.isEmpty() || scheme.isEmpty()) return ""
+            val port = if (u.port > 0) u.port else when (scheme) {
+                "https" -> 443
+                "http" -> 80
+                else -> -1
+            }
+            "$scheme://$host:$port"
+        } catch (e: Exception) {
+            ""
+        }
+    }
 
     /** 全部记录（含已吊销），主页要能把吊销过的也列出来认人 */
     fun all(ctx: Context): List<Dev> {
@@ -147,10 +187,20 @@ object Devices {
             }
         }
         if (idx < 0 && nm.isEmpty()) {
-            // ③ 载荷没带机器名（旧插件 / 手粘一串 tk_）：认不出是谁，就退回 v1.34.0 的老逻辑
-            //    ——同 base|topic 的第一条。宁可更新别人，也别给老用户凭空多一行重复设备。
-            idx = list.indexOfFirst { it.id == legacyIdOf(b, t) }
-            if (idx < 0) idx = list.indexOfFirst { it.base.trimEnd('/') == b && it.topic == t }
+            // ③ 载荷没带机器名（插件 ≤0.7.17 / 手粘一串 tk_）：先按网页地址的「机器指纹」认人。
+            //    同 base|topic 的清单里已经有别的机器、且没有一台的 host:port 对得上
+            //    ⇒ 这是**另一台**，往下走新增一行；否则退回 v1.34.0 的老逻辑
+            //    （宁可更新别人，也别给只有一台机器的老用户凭空多一行重复设备）。
+            val origin = webOrigin(web)
+            val sameBase = list.filter { it.base.trimEnd('/') == b && it.topic == t }
+            val anotherMachine = origin.isNotEmpty() &&
+                sameBase.isNotEmpty() &&
+                sameBase.any { it.web.isNotEmpty() } &&
+                sameBase.none { webOrigin(it.web) == origin }
+            if (!anotherMachine) {
+                idx = list.indexOfFirst { it.id == legacyIdOf(b, t) }
+                if (idx < 0) idx = list.indexOfFirst { it.base.trimEnd('/') == b && it.topic == t }
+            }
         }
         if (idx >= 0) {
             val old = list[idx]

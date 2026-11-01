@@ -12,6 +12,7 @@
 
 | 字段 | 值 |
 |---|---|
+| **✅ 插件 0.7.18 + App v1.34.4 / 164 已发布：二维码终于带机器名，App 再用网页地址认机器——手工配凭据的 VM1 不再顶掉 laptop** | 用户「我刚刚更新到最新版，扫VM1的配对码，显示的laptop，点进去还是VM1」。第二层根因：VM1 凭据是手工配的、`credentials.json` 里**没有 `host`**，而插件 `payload()` 的 name 只取 `resolved.host` ⇒ 二维码里根本没有 `name=` ⇒ App 落进 §7.47 的「无机器名→退老逻辑」分支，把 laptop 那行的 token/web 换成 VM1 的。修法两侧都改：插件 `pairName()` = `host → webName → os.hostname()`；App 加 `webOrigin()/hostOf()`，无机器名时按**网页 host:port 指纹**判是不是另一台（清单里已有别的机器且没有一台对得上 ⇒ 新增一行）。验收用载荷字节数：VM1 的码 183 → **210 字节**，差的正是 `&name=%E6%B5%8B%E8%AF%95VM1`。插件 selftest 161+59+21+41 全过；APK 16923633 字节、`?v=164` 200+sha256 一致、通知 id `7rhI2Y32zh0k`；VM1 已升 0.7.18 并重启（新 token 已给用户）。细节见 §7.48。 |
 | **✅ v1.33.20 / 126 已发布：右面板打开时左边缘不再被侧栏糊住——只在收起态把 rightbarCol 抬到 90，复原笔电的绘制顺序** | 用户「右边侧边栏打开的时候，VM上的左边侧边栏会完全遮挡住一部分，笔电上的是半透明的，能保持和笔电上一样的效果吗」。CDP 实测根因：右面板是 rightbarCol 里的 absolute 满屏浮层（**收起态实测 box 也是 0,0,360,671、底色 transparent**），DOM 顺序排在侧栏之后 ⇒ 原生笔电是「面板在上、侧栏透过它的透明底看得见」；而 125 给 *_sidebarCol 抬的 z-index:80 把**收起态**侧栏反过来压在面板上，面板左边那 56px 被 0.45 白纱糊住。同机 A/B 截图与用户三张图逐像素对上：C:/Temp/ab-vm1-a.png（卡片被切在侧栏右边缘、文件夹图标被吃一半）vs ab-vm1-b.png（卡片伸到侧栏底下、图标透过侧栏可见）。**第一版不分状态直抬 z:90 被四态矩阵拦下**（测试VM1/expanded 侧栏 alpha 0.45 不在 [0.87,0.97]——矩阵是命中测试量底色，量到的是面板的 0.45），改成只在收起态抬：[class*='_frame']:has([class*='_collapsed']) [class*='_rightbarCol']{position:relative!important;z-index:90!important}；:has() 判据实测精确（收起态全页只有侧栏根带 _collapsed、展开态一个都没有），老 WebView 不认 :has() 就整条丢弃 = 退回 125 行为。装机实测 injected=true、hasRule=true、收起态 rbZ=90、colZ=80 仍在。发布 -Deploy **10/10**、geom-matrix 冷跑 **PASS states=4 fails=0**（流水线里那次是 ENV 超时不算，装机后单独冷跑过；顺带查出 CDP 的 setDeviceMetricsOverride 会残留在 WebView 里、让矩阵静默退出，跑前先 clearDeviceMetricsOverride + force-stop 重启 App）、update-notify Ou8lHtNSv8Hf、线上 11,099,972 B = 本机构建字节数。**真机验收：用户 2026-10-18 装 126 后回复「安装最新版，验证通过」**——右面板打开时左边缘透出、展开态仍可点，这条需求到此关闭 |
 | **✅ 补记 v1.33.13→v1.33.19（120–125）这一路的结论（2026-10-18）** | **120** 回退 118/119 的 backdrop-filter 改动——那是**浅色模拟器给的假结论**（真机走 WebView 算法变暗，去掉模糊后用户 09:36 的图确认内容太刺眼）；**121–123** 在「通用选择器 vs 只匹配笔电那份哈希」之间来回（122 用 :not(*) 停用时把笔电一起废了，123 恢复笔电哈希）；**124** 用**横屏对照截图**坐实用户的判断「笔电=侧栏是独立图层、VM=同一图层把聊天往右顶」，把两条布局规则改回通用（_frame / _sidebarCol>*>_root）、声明与笔电一字不差 ⇒ 三台都成为独立图层、聊天窗不再被顶走；**125** 修「展开后点不到」——聊天在 overlayLayer（absolute z=20），侧栏虽 z=70 却被关在**没有 z-index 的列**里，给 *_sidebarCol 加 position:relative + z-index:80 把整个侧栏子树抬到聊天层之上。**125 的副作用正是 126 要修的**（见上一行）。这一段当时没逐条记行，教训已全部进 skill §14 |
 | **✅ v1.33.12/1.33.13（118/119）已发布：侧栏毛玻璃对齐笔电，两台实测读数一致** | 用户 00:11 四张图 + 「你改完模拟的时候要实际截图看」之后，改成**在同一台模拟器里把笔电和 VM1 都开起来、各截一张图对比**（笔电链接从 App 的 shared_prefs `hosts` 里取：`http://<tailnet-laptop>:3080/?token=…`）——这一步是关键，之前我只在 VM1 上看，没有对照物。对比读出**唯一的差异**：侧栏根 `backdrop-filter` 在 VM1 是 `blur(12px)`、笔电是 `none`（所以 VM 后面内容清晰、笔电是糊的；底色 `rgba(249,250,251,0.92)`、宽 280、`position:fixed`、z=60、遮罩 0.92 五项两台本来就相同）。第一次用样式表加 `backdrop-filter:none!important` **没压住**——它是内联样式（内联 important 优先级最高），改用 App 自己的 `bwSet`（写内联 important）压掉才生效。对齐后两台实测四项完全一致（280 / rgba(249,250,251,0.92) / none / fixed），截图观感也一致（磨砂侧栏 + 后面内容淡淡透出）。发布 **SUMMARY 10/10**、geom-matrix **PASS states=4 fails=0**、`update-notify CbrkHY2iBSOc`、提交 `?`（本次）。教训：**验证真机问题必须同时开对照宿主截图**，只测「有问题的那台」会看不出差异在哪 |
@@ -3830,6 +3831,53 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
 
 `release-fast.ps1` 全程 55s（gradle 38s），APK `16922469` 字节；
 线上 `?v=163` 返回 200、大小与 sha256 都与本地产物一致，`blog.cpyh.xyz/dsh-push-latest.apk` 同步 OK；
-更新通知 id `41WBsLxtennA`；公开镜像（gitee / github / origin / github main）同步到 `153abf7`。
+更新通知 id `41WBsLxtennA`；公开镜像（gitee / github / origin / github main）已同步，补交本节结果行后停在 `50eb68b`。
 **没跑模拟器 QA** —— 单人模式下这轮由用户真机自测（同 topic 两台是这次唯一的复现路径，模拟器上反而造不出来）。
+
+
+## §7.48 二维码里根本没有机器名：手工配凭据的机器扫谁都顶掉第一行（插件 0.7.18 + App v1.34.4 / versionCode 164，2026-11-01）
+
+**用户原话**（升到 1.34.3 之后，附截图：清单里仍只有 `laptop` 一行）：
+
+> 我刚刚更新到最新版，扫VM1的配对码，显示的laptop，点进去还是VM1
+
+### 根因（与 §7.47 不同层：那次是 App 的身份键，这次是插件的载荷）
+
+- VM1 的凭据是**手工配**的，`~/.config/dsh-push/credentials.json` 里只有
+  `relayBase,topic,readToken,writeToken,hostToken,regToken,provisionToken,webBase,webName` —— **没有 `host`**
+  （`host` 只有走「自助开通」才会写进去）。
+- 插件 `payload()` 的 name 取的是 `resolved.host` ⇒ **VM1 的二维码里一个 `name=` 都没有**。
+- App 侧 `parsePass()` 没错（缺 name → null），于是 `upsert()` 落进 §7.47 特意留的分支③
+  「载荷没带机器名 → 退回老逻辑：同 `base|topic` 第一条」⇒ 把 laptop 那行的 token/web 换成 VM1 的、
+  `name` 仍是 laptop ⇒ 「显示 laptop、点进去是 VM1」。
+- 教训：§7.47 那个「没带机器名就宁可更新别人也不新增」的保守选择，在**手工配凭据的机器**上必然踩中
+  ——我们三台 DSH 里两台是手工配的。修 App 不修插件，等于只修了会带 name 的那一台。
+
+### 改法（两侧都改，谁先升都不坏）
+
+- 插件 `pairName()`（`host-plugin/lib/index.js:2440`）：`host → webName → os.hostname()`，
+  配套 `import { homedir, hostname } from 'node:os'`（:45）。
+- App `Devices.webOrigin(web)`（`scheme://host:port` 小写、默认端口归一、解析失败给空串）与 `hostOf(web)`；
+  分支③ 加**机器指纹**判定：同 `base|topic` 的清单里已有别的机器、且没有一台的 host:port 与这次扫码带来的
+  `web` 对得上 ⇒ 判为**另一台**、新增一行；对得上才更新。
+- `Dev.label` 退化链：机器名 → 网页主机名 → topic；`MainActivity:557` 的提示语 `who` 同样兜底
+  （`cfg.name ?: Devices.hostOf(web)`），否则提示里只能说「这台」。
+
+### 验收（不跑模拟器，直接量真机）
+
+- **载荷字节数**是最硬的判据：VM1 上 0.7.17 生成的码 **183 字节**，升到 0.7.18 并重启后 **210 字节**，
+  差的 27 字节正是 `&name=%E6%B5%8B%E8%AF%95VM1`（VM1 的 `webName` = 测试VM1）。
+  判据：`grep -a '配对二维码' ~/.dsh/web.log | tail -3`（日志只写长度不写载荷，载荷本身不落盘）。
+- 用 VM1 真实凭据离线复现 `pairPayload()`：`name` 字段 = 测试VM1，`web` = http://<tailnet-vm1>:3080。
+- 插件 selftest 全过：plugin-selftest 161/161、selftest-pair 59/59、remote-bin 21/21、remote-status 41/41。
+
+### 结果
+
+- 插件 `dsh-push-host@0.7.18` 已发 npm，`npm dist-tag ls` = `latest: 0.7.18`。
+  **坑**：直接 `fetch registry.npmjs.org/dsh-push-host` 的 JSON 会滞后显示 0.7.17（CDN 缓存），
+  判发布成败要用 `npm dist-tag ls` / `npm view dsh-push-host@0.7.18 version`。
+- App **1.34.4 / 164**：`release-fast.ps1` 80s，APK `16923633` 字节；线上 `?v=164` 200、大小与 sha256 一致，
+  `blog.cpyh.xyz/dsh-push-latest.apk` 同步 OK；更新通知 id `7rhI2Y32zh0k`。
+- VM1 插件已升 0.7.18 并 `dsh-net.sh restart`（新 token 已交给用户）。**没跑模拟器 QA**（单人模式，用户真机自测）。
+- 用户侧动作：App 升到 1.34.4，然后**两台的码各扫一次**（VM1 那台现在带机器名 ⇒ 新增一行；laptop 那台重扫一次把 web 刷新）。
 

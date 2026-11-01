@@ -42,7 +42,7 @@
  * @module dsh-push-host
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import z from '@deepseek-ai/schemastery'
@@ -2426,8 +2426,22 @@ export class PairBox {
       topic: this.cred('topic'),
       readToken: this.cred('phoneToken'),
       web: this.webEntry(),
-      name: String(this.resolved?.host || ''),
+      name: this.pairName(),
     })
+  }
+
+  /**
+   * 二维码里带的机器名（App 靠它区分「同一个 topic 下的不同机器」，App ≥1.34.3）。
+   *
+   * 取值顺序：自助开通的 `host` → 手工配的 `webName` → 系统主机名。
+   * 只带 host 的话，手工配凭据的机器（没有 host）二维码里就没有 name，
+   * App 只能按 base|topic 认人，会把上一台顶掉（2026-11-01 实测：扫 VM1 顶掉了 laptop）。
+   */
+  pairName() {
+    const r = this.resolved || {}
+    const named = String(r.host || '').trim() || String(r.webName || '').trim()
+    if (named) return named
+    try { return String(hostname() || '').trim() } catch { return '' }
   }
 
   /** 生成一次二维码并把点阵镜像回 volatile（同步、无 IO 之外的重活）。 */

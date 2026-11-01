@@ -554,7 +554,10 @@ class MainActivity : Activity() {
         tokenCardPinned = false
         tokenCard.visibility = View.GONE
         startForegroundService(Intent(this, PushService::class.java).setAction("reload"))
+        // 插件 ≤0.7.17 的二维码不带机器名（手工配的实例没有 host）：退化成网页地址的主机名，
+        // 至少提示里能说清这是哪一台，别只报一句「通行证收好」。
         val who = cfg.name?.takeIf { it.isNotBlank() }
+            ?: web?.let { Devices.hostOf(it) }?.takeIf { it.isNotEmpty() }
         toast(
             when {
                 // 同名同频道 = 同一台在重出码，不是新增：说清楚，别让用户以为加了两台
