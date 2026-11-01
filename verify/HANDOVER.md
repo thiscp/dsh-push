@@ -3946,3 +3946,39 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
    `#name` 才认得出（老行名是空的、web 又已被盖脏，机器指纹反查也救不回来）；
 3. VM1 想用手机作答（不只是收通知）就在 VM1 的插件面板点一次「一键开通」：会分配新 topic 与 host，
    之后需要**重扫一次** VM1 的码。不点也不影响它现在能推。
+
+## §7.50 「切到别的对话，几秒后又自己弹回原来那条」（App v1.34.6 / versionCode 166，2026-11-01）
+
+**用户原话**（m131328）：
+
+> 这个bug在很早之前就有了，就是我点进去对话后，再打开悬浮窗，选择插件后，显示会正常显示几秒
+> 钟然后自动切回之前的对话了，这是偶现的
+
+### 真因：补切定时器把目标「按值捕获」，且不重读状态
+`WebActivity.recheckRestoreTarget()`（v1.33.41 加的兜底）在 `onPageFinished` 时排两拍
+（2.5s / 7s）JS：读 `[data-conversation-session]`，不是目标就 `location.hash = 目标` 让
+`host-plugin/lib/client.js` 的 `revealFromHash` 再切一次。
+
+问题在闭包：`val want = restoreTarget` 之后**按值捕获**，而落地时 `saveSess()` 会把
+`restoreTarget` 清空（闸门解除）。于是即便页面早已正确落地，那两拍仍会执行：
+- 用户在这 7 秒内自己切走（点推送卡片 / 开悬浮窗选插件 → DSH 开一条新对话）
+- 定时器一拍，看到「当前会话 ≠ want」→ 写回旧 hash → `hashchange` → 切回原来那条
+
+「显示几秒后弹回去」正好是 2.5s/7s 两拍；「偶现」是因为它只在**本次进入走的是恢复路径**
+（进程重建 `savedInstanceState != null` 或 `revive=true`）且用户在这 7 秒内切换时才成立。
+
+### 修法（只动 App 侧，插件侧没动）
+1. 每次触发先**重读**当前状态，任一不满足就退出：
+   `if (restoreTarget != want || restoreCanceled) return`（落地后 `restoreTarget` 已被清空 ⇒ 作废）。
+2. `restoreCanceled`：`dispatchTouchEvent` 收到 `ACTION_DOWN` 就置真 —— **用户一碰屏幕，
+   兜底就没有资格再接管画面**。
+3. 拆成两段 JS：先只读当前会话（`jsOk`）；确认不是目标才写 hash（`jsForce`）。落地即
+   `restoreTarget = ""` 收工，不再多打一次。
+4. 三处状态重置补 `restoreCanceled = false`（`onCreate` 与 `onNewIntent` 的恢复分支）。
+
+日志：`adb logcat -s dshsess` 里现在能直接看到
+`recheck skip want=… now=… canceled=…` / `recheck want=… got=…`。
+
+### 结果
+`SUMMARY: 10/10 passed`，`?v=166` 线上 `Content-Length: 16924681`；
+四个公共远端镜像到 `930c0fa`；更新通知 id `54ZZqMyTKHTT`。
