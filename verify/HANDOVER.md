@@ -3879,5 +3879,6 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
 - App **1.34.4 / 164**：`release-fast.ps1` 80s，APK `16923633` 字节；线上 `?v=164` 200、大小与 sha256 一致，
   `blog.cpyh.xyz/dsh-push-latest.apk` 同步 OK；更新通知 id `7rhI2Y32zh0k`。
 - VM1 插件已升 0.7.18 并 `dsh-net.sh restart`（新 token 已交给用户）。**没跑模拟器 QA**（单人模式，用户真机自测）。
+- 公开镜像（gitee / github / origin / github main）四个远端已同步一致；本轮 head 与导出后的实际远端 head 记在 `tmp/dsh-push-release-STATUS.md`（补登记会再推一次，所以别拿本节文字里的哈希当最终远端）。
 - 用户侧动作：App 升到 1.34.4，然后**两台的码各扫一次**（VM1 那台现在带机器名 ⇒ 新增一行；laptop 那台重扫一次把 web 刷新）。
 
