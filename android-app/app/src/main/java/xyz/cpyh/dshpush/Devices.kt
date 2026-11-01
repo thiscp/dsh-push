@@ -250,12 +250,16 @@ object Devices {
     }
 
     /**
-     * 这条推送是哪台机器发的。
+     * 这条推送是哪台机器发的。认不出返回空串（调用方就不标注、不改 web）。
      *
-     * 先按 `#name` trailer 精确匹配（同一个 topic 下多台机器全靠它区分），
-     * 匹配不上再退回「这条流是谁建的」（单机场景足够），最后给空串（不标注来源）。
+     * ① `#name` trailer 精确/前后缀匹配（同一个 topic 下多台机器全靠它区分）；
+     * ② 按 `#web` 的机器指纹 [webOrigin] 反查——同一台机器重启 DSH 只换 token 不换 host:port，
+     *    所以机器改了名、或推送没带 `#name`（看门狗这类直发 ntfy 的消息）时它还能认出来；
+     * ③ 只有「这个 topic 上就一台」时才退回「这条流是谁建的」（单机老用户行为不变）；
+     * ④ 多台又认不出 → 空串。v1.34.4 及以前在这里无条件拿第一台兜底，结果
+     *    **别人的推送把第一行的 web 盖掉**（2026-11-01 实测：laptop 那行点进去是工作VM 的网页）。
      */
-    fun resolve(ctx: Context, hostName: String, fallbackId: String): String {
+    fun resolve(ctx: Context, hostName: String, fallbackId: String, web: String = ""): String {
         val nm = hostName.trim()
         if (nm.isNotEmpty()) {
             val hit = all(ctx).firstOrNull {
@@ -265,7 +269,14 @@ object Devices {
             }
             if (hit != null) return hit.id
         }
-        return if (byId(ctx, fallbackId) != null) fallbackId else ""
+        val origin = webOrigin(web)
+        if (origin.isNotEmpty()) {
+            val hit = all(ctx).firstOrNull { it.web.isNotEmpty() && webOrigin(it.web) == origin }
+            if (hit != null) return hit.id
+        }
+        val fb = byId(ctx, fallbackId) ?: return ""
+        val onTopic = all(ctx).count { !it.revoked && it.topicKey == fb.topicKey }
+        return if (onTopic <= 1) fallbackId else ""
     }
 
     /**

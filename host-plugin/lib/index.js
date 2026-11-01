@@ -317,8 +317,27 @@ class PushHost {
     this.lastQueue = ''
   }
 
-  get enabled() {
+  /**
+   * 能不能「发」推送：中继 + 频道 + ntfy 写令牌就够，跟有没有走过一键开通无关（v0.7.19）。
+   *
+   * v0.7.18 及以前把「发推送」和「收手机作答」捆在同一个 `enabled`（host + hostToken）上，
+   * 于是**手工配的实例（没有 host）整条推送通道都是关的**：2026-11-01 实测 VM1 每次启动打
+   * 「relay disabled (set host + hostToken…)」，中继侧 12 小时里 VM1 一条消息都没发过，
+   * 而拿它凭据文件里的 writeToken 手工 POST 同一个 topic 是 200（无鉴权对照 403）。
+   */
+  get pushEnabled() {
+    return this.config.relayBase.length > 0 && this.config.topic.length > 0 &&
+      this.config.ntfyToken.length > 0
+  }
+
+  /** 能不能「收」手机作答：答案经中继按 host 排队，只有自助开通/relay-user-add 才会写 host */
+  get queueEnabled() {
     return this.config.host.length > 0 && this.config.hostToken.length > 0
+  }
+
+  /** 问答回路要两侧都在（发得出去、也收得回答案）；沿用旧名字，问答调用点不动 */
+  get enabled() {
+    return this.pushEnabled && this.queueEnabled
   }
 
   log(message) {
@@ -332,8 +351,12 @@ class PushHost {
   }
 
   start() {
-    if (!this.enabled) {
-      this.log('relay disabled (set host + hostToken, or DSH_PUSH_HOST_TOKEN): push/answer off')
+    // 轮询只需要作答队列（host + hostToken）；推送能不能发是另一件事（pushEnabled），
+    // 别在这里一刀切关掉推送——那是 v0.7.18 的 bug，见 pushEnabled 的注释。
+    if (!this.queueEnabled) {
+      this.log(this.pushEnabled
+        ? 'answer queue off (no host/hostToken): 推送照常发，手机作答需一键开通'
+        : 'relay disabled (set host + hostToken, or DSH_PUSH_HOST_TOKEN): push/answer off')
       return
     }
     this.ctx.interval(() => {
@@ -370,8 +393,8 @@ class PushHost {
       ntfyToken: this.config.ntfyToken,
       topic: this.config.topic,
     })
-    if (!this.enabled) {
-      this.log('relay still disabled after rearm (host/hostToken empty): push/answer off')
+    if (!this.queueEnabled) {
+      this.log('answer queue still off after rearm (host/hostToken empty): 推送按 pushEnabled 走')
       return false
     }
     if (this.pollArmed) {
@@ -579,7 +602,8 @@ class PushHost {
    * Fire and forget — a dead relay must never block a turn from ending.
    */
   onTurnStopping(payload) {
-    if (this.enabled !== true || this.config.notifyTurns !== true) return
+    // 任务结束通知是 fire-and-forget，不需要作答队列 ⇒ 只看 pushEnabled（v0.7.19）
+    if (this.pushEnabled !== true || this.config.notifyTurns !== true) return
     const session = payload?.agent?.session
     const sessionId = String(session?.header?.id ?? '')
     if (sessionId.length === 0) return

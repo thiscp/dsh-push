@@ -601,9 +601,16 @@ class PushService : Service() {
             val prio = o.optInt("priority", 3)
             val ts = o.optLong("time", System.currentTimeMillis() / 1000)
             prefs?.edit()?.putLong("lastTs:" + devId, ts + 1)?.apply()
-            // 这台机器是谁：钩子写的 `#name` trailer 优先，其次按频道回指（v1.34.0）
+            // 这台机器是谁（v1.34.5 重排）：`#name` 精确匹配 → 按 `#web` 的机器指纹
+            // （scheme://host:port，同机重启只换 token 不换它）反查 → 只有「这个 topic 上仅一台」
+            // 才回指频道首选设备。多台时认不出就**不标注、不改 web**：v1.34.3 之前那种
+            // 「匹配不上就拿第一台兜底」会把别人的链接盖到这一行上（2026-11-01：laptop 行
+            // 被工作VM 的网页顶掉，点 laptop 进的是工作VM）。
             val hostName0 = nameRegex.find(body)?.groupValues?.get(1)?.trim() ?: ""
-            val attrId = Devices.resolve(this, hostName0, devId)
+            // 网页直达链接：#web <url>，钩子现取 token 拼 tailnet 基址（v1.9.2）；
+            // v1.34.5 起提前到这里解析，认机器要用它
+            val webLink = webRegex.find(body)?.groupValues?.get(1) ?: ""
+            val attrId = Devices.resolve(this, hostName0, devId, webLink)
             lastMessage = "$title：$body"
 
             // 作答回声（v1.13.0）：relay 在任意端作答成功后发 priority=1 静默消息——
@@ -645,8 +652,6 @@ class PushService : Service() {
                 val labels = trailer.substringAfter("=").split("|").filter { it.isNotEmpty() }
                 if (qid.isNotEmpty() && labels.size in 2..3) { directQid = qid; directLabels = labels }
             }
-            // 网页直达链接：#web <url>，钩子现取 token 拼 tailnet 基址（v1.9.2）
-            val webLink = webRegex.find(body)?.groupValues?.get(1) ?: ""
             // 自由作答落点的问题 id：#opts 的 qid 优先，其次 #qid trailer，都没有降级 q0（v1.11.0）。
             // 服务端按注册的问题 id 校验，单问题场景 q0 常见；猜错只会走"没递出去"toast，不崩
             val qidLine = qidRegex.find(body)?.groupValues?.get(1) ?: ""

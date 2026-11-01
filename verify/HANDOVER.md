@@ -3882,3 +3882,67 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
 - 公开镜像（gitee / github / origin / github main）四个远端已同步一致；本轮 head 与导出后的实际远端 head 记在 `tmp/dsh-push-release-STATUS.md`（补登记会再推一次，所以别拿本节文字里的哈希当最终远端）。
 - 用户侧动作：App 升到 1.34.4，然后**两台的码各扫一次**（VM1 那台现在带机器名 ⇒ 新增一行；laptop 那台重扫一次把 web 刷新）。
 
+
+## §7.49 推送整条通道被关掉：插件把「发推送」和「收作答」捆在一个闸上（插件 0.7.19 + App v1.34.5 / versionCode 165，2026-11-01）
+
+### 现象（用户 m00392）
+
+> 升级最新版是能新增设备了，但是我扫码三台设备，最开始是正常的，但是我发现VM1的推送一直收不到，于是我吊销VM1的重新扫。
+> 然后还是收不到推送，而且点击laptop进去的是工作VM，点击工作VM进去的还是工作VM，点击VM1进去的VM1
+
+⇒ 1.34.4 的「加一台」已经好了；剩下两件事：VM1 整条推送通道是关的；`#name` 认不出时 App 拿第一台兜底，把别人的 web 盖到第一行。
+
+### 三个断点（前两个是真凶，第三个是排除掉的怀疑）
+
+1. **插件**：`enabled = host && hostToken` 一个闸同时管「发推送」和「收手机作答」。`host` 是
+   `deploy/relay-user-add.sh` / 一键开通才会写的身份，**手工配的机器永远没有** ⇒
+   `onTurnStopping`、`onRequest`、`start()` 全关。VM1 每次启动打
+   `relay disabled (set host + hostToken…)`，中继侧 12 小时里 VM1 一条消息都没发过。
+2. **App**：`Devices.resolve()` 在 `#name` 匹配不上时 `return fallbackId`（该 topic 的第一台）
+   ⇒ 工作VM 的推送认不出对应行，就把**第一行 laptop 的 web 改成工作VM 的**（`PushService:708`）。
+   1.34.3 那句「认得出才写」的守卫形同虚设：fallback 永远非空。
+3. ~~旧键名 `writeToken`/`readToken` 不被认~~ **排除**：`credentials.mjs:143 normalizeKeys` 把键统一小写并去掉下划线与连字符，
+   `CREDENTIAL_KEYS`（:77-78）里 `ntfyToken: […,'writetoken']`、`phoneToken: […,'readtoken']` ⇒ 旧键名一直是被认的。
+   VM1 缺的只有 `host`（实测键：hostToken/provisionToken/readToken/regToken/relayBase/topic/webBase/webName/writeToken，`host=''`）。
+
+### 证据（都是实测）
+
+- 中继侧：拿 VM1 的 readToken `GET /dsh/json?poll=1&since=12h` → 16 条，来源只有 `#name=笔电`、`#name=工作VM`
+  与看门狗（无 #name），**没有 VM1**。
+- 权限：VM1 的 writeToken `POST https://ntfy.cpyh.xyz/dsh` → **200**（无鉴权对照 403）；再按插件的真实形态
+  `POST https://ntfy.cpyh.xyz/` + JSON body 带 `topic` → **200**（消息 id `kHF1C2sMHfB3`）。
+  ⇒ 缺的从来不是权限，是那道闸。
+- `RelayClient.push()`（`host-plugin/lib/relay.js:39-44`）只用 `relayBase + topic + ntfyToken`，压根不碰 `host` ⇒ 拆闸安全。
+
+### 改法
+
+- 插件 `PushHost` 拆三闸：`pushEnabled`（relayBase+topic+ntfyToken）／`queueEnabled`（host+hostToken）／
+  `enabled = pushEnabled && queueEnabled`（问答回路要两侧：发问就得收得到答案）。
+  `start()`/`rearm()` 只看 `queueEnabled`（轮询是作答队列的事），日志改成
+  `answer queue off (no host/hostToken): 推送照常发，手机作答需一键开通`；
+  `onTurnStopping` 只看 `pushEnabled`；`onRequest`/`onPreExecute` 仍用 `enabled`。
+- App `Devices.resolve(ctx, hostName, fallbackId, web)`：`#name` 匹配 → 按 `#web` 的 `webOrigin` 反查
+  （同机重启只换 token 不换 host:port）→ **只有该 topic 上仅一台**才回退 fallback；多台又认不出返回空串
+  （不标注、不改 web）。`PushService` 把 `webLink` 的解析从 :649 提前到 `resolve` 之前。
+- selftest 新增 6 条闸断言（手工配=能推不能收／开通=三闸全开／缺 ntfyToken 关／无 host 时 start() 不再说
+  relay disabled／有 host 轮询照旧装上）。
+
+### 结果
+
+- 插件 `dsh-push-host@0.7.19` 已发 npm（publish 回执 `+ dsh-push-host@0.7.19`，`dist-tag add … latest` 已跑；
+  `dist-tag ls` 因 CDN 滞后仍显示 0.7.18，别据此判失败）。
+  selftest **167/167**、pair 59/59、remote-bin 21/21、remote-status 41/41。
+- App **1.34.5 / 165**：`release-fast.ps1` 62s，APK `16924241` 字节；`?v=165` 200 且 sha256 一致，blog 同步 OK；
+  更新通知 id `FT06WUU3b51k`。
+- VM1 插件已升 0.7.19 并重启：日志从 `relay disabled…` 变成 `answer queue off (no host/hostToken): 推送照常发…`，
+  二维码仍 210 字节。新 token 链接 `http://<tailnet-vm1>:3080?token=czQ0m7neOwQKUuqfPhOlQIygDWHCx9njgYW6GJxOO5Q`。
+- 笔电（承载本会话的实例）插件包已升 0.7.19，**没重启**（下次重启生效；它本来就有 `host=laptop`，不受这个 bug 影响）。工作VM 未动。
+- **没跑模拟器 QA**（单人模式，用户真机自测）。
+
+### 用户侧动作
+
+1. App 升到 **1.34.5**；
+2. 设备清单里把三行**全部吊销并删除**，再重新扫三台的码——现在三台的码都带机器名，行名才会是「笔电 / 工作VM / 测试VM1」，
+   `#name` 才认得出（老行名是空的、web 又已被盖脏，机器指纹反查也救不回来）；
+3. VM1 想用手机作答（不只是收通知）就在 VM1 的插件面板点一次「一键开通」：会分配新 topic 与 host，
+   之后需要**重扫一次** VM1 的码。不点也不影响它现在能推。

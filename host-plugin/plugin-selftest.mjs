@@ -19,6 +19,7 @@ import {
   askUserSyncPlan,
   isTimedAskUserQuestion,
   nextAskUserConfig,
+  PushHost,
   passText,
   provisionCall,
   provisionNameSuggest,
@@ -1060,6 +1061,39 @@ handoffConfig.provisionSeq = 'seq-4'
 await handoff.run()
 check('provision: a dying fiber hands its result to the fiber that replaced it',
   String(rebornConfig.provisionDone) === 'seq-4')
+// ── v0.7.19：「发推送」与「收手机作答」两道闸拆开 ─────────────────────────────────
+// 回归的 bug：VM1 这类手工配的实例没有 host（没走一键开通），旧代码把两侧捆在同一个
+// enabled 上 ⇒ 每次启动打「relay disabled」，整条推送通道是关的；而拿它凭据文件里的
+// writeToken 手工 POST 同一个 topic 实测 200（无鉴权对照 403，2026-11-01）。
+const gateSink = () => ({ armed: false, lines: [] })
+const gateCtx = (sink) => ({
+  on: () => () => {},
+  interval: () => { sink.armed = true },
+  logger: () => ({ info: (m) => sink.lines.push(String(m)) }),
+})
+const gateCfg = (over = {}) => ({
+  log: true, relayBase: 'https://ntfy.cpyh.xyz', topic: 'dsh', ntfyToken: 'tk_write',
+  host: '', hostToken: '', pollIntervalMs: 5000, ...over,
+})
+const gateManual = new PushHost(gateCtx(gateSink()), gateCfg())
+check('gate: 手工配的实例（无 host）依然判定为「能发推送」',
+  gateManual.pushEnabled === true && gateManual.queueEnabled === false)
+check('gate: 问答回路（发问就得收得到答案）依然要求两侧都在', gateManual.enabled === false)
+const gateEnrolled = new PushHost(gateCtx(gateSink()), gateCfg({ host: 'laptop', hostToken: 'tk_host' }))
+check('gate: 一键开通过的机器三道闸全开',
+  gateEnrolled.pushEnabled === true && gateEnrolled.queueEnabled === true && gateEnrolled.enabled === true)
+check('gate: 缺 ntfy 写令牌 ⇒ pushEnabled 关',
+  new PushHost(gateCtx(gateSink()), gateCfg({ ntfyToken: '' })).pushEnabled === false)
+const gateStart = gateSink()
+new PushHost(gateCtx(gateStart), gateCfg()).start()
+check('gate: 无 host 时 start() 报的是「作答队列未开」，不再一句 relay disabled 把推送也关掉',
+  gateStart.armed === false &&
+    gateStart.lines.some((l) => l.includes('answer queue off')) &&
+    !gateStart.lines.some((l) => l.includes('relay disabled')))
+const gateQueue = gateSink()
+new PushHost(gateCtx(gateQueue), gateCfg({ host: 'laptop', hostToken: 'tk_host' })).start()
+check('gate: 有 host 时轮询照旧装上（手机作答不受这次拆分影响）', gateQueue.armed === true)
+
 const failed = checks.filter((entry) => !entry.ok)
 console.log('\n' + String(checks.length - failed.length) + '/' + String(checks.length) + ' checks passed')
 if (failed.length > 0) {
