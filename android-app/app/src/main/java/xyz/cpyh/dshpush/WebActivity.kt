@@ -91,6 +91,15 @@ class WebActivity : Activity() {
     //   自己切了对话（第二次不同的上报），就必须认页面为准——否则会出现「刚进来马上切走、
     //   结果没存上」的另一半 bug（v1.33.41 实测踩过这一层的设计取舍）。
     private var restoreSkip: Int = 0
+    // v1.34.3（用户 m131328）：补切定时器按值捕获 want，落地后仍会写回旧 hash ->
+    // "切过去几秒又被拽回来"。每次触发都要重读状态，用户一动手就整体作废。
+    private var restoreCanceled: Boolean = false
+
+    // v1.34.3：任何一次真实触摸都视为用户接管，立刻停掉补切
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
+        if (ev != null && ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) restoreCanceled = true
+        return super.dispatchTouchEvent(ev)
+    }
 
     companion object { private const val REQ_FILE = 119 }
 
@@ -1982,6 +1991,7 @@ class WebActivity : Activity() {
         restoreTarget = if (wantRestore) sessOfUrl(url) else ""
         restoreAt = System.currentTimeMillis()
         restoreSkip = 0
+        restoreCanceled = false
         applyInstanceLabel(url)
         lastUrl = url
         web?.loadUrl(url)
@@ -2003,16 +2013,29 @@ class WebActivity : Activity() {
     private fun recheckRestoreTarget() {
         val want = restoreTarget
         if (want.isEmpty()) return
-        val js = "(function(){var e=document.querySelector('[data-conversation-session]');" +
+        val jsOk = "(function(){var e=document.querySelector('[data-conversation-session]');" +
             "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
-            "if(v==='" + want + "'){return 'ok';}" +
-            "try{location.hash='" + want + "';}catch(e1){}" +
             "return v||'none';})()"
+        val jsForce = "(function(){try{location.hash='" + want + "';}catch(e1){}return 'forced';})()"
         for (delay in longArrayOf(2500L, 7000L)) {
             ui.postDelayed({
+                // 三重闸（v1.34.3）：(1) 目标已落地（saveSess 会清空 restoreTarget）；
+                // (2) 又要求恢复别的会话（want 已过期）；(3) 用户已动手（碰屏幕或切过会话）。
+                if (restoreTarget != want || restoreCanceled) {
+                    android.util.Log.d("dshsess", "recheck skip want=" + want + " now=" + restoreTarget + " canceled=" + restoreCanceled)
+                    return@postDelayed
+                }
                 try {
-                    web?.evaluateJavascript(js) { r ->
-                        android.util.Log.d("dshsess", "recheck want=$want got=$r")
+                    web?.evaluateJavascript(jsOk) { r ->
+                        val got = (r ?: "").trim().trim('"')
+                        android.util.Log.d("dshsess", "recheck want=" + want + " got=" + got)
+                        if (got == want) {
+                            restoreTarget = ""
+                            return@evaluateJavascript
+                        }
+                        if (restoreTarget != want || restoreCanceled) return@evaluateJavascript
+                        web?.evaluateJavascript(jsForce, null)
+                        restoreTarget = ""
                     }
                 } catch (e: Exception) {
                 }
@@ -2193,6 +2216,7 @@ class WebActivity : Activity() {
             restoreTarget = if (revive) sessOfUrl(u) else ""
             restoreAt = System.currentTimeMillis()
             restoreSkip = 0
+            restoreCanceled = false
             applyInstanceLabel(u)
             lastUrl = u
             loadErrored = false
