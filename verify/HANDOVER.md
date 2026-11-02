@@ -4305,3 +4305,46 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
 `./gradlew assembleDebug` 出来的 APK 字节数与上一版**完全一样**（16924681），一度以为没编译进去。
 真相：APK 有三个 dex（`classes.dex` / `classes2.dex` / `classes3.dex`），我们的代码在 **`classes3.dex`**；
 只 grep `classes.dex` 必然为 0。判新旧要看 dex 内容，不能看体积。
+
+## §7.57 通行证按机器隔离 + 吊销 404 + 机器名称可填（插件 0.7.36 / App 1.34.9，2026-11-02）
+
+用户三条（m133468 / m133578）：
+1. 「手动改通行证的名称，扫码配对后手机 app 上显示的设备名称不是我通行证 topic 的名称」；
+2. 「在插件里面吊销一些通行证失败」；
+3. 「三个设备里面刷新通行证列表显示的条目都是一样的……应该每台设备只能显示和吊销自己申请过的通行证」。
+
+### 一、吊销为什么失败：名字是猜的，不是查的
+- 旧 `revoke(name)` 直接 `ntfy user del '<name>-phone'` / `'<name>-pub'`。
+- 但历史用户叫 `dshphone` / `dshpub`（**没有连字符**），`dshphone-phone` 根本不存在 ⇒
+  `deleted` 为空 ⇒ `404 nothing to revoke`。工作 VM 日志原话：
+  `通行证吊销失败：发号服务返回 404：nothing to revoke`（连续三次）。
+- 修法：先 `_agg(known)` 按真实用户名聚合，`revoke` 删的是**列出来的那些真实用户名**，
+  不再拼字符串。`qa-scope2` 实测返回 `{"revoked":["qa-scope2-phone","qa-scope2-pub"]}`。
+
+### 二、为什么三台看到同一份清单：服务端根本没有作用域
+- `/list` 与 `/revoke` 只校验共享的 `provisionToken`（所有机器一个），于是谁都能看全量、吊销全量。
+- 修法（`/usr/local/bin/dsh-provd.py`，备份 `dsh-provd.py.bak-20261102`）：
+  - `GET /list?topic=<本机 topic>` → `listing(scope_topic)`，只返回**授权里含该 topic** 的通行证；
+  - `POST /revoke {name, topic}` → 命中别人的通行证直接 `403 not your pass`；
+  - 插件侧 `PassProvisioner.list()` / revoke 带上 `String(this.resolved.topic || '')`
+    （`PassProvisioner` 没有 `cred()`，踩过一次 `this.cred is not a function`）。
+- 实测（VM1 自己的 provisionToken）：
+  `"/list?topic=dsh-u-4a2b2af2"` → `['dsh-u-4a2b2af2']`（一条）；
+  `POST /revoke {name:'work-vm'}` → `{"error":"not your pass"}`。
+
+### 三、机器名称：改成用户可填的 `webName`，并支持热改名
+- `pairName()` 优先级**反转**：`webName`（面板手填）→ `host`（发号服务给的通行证名）→ 主机名。
+  此前优先 `host`，于是手机显示 `dsh-u-4a2b2af2` 这种没人认识的名字。
+- 插件面板「扫码配对」上方新增输入框 + 「保存名称」（写 `webName`）。改完 fiber 重载 →
+  二维码重出、`announceWebLink()` 重发 `#syslink` + `#name`。
+- App 1.34.9：`#syslink` 分支除 `Devices.setWeb` 外再调 `Devices.rename(id, #name)`
+  ⇒ 已配对的手机不重扫码就改名。
+- 实测：VM1 配置写 `webName: 测试VM1` → 日志 `web link announced: 测试VM1 -> ... (status=200)`
+  → 手机 prefs 里那一行 `name` 变 `测试VM1`，`web` token 同时换成当轮真值。
+
+### 四、自测
+`plugin-selftest` **197/197**（新增两条：list 带 topic、revoke body 带 topic；`provFetch` 桩改成
+先剥掉 query 再匹配，否则 `url.endsWith('/list')` 永不命中）。
+
+### 五、版本
+插件 **0.7.36**（已 npm publish，VM1 / 工作 VM 均已装并重启验过），App **1.34.9 / 169**。

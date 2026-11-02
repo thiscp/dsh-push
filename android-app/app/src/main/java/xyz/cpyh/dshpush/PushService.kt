@@ -662,6 +662,11 @@ class PushService : Service() {
                 if (attrId.isNotEmpty() && webLink.isNotEmpty()) {
                     Devices.setWeb(this, attrId, webLink)
                 }
+                // v1.34.9：机器名称改了也要跟着变——插件在面板里改完「机器名称」后会重发这条，
+                // 手机上不重扫码就能看到新名字（旧插件不带 `#name`，这里自然跳过）。
+                if (attrId.isNotEmpty() && hostName0.isNotEmpty()) {
+                    Devices.rename(this, attrId, hostName0)
+                }
                 return
             }
 

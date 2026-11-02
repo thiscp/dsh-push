@@ -222,6 +222,21 @@ window.__ModuleLoader__.load({
 			const payload = text("pairText");
 			const done = text("pairDone");
 			const seq = text("pairSeq");
+			// v0.7.36：机器名称——口令全自动，名字是这个面板里唯一真正要人填的东西，
+			// 所以放在二维码正上方。写的是 `webName`，改动会让 fiber 重载 → 自动重出码 + 重发 `#name`。
+			const webName = text("webName");
+			const [nameDraft, setNameDraft] = react.useState(webName);
+			react.useEffect(() => {
+				setNameDraft(webName);
+			}, [webName]);
+			const saveName = () => {
+				const next = String(nameDraft || "").trim();
+				if (!writable || next === webName) return;
+				Promise.resolve()
+					.then(() => scope.mutate([{ op: "set", path: ["webName"], value: next }], snapshot.revision))
+					.catch(() => { })
+					.then(() => notify());
+			};
 			/**
 			* v0.7.3：点按钮那一刻的 `pairStatus` 快照，用来判断「宿主有没有写回新结果」以提前解锁。
 			* 与 PassPanelRow 的 resultRef 同一个理由：宿主失败时也会写 pairStatus（"凭据不完整：…"），
@@ -284,6 +299,20 @@ window.__ModuleLoader__.load({
 					"点一下生成二维码，用手机 App 扫它即可同时配好推送通行证与网页入口（隧道模式会自动带上口令），不用手填。"),
 				react.createElement("div", { style: { fontSize: 12, opacity: 0.6 } },
 					"第一次用会顺手把凭据自动开好（不需要发号密钥，也不需要手工填任何东西）；开通失败才会在这里显示原因。"),
+				react.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+					react.createElement("span", { style: { fontSize: 13 } }, "机器名称"),
+					react.createElement("input", {
+						value: nameDraft,
+						onChange: (e) => setNameDraft(e.target.value),
+						placeholder: "例如 笔电 / 工作VM",
+						style: { flex: "0 1 220px", padding: "4px 8px", borderRadius: 8, border: "1px solid currentColor", background: "transparent", color: "inherit", fontSize: 13 },
+					}),
+					react.createElement("button", {
+						type: "button", disabled: !writable || String(nameDraft || "").trim() === webName, onClick: saveName,
+						style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: (!writable || String(nameDraft || "").trim() === webName) ? 0.5 : 1 },
+					}, "保存名称")),
+				react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
+					"手机里显示的就是这个名字。改完二维码会重新生成；已经配对过的手机也会跟着改名（App ≥ 1.34.9），不用重扫码。"),
 				react.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
 					react.createElement("button", {
 						type: "button", disabled: !writable, onClick: generate,

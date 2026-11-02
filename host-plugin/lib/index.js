@@ -1654,12 +1654,19 @@ export function provisionNameSuggest(config = {}) {
 }
 
 /** 一次发号调用（fetch 可打桩）：返回 {ok,data} 或 {ok:false,error:给人看的中文}。 */
-export async function provisionCall({ base, token, path, body, fetchImpl = globalThis.fetch } = {}) {
+export async function provisionCall({ base, token, path, body, query, fetchImpl = globalThis.fetch } = {}) {
   if (!token) return { ok: false, error: '缺少发号密钥：填 provisionToken 或设环境变量 DSH_PUSH_PROVISION_TOKEN' }
   if (typeof fetchImpl !== 'function') return { ok: false, error: '这个 Node 运行时没有 fetch，无法发号' }
+  // v0.7.36：把本机 topic 带上，服务端据此只返回 / 只允许吊销「自己那台机器在用」的通行证。
+  let url = provisionUrl(base, path)
+  const qs = Object.entries(query || {})
+    .filter(([, v]) => String(v || '').trim() !== '')
+    .map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v)))
+    .join('&')
+  if (qs) url += (url.indexOf('?') >= 0 ? '&' : '?') + qs
   let res
   try {
-    res = await fetchImpl(provisionUrl(base, path), {
+    res = await fetchImpl(url, {
       method: path === 'list' ? 'GET' : 'POST',
       headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
       body: path === 'list' ? undefined : JSON.stringify(body || {}),
@@ -1893,6 +1900,9 @@ export class PassProvisioner {
     const out = await provisionCall({
       base: this.resolved.provisionBase, token: this.resolved.provisionToken,
       path: 'list', fetchImpl: this.fetchImpl,
+      // v0.7.36：只列本机 topic 参与的通行证（服务端过滤）。此前是全局清单，
+      // 三台机器看到同一份、谁都能吊销谁的。
+      query: { topic: String(this.resolved.topic || '') },
     })
     if (!out.ok) return { ok: false, error: out.error }
     const passes = Array.isArray(out.data.passes) ? out.data.passes : []
@@ -2031,7 +2041,9 @@ export class PassProvisioner {
       } else if (action === 'revoke') {
         const out = await provisionCall({
           base: this.resolved.provisionBase, token: this.resolved.provisionToken,
-          path: 'revoke', body: { name }, fetchImpl: this.fetchImpl,
+          // v0.7.36：带上本机 topic，服务端只允许吊销自己那台在用的通行证
+          // （别人的通行证回 403 not your pass）。
+          path: 'revoke', body: { name, topic: String(this.resolved.topic || '') }, fetchImpl: this.fetchImpl,
         })
         this.write('provisionResult', out.ok ? ('已吊销：' + name) : ('吊销失败：' + out.error))
         this.log(out.ok ? ('通行证已吊销：' + name) : ('通行证吊销失败：' + out.error))
@@ -2865,13 +2877,14 @@ export class PairBox {
   /**
    * 二维码里带的机器名（App 靠它区分「同一个 topic 下的不同机器」，App ≥1.34.3）。
    *
-   * 取值顺序：自助开通的 `host` → 手工配的 `webName` → 系统主机名。
-   * 只带 host 的话，手工配凭据的机器（没有 host）二维码里就没有 name，
-   * App 只能按 base|topic 认人，会把上一台顶掉（2026-11-01 实测：扫 VM1 顶掉了 laptop）。
+   * 取值顺序（v0.7.36 起倒过来）：**用户在面板里手填的 `webName`** → 自助开通的 `host` → 系统主机名。
+   * 为什么倒过来：`host` 是发号服务给的通行证名（`dsh-u-4a2b2af2` 这种），用户改不了也不认识；
+   * 用户 m133468 的诉求是「机器名称我要能自己设，扫码后手机就显示我设的那个名字」。
+   * `webName` 就是那个可编辑字段，App 1.34.9 起还会跟着 `#name` 热更新，不用重扫码。
    */
   pairName() {
     const r = this.resolved || {}
-    const named = String(r.host || '').trim() || String(r.webName || '').trim()
+    const named = String(r.webName || '').trim() || String(r.host || '').trim()
     if (named) return named
     try { return String(hostname() || '').trim() } catch { return '' }
   }

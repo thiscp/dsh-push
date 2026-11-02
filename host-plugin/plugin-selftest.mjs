@@ -951,13 +951,14 @@ check('provision: missing secret is reported in Chinese, no fetch attempted',
 const provCalls = []
 const provFetch = async (url, init) => {
   provCalls.push({ url, init })
-  if (url.endsWith('/issue')) {
+  const bare = String(url).split('?')[0]
+  if (bare.endsWith('/issue')) {
     return { ok: true, status: 200, async text() { return JSON.stringify({ topic: 'dsh-a', phoneUser: 'dsh-a-phone', pubUser: 'dsh-a-pub', readToken: 'tk_read', writeToken: 'tk_write' }) } }
   }
-  if (url.endsWith('/revoke')) {
+  if (bare.endsWith('/revoke')) {
     return { ok: true, status: 200, async text() { return JSON.stringify({ revoked: ['dsh-a-phone', 'dsh-a-pub'], missing: [] }) } }
   }
-  if (url.endsWith('/list')) {
+  if (bare.endsWith('/list')) {
     return { ok: true, status: 200, async text() { return JSON.stringify({ passes: [{ name: 'dsh-a', users: ['dsh-a-phone'], topics: [{ topic: 'dsh-a', permission: 'read-only' }] }] }) } }
   }
   return { ok: false, status: 409, async text() { return JSON.stringify({ error: 'name already issued' }) } }
@@ -1041,7 +1042,7 @@ check('enroll: an unreachable service says so instead of throwing',
 
 // the panel round-trip: browser writes volatile request -> host provCalls the service -> mirrors back
 const panelConfig = { provisionName: '', provisionAction: '', provisionSeq: '', provisionResult: '', provisionList: '', provisionDefault: '', provisionDone: '' }
-const panelResolved = { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek' }
+const panelResolved = { relayBase: 'https://ntfy.cpyh.xyz', provisionBase: 'https://x/provision', provisionToken: 'sek', topic: 'dsh-machine' }
 const panelLogs = []
 const panel = new PassProvisioner(
   { on: () => () => {} }, panelConfig, panelResolved, (m) => panelLogs.push(String(m)),
@@ -1118,6 +1119,21 @@ panelConfig.provisionSeq = 'seq-3'
 await panel.run()
 check('provision: revoke reports the outcome in Chinese',
   String(panelConfig.provisionResult).includes('已吊销') && panelConfig.provisionDone === 'seq-3')
+// v0.7.36: 服务端按 topic 收窄作用域。本机 topic 必须随 list / revoke 一起发过去，
+// 否则走到老路径就是「全局清单 + 谁都能吊销谁的」。
+check('provision: the list call carries this machine topic',
+  (() => {
+    const last = [...provCalls].reverse().find((c) => String(c.url).includes('/list'))
+    const url = String(last && last.url)
+    return url.includes('topic=') && !url.includes('topic=&')
+  })())
+check('provision: the revoke call carries this machine topic',
+  (() => {
+    const last = [...provCalls].reverse().find((c) => String(c.url).includes('/revoke'))
+    let body = {}
+    try { body = JSON.parse(String(last && last.init && last.init.body)) } catch { body = {} }
+    return String(body.name || '') === 'dsh-a' && String(body.topic || '').length > 0
+  })())
 
 // the fiber-restart trap: the browser's volatile write lands in cordis.patch.yml, which
 // hot-restarts this plugin's fiber and zeroes the in-memory mirrors — the panel would show

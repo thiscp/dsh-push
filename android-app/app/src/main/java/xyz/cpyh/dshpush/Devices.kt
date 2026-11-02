@@ -254,6 +254,21 @@ object Devices {
      * 表现就是「那台设备突然 403、推送没了」。插件会往**旧 topic** 补发一条 `#sysmove`，
      * 这里就地改掉这台设备的订阅，用户不必重新扫码。
      */
+    /**
+     * 改设备显示名（v1.34.9）：插件那边「机器名称」改了之后，`#name` 会随 `#syslink` 一起发过来，
+     * 这里就地改名，用户不必重新扫码。空名/超长忽略（老插件不发 `#name` 也不会误改）。
+     */
+    fun rename(ctx: Context, id: String, name: String) {
+        val nm = name.trim()
+        if (nm.isEmpty() || nm.length > 32) return
+        val list = all(ctx).toMutableList()
+        val i = list.indexOfFirst { it.id == id }
+        if (i < 0) return
+        if (list[i].name == nm) return
+        list[i] = list[i].copy(name = nm)
+        save(ctx, list)
+    }
+
     fun updatePass(ctx: Context, id: String, topic: String, token: String) {
         if (topic.isBlank() || token.isBlank()) return
         val list = all(ctx).toMutableList()
