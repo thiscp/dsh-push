@@ -233,10 +233,10 @@ Invoke-Watched "seed-prefs" ("scp " + $SSH_OPTS + " `"$seed`" `"${EmuUser}@${Emu
 # ---------- 3. build on vm1 (unless -SkipBuild) ----------
 $localApk = "$OutDir\dsh-push.apk"
 if (-not $SkipBuild) {
-  Invoke-Watched "build-vm1" ("ssh " + $SSH_OPTS + " " + $Vm1 + " `"rm -rf work/projects/dsh-push/android-app/app/src`"") $SshTimeoutSec $null | Out-Null
-  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " -r `"$Repo\android-app\app\src`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $SshTimeoutSec $null | Out-Null
-  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\app\build.gradle.kts`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $SshTimeoutSec $null | Out-Null
-  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\build.gradle.kts`" `"$Repo\android-app\settings.gradle.kts`" `"$Repo\android-app\gradle.properties`" `"${Vm1}:work/projects/dsh-push/android-app/`"") $SshTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("ssh " + $SSH_OPTS + " " + $Vm1 + " `"rm -rf work/projects/dsh-push/android-app/app/src`"") $BuildTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " -r `"$Repo\android-app\app\src`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $BuildTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\app\build.gradle.kts`" `"${Vm1}:work/projects/dsh-push/android-app/app/`"") $BuildTimeoutSec $null | Out-Null
+  Invoke-Watched "build-vm1" ("scp " + $SSH_OPTS + " `"$Repo\android-app\build.gradle.kts`" `"$Repo\android-app\settings.gradle.kts`" `"$Repo\android-app\gradle.properties`" `"${Vm1}:work/projects/dsh-push/android-app/`"") $BuildTimeoutSec $null | Out-Null
   $vm1Build = @'
 set -e
 export JAVA_HOME=/usr/lib/jvm/java-1.17.0-openjdk-amd64
