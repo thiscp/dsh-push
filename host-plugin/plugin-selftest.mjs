@@ -1114,6 +1114,47 @@ check('gate: 没有作答队列时不给作答链接（点了也没用）',
   !String(askSink.pushed[0].body).includes('/answer/'))
 check('gate: 没有作答队列时不往中继登记问句', askSink.registered.length === 0)
 
+// v0.7.21：同一个选择题从两条入口各来一次（pq-<uuid> 兜底 + 真实 callId），只推一次
+{
+  const dup = { pushed: [] }
+  const host = new PushHost(gateCtx(gateSink()), gateCfg({ pushQuestions: true, webName: '', answerBase: '', webBase: '', webLog: '' }))
+  host.relay = {
+    push: async (payload) => { dup.pushed.push(payload); return { status: 200 } },
+    register: async () => ({ status: 200 }),
+    pending: async () => [],
+    ack: async () => {},
+  }
+  const q = [{ id: 'choice-3', question: 'pick one', options: ['a', 'b', 'c'] }]
+  const agent = { id: 'ag1', session: { id: 'sess-dup' } }
+  await host.onRequest({ questions: q, wait: { callId: 'call_real:ptc:1', timed: true }, agent }, () => {})
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  await host.onRequest({ questions: q, wait: { callId: 'pq-5705db95-845b-4daa-a668-f68dd4b13f89', timed: true }, agent }, () => {})
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  check('dedupe: 同一道题的真实 callId + pq- 兜底 id 只推一条通知', dup.pushed.length === 1, 'pushed=' + String(dup.pushed.length))
+  await host.onRequest({ questions: q, wait: { callId: 'call_second:ptc:1', timed: true }, agent }, () => {})
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  check('dedupe: 真实 callId 永远不被内容去重拦下', dup.pushed.length === 2, 'pushed=' + String(dup.pushed.length))
+}
+
+// v0.7.21：host 有、hostToken 空时，用凭据里的 regToken 自动补一只
+{
+  const healSink = gateSink()
+  const host = new PushHost(gateCtx(healSink), gateCfg({ host: 'vm1', hostToken: '', regToken: 'reg', pushQuestions: true }))
+  let mints = 0
+  host.relay = {
+    registerHost: async () => { mints++; return { status: 200, token: 'hk_selfhealed' } },
+    push: async () => ({ status: 200 }),
+    register: async () => ({ status: 200 }),
+    pending: async () => [],
+    ack: async () => {},
+  }
+  host.start()
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  check('self-heal: 缺 hostToken 时自动向中继补发一次', mints === 1 && host.config.hostToken === 'hk_selfhealed')
+  check('self-heal: 补到之后轮询被装上（不用重启宿主）', host.pollArmed === true && healSink.armed === true)
+  check('self-heal: 面板状态写成已开通', String(healSink.lines.join(' ')).includes('host token self-healed'))
+}
+
 const failed = checks.filter((entry) => !entry.ok)
 console.log('\n' + String(checks.length - failed.length) + '/' + String(checks.length) + ' checks passed')
 if (failed.length > 0) {

@@ -4033,3 +4033,45 @@ VM1 的 `~/.config/dsh-push/credentials.json` **没有 `host` 字段**，而它�
 以后，push 侧（topic + writeToken）照常工作，只有作答队列会因为 `host`/`hostToken` 不匹配
 而失效——而旧代码把「失效」实现成了「静默丢弃」。判据要建立在**能看到的日志**上：
 `relay ready host=…` 这一行在就说明队列开着，不在就只有推送。
+
+## §7.52 一个选择题连推两条 + 缺 hostToken 永久半死（插件 0.7.21，2026-11-02）
+
+### 一、重复推送：两条入口各推一次，callId 却不同
+VM1 实测日志（`~/.dsh/web.log`）：
+
+```
+question call_cfc6063f31c84cf78e9ce728:ptc:1 ... q=["choice-3"]
+question pq-5705db95-845b-4daa-a668-f68dd4b13f89 ... q=["choice-3"]
+```
+
+`tools/pre-execute` 的兜底先按工具参数**猜**一个 `pq-<uuid>`（那时还看不到真实
+`wait.callId`），随后 `user-questions/request` 瀑布带着真实 `call_…:ptc:1` 又来一次。
+`announce()` 里原来只有按 `callId` 的去重表（`this.announced`），两个 id 不同 ⇒ 同一道题
+在手机上连推两条。
+
+**修法**：加一道**内容指纹**去重 —— `session|qid|题干|选项`，120s 内视为同一道题。
+但**只抑制 `pq-` 开头的兜底 id**：真实 `call_…` 永远照推，因为两道不同的题完全可能
+共用题干与选项（自测里就有一例：`call-echo` 与 `call-pending` 用同一份 fixture）。
+
+### 二、半死状态：`host` 有、`hostToken` 空
+中继 `/enroll` 的 host 注册是**吞异常**的：
+
+```python
+except Exception as e:
+    return '', 'host register failed: %s' % e      # enroll 仍返回 200，hostToken 是空串
+```
+
+于是新用户可能拿到「有 host、没 hostToken」的凭据：**推送照常，作答永远收不到**，
+而且没有任何报错（VM1 这次是复制凭据导致的同类形状）。
+
+**修法**：`PushHost.healHostToken()` —— 启动时若 `host` 非空而 `hostToken` 为空、
+且凭据里有 `regToken`，直接 `POST /answer/host {host, topic}` + `X-Reg-Token` 补一只，
+写回凭据文件后 `rearm()` 就地装上轮询。**不消耗 `/enroll` 的按 IP 配额**（2/小时、6/天）。
+
+### 三、面板多一行：`作答通道：已开通 / 未开通（原因）`
+由插件写 volatile 字段 `answerState`（`noteAnswerState()` → `setVolatileValue`），
+`lib/client.js` 在「手机作答模式」下方渲染，`已开通` 前缀显绿色，否则红字带原因。
+
+### 自测
+`plugin-selftest.mjs` 175/175（新增 5 条：真实+p q- 只推一条、真实 id 不被内容去重拦、
+缺 hostToken 自动补发、补到后轮询装上、面板状态写入）。

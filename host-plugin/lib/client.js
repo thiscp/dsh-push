@@ -343,6 +343,11 @@ window.__ModuleLoader__.load({
 				react.createElement("div", { style: { fontSize: 13, opacity: 0.75 } }, timed
 					? "已开启：ask_user_question 走 timed——提问会推送到手机，超时后手机答案仍可续答。"
 					: "未开启：ask_user_question 走 legacy——只有 DSH 网页能作答。"),
+				value.answerState
+					? react.createElement("div", {
+						style: { fontSize: 12, color: String(value.answerState).indexOf("已开通") === 0 ? "#1e8449" : "#c0392b" }
+					}, "作答通道：" + String(value.answerState))
+					: null,
 				react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
 					"启用即时热生效、无需重启宿主；新会话立即生效，已开老会话保持旧行为（工具变体钉在会话创建时）。启用前自动备份 cordis.patch.yml。本开关只升不降：要回到 legacy 请手动改 profile 的 cordis.patch.yml。"),
 				status !== ""

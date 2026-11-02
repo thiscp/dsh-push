@@ -45,6 +45,24 @@ export class RelayClient {
     return { status: r.status, ...(await this.#json(r)) };
   }
 
+  /**
+   * Mint an X-Host-Token for this host id (0.7.21).
+   *
+   * The relay's /enroll does the same thing server-side, but one failed call there silently
+   * produces `host` + empty `hostToken` credentials: notifications still flow, yet no answer can
+   * ever come back. Because the plugin already holds the reg token, it can re-mint the host token
+   * itself instead of spending another /enroll quota slot (2 per IP per hour).
+   */
+  async registerHost() {
+    const r = await this.fetchImpl(this.base + '/answer/host', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Reg-Token': this.regToken },
+      body: JSON.stringify({ host: this.host, topic: this.topic }),
+    })
+    const data = await this.#json(r)
+    return { status: r.status, token: String((data && data.token) || '') }
+  }
+
   /** Register a pending question so the phone can answer it; the relay queues the reply for us. */
   async register({ callId, agentId, questions, ttl = 86400 }) {
     const r = await this.fetchImpl(this.base + '/answer/register', {

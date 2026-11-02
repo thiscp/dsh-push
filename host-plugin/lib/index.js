@@ -191,6 +191,8 @@ export const Config = z.object({
   provisionDefault: z.string().default('').volatile(),
   /** 宿主处理完的请求号回写。 */
   provisionDone: z.string().default('').volatile(),
+  /** v0.7.21: one-line state of the answer channel, shown in the panel. */
+  answerState: z.string().default('').volatile(),
   /**
    * 本机凭据是否已生效（'1' / '0'，v0.7.0 一键开通用）。
    *
@@ -288,6 +290,17 @@ function preferCodedError(errors) {
   return errors.find((error) => typeof error?.code === 'string') ?? errors[0]
 }
 
+/** v0.7.21: how long the same question (content-identical) is considered already announced. */
+const ANNOUNCE_DEDUPE_MS = 120000
+
+/** `session|qid|text|options` - used only to tell "the same question" apart. */
+function questionSignature(sessionId, questions = []) {
+  const first = Array.isArray(questions) ? questions[0] : undefined
+  if (first === undefined || first === null) return String(sessionId) + '|empty'
+  const options = Array.isArray(first.options) ? first.options.filter((o) => typeof o === 'string') : []
+  return [String(sessionId), String(first.id ?? ''), String(first.question ?? ''), options.join('')].join('|')
+}
+
 class PushHost {
   constructor(ctx, config) {
     this.ctx = ctx
@@ -315,6 +328,10 @@ class PushHost {
     this.pollArmed = false
     /** Last poll's callId set, so the queue line is printed only when it changes. */
     this.lastQueue = ''
+    /** v0.7.21: content signature -> timestamp, so one question cannot be pushed twice. */
+    this.announcedByContent = new Map()
+    /** v0.7.21: guard so the host-token self-heal runs once at a time. */
+    this.healing = false
     /** One-shot actionable hint when the relay rejects our host token (401). */
     this.queueHint = false
   }
@@ -342,6 +359,15 @@ class PushHost {
     return this.pushEnabled && this.queueEnabled
   }
 
+  /** v0.7.21: publish the one-line answer-channel state so the panel can show it. */
+  noteAnswerState(text) {
+    try {
+      setVolatileValue(this.config, 'answerState', text)
+    } catch {
+      /* the panel is optional; never let bookkeeping break the relay */
+    }
+  }
+
   log(message) {
     if (this.config.log !== true) return
     try {
@@ -356,11 +382,22 @@ class PushHost {
     // 轮询只需要作答队列（host + hostToken）；推送能不能发是另一件事（pushEnabled），
     // 别在这里一刀切关掉推送——那是 v0.7.18 的 bug，见 pushEnabled 的注释。
     if (!this.queueEnabled) {
+      // v0.7.21：有 host 却没 hostToken，多半是 /enroll 那一刻 register_host 抖了一下
+      // （服务端把异常吞成 `hostToken: ''`）。凭据里就带着 regToken，自己补一只即可，
+      // 不必再烧一次 /enroll 的配额。
+      if (this.config.host.length > 0 && this.config.regToken.length > 0) {
+        void this.healHostToken()
+        return
+      }
+      this.noteAnswerState(this.pushEnabled
+        ? '未开通：推送可用，手机作答需要先一键开通'
+        : '未开通：还没有通行证')
       this.log(this.pushEnabled
         ? 'answer queue off (no host/hostToken): 推送照常发，手机作答需一键开通'
         : 'relay disabled (set host + hostToken, or DSH_PUSH_HOST_TOKEN): push/answer off')
       return
     }
+    this.noteAnswerState('已开通')
     this.ctx.interval(() => {
       void this.pollOnce()
     }, this.config.pollIntervalMs)
@@ -371,6 +408,44 @@ class PushHost {
       ' poll=' + String(this.config.pollIntervalMs) + 'ms' +
       (this.config.claimForeground === true ? ' claimForeground=on' : ''),
     )
+  }
+
+  /**
+   * v0.7.21: mint the missing host token with the reg token we already hold, then arm the poll.
+   *
+   * Why this exists: `/enroll` registers the host server-side, but that single call is wrapped in
+   * a catch (`except Exception: return '', 'host register failed: ...'`). A brand-new install can
+   * therefore land on `host` + empty `hostToken` credentials: notifications keep working, and the
+   * answer channel is dead in a way nothing surfaces (2026-11-02 the same signature was found on
+   * a hand-copied credential file). Healing here keeps the promise that a fresh install cannot end
+   * up half-enabled, and costs no enrollment quota.
+   */
+  async healHostToken() {
+    if (this.healing === true) return
+    this.healing = true
+    try {
+      const result = await this.relay.registerHost()
+      if (result.status !== 200 || result.token.length === 0) {
+        this.noteAnswerState('未开通：中继没发放 hostToken（HTTP ' + String(result.status) + '）')
+        this.log('host token self-heal failed: HTTP ' + String(result.status))
+        return
+      }
+      if (this.credentialsPath) {
+        try {
+          this.writeCreds(this.credentialsPath, { hostToken: result.token })
+        } catch (error) {
+          this.log('host token self-heal: write failed: ' + String(error?.message ?? error))
+        }
+      }
+      this.noteAnswerState('已开通（自动补发 hostToken）')
+      this.log('host token self-healed host=' + this.config.host)
+      this.rearm({ hostToken: result.token })
+    } catch (error) {
+      this.noteAnswerState('未开通：补发 hostToken 失败（' + String(error?.message ?? error) + '）')
+      this.log('host token self-heal error: ' + String(error?.message ?? error))
+    } finally {
+      this.healing = false
+    }
   }
 
   /**
@@ -407,6 +482,7 @@ class PushHost {
     this.ctx.interval(() => {
       void this.pollOnce()
     }, this.config.pollIntervalMs)
+    this.noteAnswerState('已开通')
     this.log(
       'relay armed by enrollment host=' + this.config.host +
       ' topic=' + this.config.topic +
@@ -449,6 +525,29 @@ class PushHost {
 
   /** Push + register, fire and forget: a network hiccup must never block a question. */
   async announce({ callId, agentId, sessionId, timed, questions }) {
+    // 2026-11-02 VM1: the same multiple-choice question came from two entry points -
+    // `tools/pre-execute` announced a self-made `pq-<uuid>` first, then the
+    // `user-questions/request` waterfall brought the real callId. Different callIds defeat the
+    // callId dedupe below, so the phone got the same card twice. Dedupe by content as well.
+    const signature = questionSignature(sessionId, questions)
+    const nowMs = Date.now()
+    const seenAt = this.announcedByContent.get(signature)
+    // Only the `pq-<uuid>` fallback id is dropped: a real `call_...` id is always announced,
+    // because two genuinely different questions can share text and options.
+    const guessedId = String(callId).startsWith('pq-')
+    if (guessedId && seenAt !== undefined && nowMs - seenAt < ANNOUNCE_DEDUPE_MS) {
+      this.questions.set(callId, { questions: relayQuestions(questions), timed, ts: nowMs, echoed: false })
+      this.log('question ' + callId + ' suppressed (fallback id): same question pushed ' +
+        String(Math.round((nowMs - seenAt) / 1000)) + 's ago')
+      return
+    }
+    this.announcedByContent.set(signature, nowMs)
+    if (this.announcedByContent.size > 200) {
+      const cutoff = nowMs - ANNOUNCE_DEDUPE_MS
+      for (const [key, ts] of this.announcedByContent) {
+        if (ts < cutoff) this.announcedByContent.delete(key)
+      }
+    }
     const registered = relayQuestions(questions)
     const now = Date.now()
     const previous = this.announced.get(callId)
