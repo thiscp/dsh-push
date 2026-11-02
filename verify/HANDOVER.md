@@ -4348,3 +4348,42 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
 
 ### 五、版本
 插件 **0.7.36**（已 npm publish，VM1 / 工作 VM 均已装并重启验过），App **1.34.9 / 169**。
+
+## §7.57 机器名称改了不生效：两层 bug + 一个重复设备（插件 0.7.38 / App 1.34.10，2026-11-02）
+
+用户（m133873）「我点保存没有任何保存成功的提示呢，重新扫码后显示的还是测试VM1」，
+0.7.37 让提示出现了且回「已保存」，但重扫仍是旧名字（m133927）。这里记两个互相独立的真因。
+
+### 一、浏览器写 `webName` 写不进去（0.7.36/0.7.37 的根本原因）
+判据（VM1 实测）：点保存后 `cordis.patch.yml` 的 mtime 变了、`pairSeq` 也换了新值，
+**唯独 `webName` 还是旧值**。也就是说 `scope.mutate([{op:'set',path:['webName'],…}])`
+看起来成功，实际没落到这个键上；而同一个调用写 `pairSeq` 是有效的。
+
+修法（0.7.38）：**别让浏览器写配置字段**。
+- 面板只写两个 volatile：`nameText`（名字原文）+ `nameSeq`（请求号），另加一个新 `pairSeq` 触发重出码；
+- 插件在 `refresh()` 里调 `persistName()`，用 `ctx.configEditor.edit(entry, cur => ({...cur, webName}))`
+  自己写（这条路 `tool-ask-user` 的 timed 升级一直在用）；条目按 `options.id === 'push-host' ||
+  options.name === 'dsh-push-host'` 找；
+- `pairName()` 优先读 `nameText` ⇒ 即使落盘失败，本次会话的二维码也已经是新名字，失败只打日志。
+验证：VM1 写入 `nameText: VM1B` + 重启 → 配置文件出现 `webName: VM1B`，日志
+`机器名称已写入配置：VM1B`，广播 `web link announced: VM1B -> …`。
+
+### 二、改名后重扫会长出一个「重复设备」（App ≤1.34.9）
+`Devices.idOf(base, topic, name)` 把机器名算进了 id，所以「测试VM1 → VM1B」再扫码时：
+按 id 找不到、按名字也找不到 ⇒ **新增一行**，手机上同时挂着 `测试VM1` 和 `VM1B`。
+用户看到的「还是测试VM1」有一半是这条造成的（旧行还在，新行只是排在后面）。
+
+修法（1.34.10）：`upsert()` 在 id/名字都落空之后，再加一档**按网页地址的 host:port 认机器**
+（名字能改、token 每次重启都换，host:port 不变）；载荷没带 web 时，只有「同 base|topic 恰好
+一台」才允许改名。命中后还会顺手删掉同 origin 的重复行。
+
+模拟器验收（`emulator-5556`，v1.34.10）：
+- 只有一行 `VM1B` 时扫 `name=VM1C` 的码 → 原地改名成 `VM1C`，仍然**一行**，`状态：已连接`；
+- 扫 `name=VM1B` 且此前没有该行时 → 正常新增，不误伤别的设备。
+
+### 三、复验用的最小手法（不点面板也能验）
+1. 直接往 `~/.dsh/profiles/web/cordis.patch.yml` 写 `nameSeq` + `nameText` + 新 `pairSeq`；
+2. 重启宿主 → 看配置文件里 `webName` 是否变成 `nameText`、日志有没有 `机器名称已写入配置`；
+3. 手机侧用 `node C:/Temp/mkqr.js '<payload>' out.png` 造一张码，`adb push` 到
+   `/sdcard/Pictures/` 再 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE`，
+   App 里「扫码配对 → 从相册选一张」即可复现整条链路。
