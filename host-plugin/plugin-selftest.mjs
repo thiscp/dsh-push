@@ -1094,6 +1094,26 @@ const gateQueue = gateSink()
 new PushHost(gateCtx(gateQueue), gateCfg({ host: 'laptop', hostToken: 'tk_host' })).start()
 check('gate: 有 host 时轮询照旧装上（手机作答不受这次拆分影响）', gateQueue.armed === true)
 
+// v0.7.20：缺作答队列时，问句也必须推出去（只推通知、不给没用的作答链接）——
+// 2026-11-02 VM1 实测：credentials.json 没有 host，问句被静默丢弃，用户一条通知都没收到。
+const askSink = { pushed: [], registered: [] }
+const askHost = new PushHost(gateCtx(gateSink()), gateCfg({ pushQuestions: true, webName: '', answerBase: '', webBase: '', webLog: '' }))
+askHost.relay = {
+  push: async (payload) => { askSink.pushed.push(payload); return { status: 200 } },
+  register: async (payload) => { askSink.registered.push(payload); return { status: 200 } },
+}
+await askHost.onRequest({
+  questions: [{ id: 'q0', question: 'pick one', options: ['a', 'b'] }],
+  wait: { callId: 'call-x', timed: true },
+  agent: { id: 'ag1', session: { id: 'sess-1234' } },
+}, () => {})
+await new Promise((resolve) => setTimeout(resolve, 40))
+check('gate: 没有作答队列时问句仍然推通知',
+  askSink.pushed.length === 1 && String(askSink.pushed[0].title).includes('等你选择'))
+check('gate: 没有作答队列时不给作答链接（点了也没用）',
+  !String(askSink.pushed[0].body).includes('/answer/'))
+check('gate: 没有作答队列时不往中继登记问句', askSink.registered.length === 0)
+
 const failed = checks.filter((entry) => !entry.ok)
 console.log('\n' + String(checks.length - failed.length) + '/' + String(checks.length) + ' checks passed')
 if (failed.length > 0) {

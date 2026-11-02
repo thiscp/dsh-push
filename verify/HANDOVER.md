@@ -3982,3 +3982,54 @@ v1.34.0 的验收（§7.44）没抓到，是因为那两台测试机用的是**�
 ### 结果
 `SUMMARY: 10/10 passed`，`?v=166` 线上 `Content-Length: 16924681`；
 四个公共远端镜像到 `930c0fa`；更新通知 id `54ZZqMyTKHTT`。
+
+## §7.51 「作答不推送了」：凭据里没有 host，问句被静默丢掉（插件 0.7.20，2026-11-02）
+
+**用户报障**：「现在作答不推送了吗，配置是开启了作答的」（附三张图：DSH 网页里
+`提问 · 等待回答` 卡片正常展开、通知中心只有常驻的「监听中…」、没有任何作答通知）。
+随后补充判据：「laptop 的可以，VM1 的不行」。
+
+### 真因：一条「答得出」的判定把「推不推」也卡住了
+`PushHost.onRequest()`（`lib/index.js`）原来的第一道闸是 `this.enabled`：
+
+```js
+get enabled() { return this.pushEnabled && this.queueEnabled }
+get queueEnabled() { return this.config.host.length > 0 && this.config.hostToken.length > 0 }
+```
+
+VM1 的 `~/.config/dsh-push/credentials.json` **没有 `host` 字段**，而它的 `hostToken`
+与笔电**逐字节相同**（sha256 前缀 `c68a8e80…`，都是 `hk_d69…`）——这份凭据是早先从
+笔电整份复制过去的。于是：
+
+- `queueEnabled = false` ⇒ `enabled = false` ⇒ `onRequest` 直接 `return next()`，
+  **问句连推送都不发**；
+- 而「任务结束」通知在 0.7.19 已改成只看 `pushEnabled`，所以那条照常弹——
+  这正是「推送能收、唯独作答不来」的指纹。
+
+中继侧对照（`/var/lib/answer-relay/hosts.json`）证明 VM1 本该有自己的身份：
+`vm1 -> hk_661…`、`laptop -> hk_d69…`。用笔电那只 token 去
+`GET /answer/pending?host=vm1` 回 **401**，用 `host=laptop` 回 200 —— 一眼看出串号。
+
+### 修法一：把 VM1 的身份改回来（数据修复，立即生效，不用重启）
+1. 从 `hosts.json` 取 `vm1` 的 token，写回 VM1 的 `credentials.json`：
+   `host = "vm1"`、`hostToken = hk_661…`（先备份 `.bak-hostfix`）。
+2. 让插件重读配置：`pairSeq` 是 **volatile** 字段，改它不会触发 re-apply；
+   要改**非 volatile** 键（本次加 `pollIntervalMs: 3000`，与原默认值相同、行为不变）。
+3. 验收：`~/.dsh/web.log` 出现
+   `[dsh-push-host] relay ready host=vm1 topic=dsh poll=3000ms`；
+   `GET /answer/pending?host=vm1`（带自己的 token）回 `{"ok":true,"items":[]}`。
+
+### 修法二：插件 0.7.20 —— 让「推通知」不再被「能不能答」绑架
+- `onRequest()` 的第一道闸从 `this.enabled` 换成 `this.pushEnabled`：
+  **队列不通也要推**，否则用户看到的就是「一条通知都没有」。
+- `claimForeground` 那条等待路径仍然要求 `queueEnabled`（手机答不了就别阻塞本轮）。
+- `questionBody()` 在没有队列时**不给** `📱 作答:` 链接（点了也没用），只留 `#web`。
+- `pollOnce()` 收到 401 时打一条一次性提示：
+  `answer queue rejected (401): host/hostToken mismatch - credentials copied from another machine?`
+- 回归测试 3 条（`plugin-selftest.mjs`，共 **170/170**）：无队列时仍推通知 / 不带作答链接 / 不向中继登记。
+
+### 教训
+**凭据是「整份可复制」的，这就是它最危险的属性。** 把 `credentials.json` 抄到第二台机器
+以后，push 侧（topic + writeToken）照常工作，只有作答队列会因为 `host`/`hostToken` 不匹配
+而失效——而旧代码把「失效」实现成了「静默丢弃」。判据要建立在**能看到的日志**上：
+`relay ready host=…` 这一行在就说明队列开着，不在就只有推送。

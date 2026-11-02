@@ -315,6 +315,8 @@ class PushHost {
     this.pollArmed = false
     /** Last poll's callId set, so the queue line is printed only when it changes. */
     this.lastQueue = ''
+    /** One-shot actionable hint when the relay rejects our host token (401). */
+    this.queueHint = false
   }
 
   /**
@@ -430,7 +432,10 @@ class PushHost {
   onRequest(request, next) {
     const questions = Array.isArray(request?.questions) ? request.questions : []
     if (questions.length === 0) return next()
-    if (!this.enabled || this.config.pushQuestions !== true) return next()
+    // v0.7.20: a notification only needs pushEnabled; a missing answer queue must not
+    // swallow the message (2026-11-02 VM1: credentials without host -> queueEnabled false
+    // -> the question was dropped silently and the phone showed nothing at all).
+    if (!this.pushEnabled || this.config.pushQuestions !== true) return next()
 
     const callId = request.wait?.callId ?? 'pq-' + randomUUID()
     const agentId = request.agent?.id ?? ''
@@ -438,7 +443,7 @@ class PushHost {
     const timed = request.wait?.timed === true
     void this.announce({ callId, agentId, sessionId, timed, questions })
 
-    if (this.config.claimForeground !== true) return next()
+    if (this.config.claimForeground !== true || !this.queueEnabled) return next()
     return this.firstOf([this.hold(callId, request), Promise.resolve().then(() => next())], request.signal, callId)
   }
 
@@ -474,13 +479,17 @@ class PushHost {
         'Switch tool-ask-user to mode: timed to make phone answering work for late answers.',
       )
     }
-    try {
-      const result = await this.relay.register({ callId, agentId, questions: registered, ttl: 86400 })
-      // Log the success too: without a positive line, "the phone can answer this" is only visible
-      // as the *absence* of the 401 line, which is exactly how tonight's 401 hid in plain sight.
-      this.log('register ' + callId + ' -> HTTP ' + String(result.status))
-    } catch (error) {
-      this.log('register failed for ' + callId + ': ' + String(error?.message ?? error))
+    if (!this.queueEnabled) {
+      this.log('answer queue off: ' + callId + ' pushed as notification only (answer in the web UI)')
+    } else {
+      try {
+        const result = await this.relay.register({ callId, agentId, questions: registered, ttl: 86400 })
+        // Log the success too: without a positive line, "the phone can answer this" is only visible
+        // as the *absence* of the 401 line, which is exactly how tonight's 401 hid in plain sight.
+        this.log('register ' + callId + ' -> HTTP ' + String(result.status))
+      } catch (error) {
+        this.log('register failed for ' + callId + ': ' + String(error?.message ?? error))
+      }
     }
     try {
       await this.relay.push({
@@ -498,7 +507,8 @@ class PushHost {
     const first = questions[0] ?? { id: 'q0', question: '', options: [] }
     const labels = (first.options ?? []).filter((label) => typeof label === 'string')
     let body = (first.question || 'DSH 正在等你选择') + (labels.length > 0 ? '\n→ ' + labels.slice(0, 3).join(' / ') : '')
-    body += '\n📱 作答: ' + this.answerUrl(callId)
+    // 没有作答队列时不要给一个点了也没用的作答链接——只留 #web，让用户在网页里选。
+    if (this.queueEnabled) body += '\n📱 作答: ' + this.answerUrl(callId)
     body += '\n#qid ' + first.id
     if (
       questions.length === 1 &&
@@ -737,7 +747,12 @@ class PushHost {
         }
       }
     } catch (error) {
-      this.log('poll failed: ' + String(error?.message ?? error))
+      const message = String(error?.message ?? error)
+      if (message.indexOf('401') >= 0 && this.queueHint !== true) {
+        this.queueHint = true
+        this.log('answer queue rejected (401): host/hostToken mismatch - credentials copied from another machine? re-run the one-click enrollment')
+      }
+      this.log('poll failed: ' + message)
     } finally {
       this.polling = false
     }

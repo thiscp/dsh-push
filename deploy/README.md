@@ -19,6 +19,8 @@
 | `answer-relay.py` | `/usr/local/bin/` | 公网作答页 :2587：`/answer/register`（hook 注册）、`/answer/<callId>`（H5）、`/answer/<callId>/json`（App 快答）、`/answer/submit` → 经 Tailscale 转发工作机桥接 |
 | `answer-relay.service` | `/etc/systemd/system/` | `systemctl enable --now answer-relay` |
 | `edge-http.conf` | `/root/edge/conf.d/` | 边缘 nginx（Docker `edge` 容器，host 网络）：ntfy.cpyh.xyz 反代 + `/answer` → 2587 + `/dl/` → `/var/www/certbot/dl/`（APK 发布）。**conf.d 是目录挂载：改完 `docker exec edge nginx -t && docker exec edge nginx -s reload`，不要 recreate** |
+| `blog-dl-sync.py` | `/usr/local/bin/` | 博客两个下载按钮的**自愈**：npm `dist-tags.latest` → `/srv/blog/dl/dsh-push-host-latest.tgz`（顺带存一份 `dsh-push-host-<ver>.tgz`），`/var/www/certbot/dl/dsh-push.apk` → `/srv/blog/dl/dsh-push-latest.apk`。先比 sha1 / sha256，不同才动；写同目录临时文件再 `os.replace`，读者不会看到半个文件。日志 `/var/log/blog-dl-sync.log`（自剪 2000 行） |
+| `blog-dl-sync.cron` | `/etc/cron.d/blog-dl-sync` | `17 * * * * root /usr/local/bin/blog-dl-sync.py`。**为什么要它**：发布脚本里的镜像是旁路步骤（`-SkipBlog`、手跑 `npm publish`、没人读的 WARN 都会漏），而页面改成 latest-only 之后没有版本号可对照 ⇒ 漂移看不见。2026-11-02 实测：博客在发插件 0.7.10 / App 1.34.5，npm 已是 0.7.19、线上已是 1.34.6 |
 
 凭据文件（不入库）：`/etc/answer-relay/regtoken`、`/etc/answer-relay/bridgetoken`（600）、`/root/ntfy/dshbot.password`。
 
