@@ -141,8 +141,12 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
     },
   )
   await tick()
-  check('default mode returns next() (Web UI keeps foreground answering)', returned === downstream)
-  check('next() invoked exactly once', nextCalled === 1, 'calls=' + String(nextCalled))
+  // v0.7.24: 默认就该「手机能答」——前台由插件持有，Web UI 并行竞速（谁先答谁赢）。
+  check(
+    'default mode holds the foreground so the phone can answer',
+    returned !== downstream && typeof returned?.then === 'function',
+  )
+  check('next() still invoked exactly once (Web UI keeps racing)', nextCalled === 1, 'calls=' + String(nextCalled))
 
   check(
     'question registered with hostId + relay vocabulary',
@@ -165,11 +169,35 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   check('one notification per question (dedupe)', calls.push.length === 1, 'pushes=' + String(calls.push.length))
 }
 
-// ── 2. legacy-mode question (no timed wait): the answer cannot land, and we say so ──────
+// ── 1b. pre-execute 阶段没有 timeout 参数：timed 未知，绝不能判成 legacy ─────────────
 {
   reset()
   const { ctx, state } = makeCtx()
-  apply(ctx, { ...TOKENS })
+  apply(ctx, { ...TOKENS, webName: 'win-test', webLog: join(tmpdir(), 'dsh-push-selftest-no-web.log') })
+  const pre = state.listeners.get('tools/pre-execute')
+  check('pre-execute listener registered', typeof pre === 'function')
+  pre(
+    {
+      callId: 'pre-1',
+      // 关键：模型没传 timeout。timed 工具用自己的 config.timeout，这不是 legacy 的证据。
+      arguments: { questions: [question()] },
+      agent: { id: 'ag1', session: { id: 'session-abcdefgh' } },
+    },
+    () => undefined,
+  )
+  await tick()
+  const preBody = String(calls.push.at(-1)?.message ?? '')
+  check('pre-execute (timed unknown) still carries the answer link', preBody.includes('📱 作答:'), preBody)
+  check('pre-execute (timed unknown) does not claim phone answering is off', !preBody.includes('本题未开手机作答'), preBody)
+}
+
+// ── 2. legacy-mode question **with claimForeground turned off**: the answer cannot land ──
+// （v0.7.24 起 default 是「持有前台」，那种情况下 legacy 也能答，见 §6b；
+//  这一节保留的是显式关掉 claimForeground 时的降级行为。）
+{
+  reset()
+  const { ctx, state } = makeCtx()
+  apply(ctx, { ...TOKENS, claimForeground: false })
   state.listeners.get('user-questions/request')(
     { questions: [question()], wait: { callId: 'legacy-1' }, agent: { id: 'ag1', session: { id: 's1' } } },
     () => undefined,
@@ -276,6 +304,36 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
     JSON.stringify(result),
   )
   check('claimForeground: answer acked', calls.ack.length === 1)
+}
+
+// ── 6b. 新用户默认预设（legacy 工具）也必须能在手机上答 ──────────────────────────────
+{
+  reset()
+  const { ctx, state } = makeCtx()
+  // 不传 claimForeground：走默认值（v0.7.24 起为 true），模拟新装用户。
+  apply(ctx, { ...TOKENS })
+  const settled = state.listeners.get('user-questions/request')(
+    // legacy：没有 wait（timed 工具才会给），这正是新用户默认预设的样子。
+    { questions: [question()], agent: { id: 'ag1', session: { id: 's-legacy' } } },
+    () => new Promise(() => {}), // 网页端不答
+  )
+  await tick()
+  const registeredId = String(calls.register.at(-1)?.callId ?? '')
+  check('legacy question is registered', registeredId.length > 0, registeredId)
+  const body = String(calls.push.at(-1)?.message ?? '')
+  check('legacy + held foreground still offers the answer link', body.includes('📱 作答:'), body)
+  check('legacy + held foreground still sends #opts for the phone buttons', body.includes('#opts '), body)
+  check('legacy + held foreground no longer claims phone answering is off', !body.includes('本题未开手机作答'), body)
+
+  pendingItems = [{ callId: registeredId, agentId: 'ag1', qids: ['q1'], answers: [{ id: 'q1', selected: ['second'] }] }]
+  await state.intervals[0].callback()
+  const result = await settled
+  await tick()
+  check(
+    'legacy: phone answer settles the held foreground request',
+    JSON.stringify(result) === JSON.stringify({ answers: [{ id: 'q1', selected: ['second'] }] }),
+    JSON.stringify(result),
+  )
 }
 
 // ── 7. an answer that arrives while the question is still `open` is not thrown away ────
@@ -392,7 +450,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   const resolved = resolveConfig({ host: 'test1', pollIntervalMs: '5000', pushQuestions: 'false' })
   check('defaults applied', resolved.topic === 'dsh' && resolved.relayBase === 'https://ntfy.cpyh.xyz')
   check('types coerced from YAML-ish strings', resolved.pollIntervalMs === 5000 && resolved.pushQuestions === false)
-  check('claimForeground defaults to off (notify layer never steals the turn)', resolved.claimForeground === false)
+  check('claimForeground defaults to on (phone answering works out of the box)', resolved.claimForeground === true)
 
   process.env.DSH_PUSH_HOST_TOKEN = 'hk_from_env'
   reset()

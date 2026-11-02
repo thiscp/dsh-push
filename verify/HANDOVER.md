@@ -4143,3 +4143,102 @@ except Exception as e:
 `plugin-selftest.mjs` **179/179**（timed 用例补 `timed: true`；legacy 用例新增 4 条：
 无作答链接、无 `#opts`、有「本题未开手机作答」、作答尝试会回推 `这道题手机上答不了`）。
 `selftest-pair` 59/59、`selftest-remote-bin` 21/21、`selftest-remote-status` 41/0 均未受影响。
+
+## §7.54 「设置里明明开了手机作答」：被 preset-ptc 盖掉了（插件 0.7.23，2026-11-02）
+
+**用户原话**（m131891）：「明明设置是开启了手机作答的，为什么还是说未开启呢，对话我也是新开的」。
+
+### 真因一：开关只改了 preset-standard 与根节点，新会话走的却是 ptc
+`node bin.js --dump-config --profile web` 里同一件事出现四次：
+
+| 位置 | 生效配置 |
+|---|---|
+| `preset-standard.plugins[tool-ask-user]` | `mode: timed` ✅（手机作答开关改的是这里） |
+| `preset-ptc.plugins[tool-ask-user]` | **无 config → legacy** ❌ |
+| 第三个 preset 的同名条目 | 无 config → legacy ❌ |
+| 根 `- id: tool-ask-user` | `mode: timed` ✅ |
+
+而 `agent-preset-registry` 是 `selectedDefault: ptc` ⇒ **新会话全部走 ptc ⇒ 全部 legacy**。
+手机作答开关（`ctx.configEditor.entries().find(row => row.options.id === 'tool-ask-user')`）只找得到
+**根节点那一条**，所以面板显示「已开启」，运行中的 ptc 会话却是 legacy。
+
+判据（一眼定性）：VM1 的 `~/.dsh/web.log` 里只有 `timed=false`、**从来没有**
+`timed corrected to true by the request waterfall`；同样的 grep 在笔电上有那行 ⇒ 笔电的标准会话是真的 timed。
+
+### 修法（VM1 已落地）
+patch 是 **config 整体替换**，所以要整段重写 `preset-ptc`：把 `--dump-config` 的 `preset-ptc`
+原样抄进 `cordis.patch.yml`，只在该 preset 的 `tool-ask-user` 上补
+
+```yaml
+      - id: tool-ask-user
+        name: '@deepseek-ai/dsh-tool-ask-user'
+        config:
+          mode: timed
+          timeout: 120
+```
+
+（备份 `cordis.patch.yml.bak-ptc-<epoch>`；复核方式：重跑 `--dump-config`，在 preset-ptc 段里 grep 到 `mode: timed`。）
+
+### 真因二：插件把「模型没传 timeout」当成 legacy（0.7.22 的误报）
+`onPreExecute` 里旧的判断是 `timed: typeof args.timeout === 'number' && args.timeout !== -1`
+——但 timed 工具用的是**自己的 config.timeout**，模型不传参数完全正常。于是每条提问在 pre-execute
+阶段都被判成 `timed=false`，推送立刻按 legacy 发出去（「本题未开手机作答」），
+等 waterfall 把它纠正成 true 时，**那条推送已经发出去了**。
+
+0.7.23 改成三态：`undefined = 未知（pre-execute）`、`true = timed`、`false = legacy 确认`。
+
+- `questionBody(..., timed)`：`phoneAnswerable = timed !== false`（未知按「能答」处理）。
+- `announce` 日志：`timed=unknown(pre-execute)`，只对 `timed === false` 打 legacy 提示。
+- `deliver()` 的拦截条件从 `known.timed !== true` 收紧成 `known.timed === false`。
+
+### 自测
+`plugin-selftest.mjs` **182/182**：新增「pre-execute 没有 timeout 参数时仍带作答链接、且不声称未开启」
+两条断言；legacy 用例仍断言无链接 / 无 `#opts` / 有「本题未开手机作答」/ 会回推「这道题手机上答不了」。
+
+### 尚未做的产品化（留给下一版）
+手机作答开关现在仍只改根节点。要让**新用户**开箱可用，开关（或插件启动时）必须：
+读取 `agent-preset-registry.selectedDefault` → 找到对应 `preset-<name>` 的 `tool-ask-user` →
+若 patch 里已有该 preset 的整段重写就补 config，若没有则明确告警「当前默认预设未被 patch 重写，
+手机作答对它无效」。否则「默认 ptc 的新用户」装完就是 legacy。
+
+## §7.55 「新用户装完是不是也会有这些 bug」：逐条审计（插件 0.7.24 / 0.7.25，2026-11-02）
+
+用户问（m132138）：「这次的验证通过了，确认一下新的用户安装不会出现这一系列的bug」。
+结论：**今晚踩到的每一条都不会在新装环境复现**，但有一条前置条件必须成立——跑过「一键开通 / 一键出码」，
+也就是中继真的发过 `hostToken`。下面是逐条判据。
+
+### 逐条：今晚的 bug → 新用户为什么碰不到
+
+| 今晚的故障 | 根因 | 新装后的状态 |
+|---|---|---|
+| 手机显示「通行证被拒(403)」 | 插件面板显示「已配置」但其实 token 与 topic 不配对；0.7.8 起改为启动时**真打一次** relay 校验 | 不变（真校验） |
+| 远程访问一直「隧道建立中…」 | 隧道失败从不回写设置行（0.7.11）+ 上游端口只看状态码（0.7.17 改**内容指纹**） | 不变 |
+| 作答不推送 | VM1 的 credentials 缺 `host`，`hostToken` 还是从笔电拷来的（0.7.20） | 新装由 enroll 现发 |
+| 同一道题推两遍 | `tools/pre-execute` 与 `user-questions/request` 两个入口各推一次（0.7.21 按内容去重） | 不变 |
+| 手机答了、网页收不到 | 默认走「事后投递」，而会话投影从不携带这道题（两边日志 `state=undefined`，笔电 `answered (continued)` = 0 次）；0.7.24 改默认**持有前台** | ✅ 默认即为持有前台 |
+| 设置里明明开了却报「未开启」 | 手机作答开关只改根节点，而默认预设 `ptc` 里的同名条目是 legacy（§7.54） | ✅ 0.7.25 起「持有前台」使 legacy 也能答 |
+| 新用户 legacy 预设收不到作答按钮 | `questionBody` 只按 `timed` 决定是否发 `📱 作答` 与 `#opts` | ✅ 0.7.25 起 `phoneAnswerable = timed !== false \|\| holdsForeground()` |
+
+### 两条 id 别名（0.7.25）
+同一个提问有两个 id：`tools/pre-execute` 自造的 `pq-<uuid>` 与 waterfall 的 `call_...:ptc:1`。
+`this.aliases` 双向指向、`hold()` 把同一个 waiter 挂到两个 key 上，所以答案无论按哪个 id 回来都能落到 waiter。
+
+### 唯一的真实前置：`host` + `hostToken`
+`resolveConfig({})` 在全新环境给出的默认是
+
+```
+claimForeground=true  pushQuestions=true  notifyTurns=true  echoAnswers=true
+pollIntervalMs=3000   relayBase=https://ntfy.cpyh.xyz  topic=dsh
+host=""               hostToken=""
+```
+
+`host` / `hostToken` 为空时：推送照常（`pushEnabled` 只看 relay/topic/token），但**手机作答关着**，
+面板写「未开通：推送可用，手机作答需要先一键开通」，不再静默。
+只要走「一键开通 / 一键出码」，enroll 一次性返回 `topic + readToken/writeToken + hostToken`，两个都齐。
+另：0.7.21 起有 `host` 但 `hostToken` 为空时会用 `regToken` **自动补发一次**（VM1 今晚就是靠它自愈的）。
+
+### 证据
+- 在 VM1 上从 npm 装 0.7.25 后，把打包产物自带的 `plugin-selftest.mjs` 拷进 `node_modules/dsh-push-host/` 直接跑：
+  **187/187**（证明发布出来的 tarball 本身行为正确，不只是工作副本）。
+- `selftest-pair` 59/59、`selftest-remote-bin` 21/21、`selftest-remote-status` 41/41。
+- VM1 重启日志出现 `claimForeground=on`。

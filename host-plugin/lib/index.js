@@ -90,7 +90,7 @@ const DEFAULTS = {
   pushQuestions: true,
   notifyTurns: true,
   echoAnswers: true,
-  claimForeground: false,
+  claimForeground: true,
   log: true,
   // 远程访问（v0.4.0）：默认关闭，关着的时候整条链路是惰性的（不装 cloudflared 也不报错）。
   // remoteSecret 就是用户手里那条 30 天链接里的口令；remotePort=0 表示让系统随便挑个空闲端口。
@@ -149,10 +149,17 @@ export const Config = z.object({
   /** Send the silent `#ans` echo once an answer is delivered (clears the phone card). */
   echoAnswers: z.boolean().default(true),
   /**
-   * Opt-in: hold the foreground waterfall open and race the phone against the Web UI.
-   * Off by default — the Web UI owns foreground answering (see the module doc).
+   * Hold the foreground waterfall open and race the phone against the Web UI.
+   *
+   * v0.7.24 (2026-11-02): default flipped false -> true. With it off, a phone answer has to be
+   * applied *late* through `ctx.userQuestions.answer()`, which only accepts a question the
+   * session projection marks `continued`. On VM1 and on the laptop that projection never carried
+   * the question (`state=undefined` in both logs, 12 deferrals on the laptop), so every phone
+   * answer was queued, retried forever and never landed. Holding the foreground instead returns
+   * the phone's answers straight to the waiting tool call, with the Web UI still racing in
+   * parallel — whoever answers first wins.
    */
-  claimForeground: z.boolean().default(false),
+  claimForeground: z.boolean().default(true),
   /** Print diagnostics through ctx.logger + console. */
   log: z.boolean().default(true),
   /**
@@ -315,6 +322,12 @@ class PushHost {
     })
     /** callIds whose foreground waterfall we hold (only when claimForeground). */
     this.waiters = new Map()
+    /**
+     * v0.7.24: `pq-<uuid>` (tools/pre-execute) -> the real `call_...` id the same question got
+     * from the `user-questions/request` waterfall. Each entry point registers its own id with the
+     * relay, so a phone answer can arrive under either one; translate before looking for a waiter.
+     */
+    this.aliases = new Map()
     /** callId → { questions (relay shape), timed, ts, echoed }. */
     this.questions = new Map()
     /** `sessionId:turn` → timestamp, so one turn pushes once (the Stop-hook dedupe). */
@@ -330,6 +343,8 @@ class PushHost {
     this.lastQueue = ''
     /** v0.7.21: content signature -> timestamp, so one question cannot be pushed twice. */
     this.announcedByContent = new Map()
+    /** v0.7.24: content signature -> the real `call_...` id that owns it (never a `pq-` guess). */
+    this.ownerBySignature = new Map()
     /** v0.7.21: guard so the host-token self-heal runs once at a time. */
     this.healing = false
     /** One-shot actionable hint when the relay rejects our host token (401). */
@@ -532,6 +547,18 @@ class PushHost {
     const signature = questionSignature(sessionId, questions)
     const nowMs = Date.now()
     const seenAt = this.announcedByContent.get(signature)
+    // v0.7.24: whichever entry point announced this question first, make the two ids point at
+    // each other so a phone answer lands on the one that holds the waiter.
+    const owner = this.ownerBySignature.get(signature)
+    if (owner !== undefined && owner !== callId) {
+      // 两个入口会各报一个 id（`tools/pre-execute` 的 pq- 与 waterfall 的真实 call_...）；
+      // 后到的那个一律指向先到的，waiter 与答案就都能对上。
+      this.aliases.set(callId, owner)
+      this.aliases.set(owner, callId)
+      if (this.aliases.size > 400) this.aliases.clear()
+    } else if (owner === undefined) {
+      this.ownerBySignature.set(signature, callId)
+    }
     // Only the `pq-<uuid>` fallback id is dropped: a real `call_...` id is always announced,
     // because two genuinely different questions can share text and options.
     const guessedId = String(callId).startsWith('pq-')
@@ -568,12 +595,15 @@ class PushHost {
     this.sweep()
     this.questions.set(callId, { questions: registered, timed, ts: now, echoed: false })
     this.log(
-      'question ' + callId + ' agent=' + (agentId || '(none)') + ' timed=' + String(timed) +
+      'question ' + callId + ' agent=' + (agentId || '(none)') +
+      ' timed=' + (timed === undefined ? 'unknown(pre-execute)' : String(timed)) +
       ' q=' + JSON.stringify(registered.map((question) => question.id)),
     )
-    if (!timed) {
+    if (timed === false) {
       this.log(
-        'note: ' + callId + ' has no timed wait, so it never enters the session projection — ' +
+        'note: ' + callId + ' has no timed wait; '
+        + (this.holdsForeground() ? 'holding the foreground instead, so phone answers still land — '
+          : 'it never enters the session projection — ') +
         'a phone answer cannot be applied to it (only the Web UI can answer). ' +
         'Switch tool-ask-user to mode: timed to make phone answering work for late answers.',
       )
@@ -601,6 +631,11 @@ class PushHost {
     }
   }
 
+  /** 手机答案能不能落进这次提问：要么工具是 timed，要么前台由我们持有（claimForeground）。 */
+  holdsForeground() {
+    return this.config.claimForeground === true && this.queueEnabled
+  }
+
   /**
    * The phone renders this body: question, options, answer link, then machine trailers.
    *
@@ -613,7 +648,10 @@ class PushHost {
     const first = questions[0] ?? { id: 'q0', question: '', options: [] }
     const labels = (first.options ?? []).filter((label) => typeof label === 'string')
     let body = (first.question || 'DSH 正在等你选择') + (labels.length > 0 ? '\n→ ' + labels.slice(0, 3).join(' / ') : '')
-    const phoneAnswerable = timed === true
+    // v0.7.25: 新用户默认预设（ptc/standard 里的 legacy 条目）没有 timed，但这个插件现在默认
+    // 自己持有前台（claimForeground），答案能直接作为工具返回值交回去 —— 所以「能不能在手机上答」
+    // 不能再只看 timed。否则新用户收到的卡片既没有 `📱 作答` 也没有 `#opts`，点上没有任何按钮。
+    const phoneAnswerable = timed !== false || this.holdsForeground()
     if (!phoneAnswerable) {
       body += '\n（本题未开手机作答，请到 DSH 网页里选）'
     } else if (this.queueEnabled) {
@@ -703,9 +741,12 @@ class PushHost {
           callId,
           agentId: String(agent?.id ?? ''),
           sessionId: String(agent?.session?.header?.id ?? ''),
-          // The tool is the only place the timeout argument is visible before the wait opens;
-          // `-1` is the tool's "block forever" sentinel, anything else asks `askTimed`.
-          timed: typeof args.timeout === 'number' && args.timeout !== -1,
+          // Pre-execute 阶段**无从得知**真实变体：timed 工具用的是它自己的 config.timeout，
+          // 模型不传 `timeout` 参数完全正常。旧代码把「没传 timeout」当成 legacy，于是每条
+          // 提问都被判成答不了（发出去就是「本题未开手机作答」），而 waterfall 随后把它纠正
+          // 成 true 也救不回已经发出去的那条推送。所以这里给 undefined = 未知，
+          // 由 questionBody 按「未知=可以答」处理，等 waterfall 给出权威的 true/false。
+          timed: typeof args.timeout === 'number' ? args.timeout !== -1 : undefined,
         }
         if (Array.isArray(args.questions) && args.questions.length > 0) {
           void this.announce({ ...common, questions: args.questions })
@@ -785,11 +826,16 @@ class PushHost {
     const promise = new Promise((resolve) => {
       resolvePhone = resolve
     })
-    this.waiters.set(callId, {
+    const waiter = {
       resolve: (answers) => resolvePhone({ answers }),
       agent: request.agent,
       since: Date.now(),
-    })
+    }
+    this.waiters.set(callId, waiter)
+    // v0.7.25: the answer may come back under the sibling id (pq-<uuid> vs call_...), so keep the
+    // same waiter reachable from both.
+    const sibling = this.aliases.get(callId)
+    if (sibling !== undefined && sibling !== callId) this.waiters.set(sibling, waiter)
     return promise
   }
 
@@ -882,19 +928,26 @@ class PushHost {
     // throws instead of returning, and the throw escapes as an unhandled rejection. Bail out so
     // the relay keeps the answer queued for the replacement fiber's next tick.
     if (!fiberIsActive(this.ctx)) throw new Error('fiber inactive; keeping the answer queued')
-    const answers = this.padAnswers(callId, item)
+    // v0.7.24: an answer can arrive under the `pq-<uuid>` guess while the waiter sits on the real
+    // `call_...` id (or the other way round); the alias map bridges them.
+    const targetId = this.aliases.get(callId) ?? callId
+    const answers = this.padAnswers(targetId, item)
 
-    const waiter = this.waiters.get(callId)
+    const waiter = this.waiters.get(targetId)
     if (waiter !== undefined) {
+      this.waiters.delete(targetId)
       this.waiters.delete(callId)
+      for (const [key, value] of this.waiters) {
+        if (value === waiter) this.waiters.delete(key)
+      }
       waiter.resolve(answers)
-      this.log('answered (foreground) ' + callId)
+      this.log('answered (foreground) ' + callId + (targetId === callId ? '' : ' -> ' + targetId))
       await this.echo(callId, answers)
       return
     }
 
-    const known = this.questions.get(callId)
-    if (known !== undefined && known.timed !== true) {
+    const known = this.questions.get(targetId) ?? this.questions.get(callId)
+    if (known !== undefined && known.timed === false) {
       this.log(
         'cannot apply the phone answer to ' + callId + ': the question has no timed wait, ' +
         'so the agent never gave up the foreground and there is nothing left to answer.',
@@ -923,7 +976,7 @@ class PushHost {
     }
     let accepted
     try {
-      accepted = this.ctx.userQuestions.answer(agent, callId, { answers })
+      accepted = this.ctx.userQuestions.answer(agent, targetId, { answers })
     } catch (error) {
       if (error?.code === 'CALLER_NOT_LIVE' || error?.code === 'DELEGATED_CALLER') {
         this.complain(callId, 'agent not answerable (' + String(error.code) + '); keeping the answer queued')
@@ -936,7 +989,7 @@ class PushHost {
       // `answer()` only accepts a *continued* question (the projection's own filter). A phone
       // answer that lands while the foreground window is still open must NOT be thrown away:
       // hold it in the relay queue and retry — it becomes answerable the moment the wait ends.
-      const view = this.questionState(agent, callId)
+      const view = this.questionState(agent, targetId)
       if (view.settled === true) {
         this.log('question ' + callId + ' is settled; dropping the queued answer')
         return
