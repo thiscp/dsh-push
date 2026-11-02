@@ -4075,3 +4075,71 @@ except Exception as e:
 ### 自测
 `plugin-selftest.mjs` 175/175（新增 5 条：真实+p q- 只推一条、真实 id 不被内容去重拦、
 缺 hostToken 自动补发、补到后轮询装上、面板状态写入）。
+
+## §7.53 「手机上答了，设备网页没反应」：这道题根本没开手机作答（插件 0.7.22，2026-11-02）
+
+**用户原话**（m131736）：「刚刚还是在vm1上测试，提问的推送过来了，我在手机上作答了，但是设备网页上实际没收到我的作答呢」。
+
+### 判据（一条 grep 就能定性）
+`~/.dsh/web.log` 里同一道题两行：
+
+```
+[dsh-push-host] question call_25658da6f39048c886e5c1a5:ptc:1 agent=… timed=false q=["choice-4"]
+[dsh-push-host] cannot apply the phone answer to call_25658da6…: the question has no timed wait,
+                so the agent never gave up the foreground and there is nothing left to answer.
+```
+
+`timed=false` 的含义：`ask_user_question` 跑在 **legacy** 模式，工具**不会放弃前台**、也不进会话投影，
+所以「手机答案」在设备侧没有落点——只有 Web UI 里那个还没被回答的弹窗能接。答案确实到了中继、
+插件也确实取到了，只是无处可投，被 `deliver()` 直接 return 掉了。
+
+### 为什么用户会白点一次
+0.7.21 及以前，`questionBody()` 只看「作答队列开没开」（`queueEnabled`），不看 `timed`：
+于是 legacy 题的推送照样带 `📱 作答:` 链接和 `#opts`，App 照样渲染成三个可点按钮。用户点了、
+中继也收到了，然后静默消失——这就是「答了个寂寞」。
+
+### 修法（三层，缺一不可）
+1. **插件 0.7.22**：`questionBody(callId, questions, sessionId, timed)`。
+   `timed !== true` → 不发作答链接、不发 `#opts`，改一行「（本题未开手机作答，请到 DSH 网页里选）」。
+2. **插件 0.7.22**：`deliver()` 命中 legacy 题时，回推一条 `这道题手机上答不了` + 怎么修
+   （`known.unreachableNotified` 保证每题只回一次，不刷屏）。
+3. **设备侧配置**：把提问工具真的切到 timed。VM1 的
+   `~/.dsh/profiles/web/cordis.patch.yml` 里 `- id: tool-ask-user`（在 `preset-standard.plugins` 内）
+   原本**没有 config**，等于 legacy。已补：
+
+   ```yaml
+         - id: tool-ask-user
+           name: '@deepseek-ai/dsh-tool-ask-user'
+           config:
+             mode: timed
+             timeout: 120
+   ```
+
+   （备份 `cordis.patch.yml.bak-timed-<epoch>`）。注意文件顶部还有一条 `- insert:` 形态的
+   tool-ask-user（也带 mode: timed）——两条并存时，preset 里那条没 config 的会赢，别只改 insert。
+
+### ★ 模式钉在会话创建时
+切到 timed **只对新会话生效**；已开的老会话保持 legacy。所以：「启用 → **开一个新对话** → 再问一次」。
+这也是用户「配置里已经开了作答」却仍失败的原因——他开的是老会话。
+
+### 运维硬事实（本轮踩到）
+- VM1 装插件必须 `npm i dsh-push-host@x --legacy-peer-deps`，否则 ERESOLVE 直接失败。
+- npm 发布后有 **30–60 秒** registry 传播延迟：`npm view` 已经看到新版本之前，`npm i` 会
+  `notarget No matching version found`。判据是先在目标机上 `npm view <pkg> version` 看到新号再装。
+- 重启 VM1 的 web 用原样的 wrapper 形态（否则 `exec: dsh-web: 未找到`）：
+
+  ```
+  cd ~ && setsid bash -c 'tail -f /dev/null | exec "$@"' dsh-web node \
+    /home/user/.npm/_npx/b5e10b118beccd0f/node_modules/@deepseek-ai/dsh/lib/bin.js \
+    --patch /home/user/.dsh/net.patch.yml --profile web --no-open --port 3081 \
+    --trusted-host <tailnet-vm1> --trusted-host 172.17.0.1 --trusted-host 192.168.12.129 \
+    >> ~/.dsh/web.log 2>&1 < /dev/null &
+  ```
+
+  这个 `setsid` 形态会让 `ssh 'bash -s'` 的会话被占住不回（ssh 等不到通道关闭）——**命令要拆开跑**，
+  或者用 `ssh -f`，不要在同一条 ssh 里既起守护进程又等它打印结果。
+
+### 自测
+`plugin-selftest.mjs` **179/179**（timed 用例补 `timed: true`；legacy 用例新增 4 条：
+无作答链接、无 `#opts`、有「本题未开手机作答」、作答尝试会回推 `这道题手机上答不了`）。
+`selftest-pair` 59/59、`selftest-remote-bin` 21/21、`selftest-remote-status` 41/0 均未受影响。

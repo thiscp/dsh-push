@@ -593,7 +593,7 @@ class PushHost {
     try {
       await this.relay.push({
         title: 'DSH 等你选择 [' + String(sessionId).slice(-8) + ']',
-        body: this.questionBody(callId, registered, sessionId),
+        body: this.questionBody(callId, registered, sessionId, timed),
         priority: 4,
       })
     } catch (error) {
@@ -601,15 +601,29 @@ class PushHost {
     }
   }
 
-  /** The phone renders this body: question, options, answer link, then machine trailers. */
-  questionBody(callId, questions, sessionId = '') {
+  /**
+   * The phone renders this body: question, options, answer link, then machine trailers.
+   *
+   * v0.7.22: `timed` 决定**能不能在手机上答**。`timed !== true` 时这个题在工具侧根本没有
+   * 让出前台，手机答案无处可落（旧版照发 `📱 作答:` 与 `#opts`，用户点完什么都不会发生，
+   * 设备网页上也永远收不到——2026-11-02 VM1 上就是这么「答了个寂寞」）。所以此时不发作答
+   * 链接、不发给 App 渲染按钮的 `#opts`，改成一句明说「去网页答」。
+   */
+  questionBody(callId, questions, sessionId = '', timed = true) {
     const first = questions[0] ?? { id: 'q0', question: '', options: [] }
     const labels = (first.options ?? []).filter((label) => typeof label === 'string')
     let body = (first.question || 'DSH 正在等你选择') + (labels.length > 0 ? '\n→ ' + labels.slice(0, 3).join(' / ') : '')
-    // 没有作答队列时不要给一个点了也没用的作答链接——只留 #web，让用户在网页里选。
-    if (this.queueEnabled) body += '\n📱 作答: ' + this.answerUrl(callId)
+    const phoneAnswerable = timed === true
+    if (!phoneAnswerable) {
+      body += '\n（本题未开手机作答，请到 DSH 网页里选）'
+    } else if (this.queueEnabled) {
+      // 没有作答队列时不要给一个点了也没用的作答链接——只留 #web，让用户在网页里选。
+      body += '\n📱 作答: ' + this.answerUrl(callId)
+    }
     body += '\n#qid ' + first.id
     if (
+      phoneAnswerable &&
+      this.queueEnabled &&
       questions.length === 1 &&
       labels.length >= 2 &&
       labels.length <= 3 &&
@@ -885,6 +899,20 @@ class PushHost {
         'cannot apply the phone answer to ' + callId + ': the question has no timed wait, ' +
         'so the agent never gave up the foreground and there is nothing left to answer.',
       )
+      // v0.7.22：别让用户在手机上白点一次。回一条说明，并把「怎么修」一句话讲清。
+      if (known.unreachableNotified !== true) {
+        known.unreachableNotified = true
+        try {
+          await this.relay.push({
+            title: '这道题手机上答不了',
+            body: '当前会话的提问工具没开「手机作答」（timed），答案无处可落，请到 DSH 网页里选。\n' +
+              '要让手机能答：设置 → 手机作答模式 → 启用，然后开一个新对话再试（老对话保持旧行为）。',
+            priority: 3,
+          })
+        } catch (error) {
+          this.log('notice push failed for ' + callId + ': ' + String(error?.message ?? error))
+        }
+      }
       return
     }
 

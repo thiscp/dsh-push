@@ -134,7 +134,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   let nextCalled = 0
   const downstream = { answers: [{ id: 'q1', selected: ['first'] }] }
   const returned = listener(
-    { questions: [question()], wait: { callId: 'call-1' }, agent: { id: 'ag1', session: { id: 'session-abcdefgh' } } },
+    { questions: [question()], wait: { callId: 'call-1', timed: true }, agent: { id: 'ag1', session: { id: 'session-abcdefgh' } } },
     () => {
       nextCalled++
       return downstream
@@ -180,6 +180,13 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   await tick()
   check('legacy question: answer acked away, not retried forever', calls.ack.length === 1 && calls.ack[0].callIds[0] === 'legacy-1', JSON.stringify(calls.ack))
   check('legacy question: userQuestions.answer never called', state.answers.length === 0)
+  // v0.7.22：legacy 题的推送里不给作答链接、不给 #opts，改一句明说「去网页答」
+  // calls.push[0] 是题目本身那条；at(-1) 会是「手机上答不了」的回执通知
+  const legacyBody = String(calls.push[0]?.message ?? '')
+  check('legacy question: no phone answer link', !legacyBody.includes('📱 作答:'), legacyBody)
+  check('legacy question: no #opts trailer', !legacyBody.includes('#opts'), legacyBody)
+  check('legacy question: says answer on the web instead', legacyBody.includes('本题未开手机作答'), legacyBody)
+  check('legacy answer attempt pings the phone back with the reason', String(calls.push.at(-1)?.title ?? '') === '这道题手机上答不了', JSON.stringify(calls.push.at(-1) ?? null))
 }
 
 // ── 3. timed question + live root agent: answer() with a padded batch ──────────────────
