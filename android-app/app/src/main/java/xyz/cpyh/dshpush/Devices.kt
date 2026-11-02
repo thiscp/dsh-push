@@ -202,6 +202,25 @@ object Devices {
                 if (idx < 0) idx = list.indexOfFirst { it.base.trimEnd('/') == b && it.topic == t }
             }
         }
+        // ④ v1.34.10：**改名后重扫不能长出新的一行**。
+        //    id 由 base|topic|机器名 派生，所以用户把「测试VM1」改成「VM1」再扫码时，
+        //    按 id 和按名字都找不到旧记录，于是新增一行 ⇒ 手机里同时挂着「测试VM1」和「VM1」
+        //    （2026-11-02 模拟器实测复现）。同一台机器的判据改用**网页地址的 host:port**：
+        //    名字可以改、token 每次重启都换，但 host:port 不变。
+        if (idx < 0) {
+            val origin = webOrigin(web)
+            if (origin.isNotEmpty()) {
+                idx = list.indexOfFirst {
+                    it.base.trimEnd('/') == b && it.topic == t && webOrigin(it.web) == origin
+                }
+            }
+            if (idx < 0 && origin.isEmpty()) {
+                // 载荷没带网页地址（老插件/手粘的串）：只有「同 base|topic 恰好一台」时才敢认，
+                // 多台时宁可新增，也不能把别人的记录改名。
+                val same = list.filter { it.base.trimEnd('/') == b && it.topic == t }
+                if (same.size == 1) idx = list.indexOf(same[0])
+            }
+        }
         if (idx >= 0) {
             val old = list[idx]
             // id 保持旧值不动：lastTs:<id> 游标、已读态都挂在它上面，换 id 等于把历史抹掉
@@ -211,6 +230,15 @@ object Devices {
                 web = web.ifBlank { old.web },
                 revoked = false,   // 重扫即恢复
             )
+            // 顺手把「改名时期长出来的重复行」清掉（同一台机器 = 同 base|topic|host:port）。
+            val keep = list[idx]
+            val keepOrigin = webOrigin(keep.web)
+            if (keepOrigin.isNotEmpty()) {
+                list.removeAll { other ->
+                    other.id != keep.id && other.base.trimEnd('/') == b && other.topic == t &&
+                        webOrigin(other.web) == keepOrigin
+                }
+            }
             save(ctx, list)
             return false
         }

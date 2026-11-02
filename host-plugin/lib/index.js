@@ -247,6 +247,18 @@ export const Config = z.object({
    * 不把二维码本体（几百字符的 base64）当常驻字段：只在点了才写，点完留着也不占地方。
    */
   pairSeq: z.string().default('').volatile(),
+  /**
+   * v0.7.38：机器名称的写入信道。
+   *
+   * 为什么不用设置面板直接写 `webName`：0.7.36/0.7.37 实测在真机上点了「保存名称」，
+   * 设置接口回成功、`pairSeq` 也落进了 cordis.patch.yml，**唯独 `webName` 没写进去**
+   * （VM1 的文件里始终是 测试VM1），于是二维码一直是旧名字。
+   * 所以改成：浏览器只写 volatile（这条路已验证会落盘、会热重启 fiber），真正的
+   * `webName` 由插件自己用 `ctx.configEditor.edit()` 写（这条路 tool-ask-user 一直在用）。
+   */
+  nameSeq: z.string().default('').volatile(),
+  /** 浏览器提交的机器名称（`nameSeq` 一变就按它重出二维码并落盘）。 */
+  nameText: z.string().default('').volatile(),
   /** 点阵尺寸（每边模块数，0 = 还没生成）。 */
   pairCount: z.number().step(1).min(0).max(200).default(0).volatile(),
   /** 点阵本体：行优先位图的 base64（深色=1）。浏览器半自己用 canvas 画。 */
@@ -2883,10 +2895,49 @@ export class PairBox {
    * `webName` 就是那个可编辑字段，App 1.34.9 起还会跟着 `#name` 热更新，不用重扫码。
    */
   pairName() {
+    // v0.7.38：浏览器刚提交、还没落盘的名字优先——否则用户点完保存，二维码里还是旧名字。
+    const live = String(this.read('nameText') || '').trim()
+    if (live) return live
     const r = this.resolved || {}
     const named = String(r.webName || '').trim() || String(r.host || '').trim()
     if (named) return named
     try { return String(hostname() || '').trim() } catch { return '' }
+  }
+
+  /**
+   * v0.7.38：把 volatile 里的机器名称写进插件自己的配置（`webName`）。
+   *
+   * 用 `ctx.configEditor.edit()` 而不是让浏览器 `scope.mutate`：后者在真机上回成功却写不进
+   * `webName`（见 schema 里 nameSeq 的注释）。写失败不影响本次会话——`pairName()` 仍然读
+   * `nameText`，二维码照样是新名字，只是重启后会退回旧值，并把原因打进日志。
+   */
+  persistName() {
+    const want = String(this.read('nameText') || '').trim().slice(0, 40)
+    if (!want) return
+    const have = String((this.resolved || {}).webName || '').trim()
+    const seq = String(this.read('nameSeq') || '').trim()
+    const saved = pairStore()[this.storeKey()] || {}
+    if (want === have || (seq !== '' && saved.nameDone === seq)) return
+    Promise.resolve().then(async () => {
+      try {
+        const editor = this.ctx ? this.ctx.configEditor : undefined
+        if (!editor) {
+          this.log('机器名称：宿主没给配置编辑器，本次会话内按 ' + want + ' 显示（未落盘）')
+          return
+        }
+        const entry = editor.entries().find((row) => row.options &&
+          (row.options.id === 'push-host' || row.options.name === 'dsh-push-host'))
+        if (entry === undefined) {
+          this.log('机器名称：设置里找不到本插件条目，本次会话内按 ' + want + ' 显示（未落盘）')
+          return
+        }
+        await editor.edit(entry, (current) => ({ ...(current || {}), webName: want }))
+        pairStore()[this.storeKey()] = { ...(pairStore()[this.storeKey()] || {}), nameDone: seq }
+        this.log('机器名称已写入配置：' + want)
+      } catch (error) {
+        this.log('机器名称写入失败：' + String((error && error.message) || error))
+      }
+    })
   }
 
   /** 生成一次二维码并把点阵镜像回 volatile（同步、无 IO 之外的重活）。 */
@@ -2894,6 +2945,8 @@ export class PairBox {
     if (this.busy) { this.scheduled = true; return }
     this.busy = true
     try {
+      // v0.7.38：先把刚提交的机器名称落盘（失败不影响本次出码，见 persistName）。
+      try { this.persistName() } catch { /* 落盘失败不该挡住出码 */ }
       const payload = this.payload()
       const web = this.webEntry()
       // 空载荷（relayBase/topic/token 都没配）也会拼出 `dshpush://v1?`：扫出来是个「什么都没配」

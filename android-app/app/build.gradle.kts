@@ -10,8 +10,8 @@ android {
         applicationId = "xyz.cpyh.dshpush"
         minSdk = 26
         targetSdk = 34
-        versionCode = 169
-        versionName = "1.34.9"
+        versionCode = 170
+        versionName = "1.34.10"
     }
     buildTypes {
         release {

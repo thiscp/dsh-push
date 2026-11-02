@@ -222,20 +222,46 @@ window.__ModuleLoader__.load({
 			const payload = text("pairText");
 			const done = text("pairDone");
 			const seq = text("pairSeq");
-			// v0.7.36：机器名称——口令全自动，名字是这个面板里唯一真正要人填的东西，
-			// 所以放在二维码正上方。写的是 `webName`，改动会让 fiber 重载 → 自动重出码 + 重发 `#name`。
-			const webName = text("webName");
+			// v0.7.38：面板显示的名字 = 浏览器刚提交的值（nameText）优先，其次才是已落盘的 webName。
+			const webName = text("nameText") || text("webName");
 			const [nameDraft, setNameDraft] = react.useState(webName);
+			// v0.7.37：保存结果必须看得见。0.7.36 保存成功后既没有提示、也不会重出二维码，
+			// 用户拿着旧码去扫，读到的自然还是旧名字。
+			const [nameNote, setNameNote] = react.useState("");
 			react.useEffect(() => {
 				setNameDraft(webName);
 			}, [webName]);
 			const saveName = () => {
 				const next = String(nameDraft || "").trim();
-				if (!writable || next === webName) return;
+				if (!writable) {
+					setNameNote("保存失败：当前设置是只读的（宿主没给写权限）");
+					return;
+				}
+				if (next === webName) {
+					setNameNote("名字没变");
+					return;
+				}
+				// `snapshot.revision` 是渲染那一刻的，点按钮时可能早已过期（设置页每改一项就 +1），
+				// 过期会被拒绝 —— 而 0.7.36 把拒绝也吞掉了。取当刻的 revision。
+				const live = (typeof scope.getSnapshot === "function" ? scope.getSnapshot() : null);
+				const rev = live && typeof live.revision === "number" ? live.revision : snapshot.revision;
+				setNameNote("保存中…");
 				Promise.resolve()
-					.then(() => scope.mutate([{ op: "set", path: ["webName"], value: next }], snapshot.revision))
-					.catch(() => { })
-					.then(() => notify());
+					// v0.7.38：只写 volatile（这条路在真机上验证过确实会落盘并热重启 fiber）。
+					// 真正的 `webName` 由插件自己用 ctx.configEditor.edit() 写——0.7.36/0.7.37 让
+					// 浏览器直接写 `webName` 时，接口回成功、pairSeq 也写进去了，唯独 webName 没变。
+					.then(() => scope.mutate([
+						{ op: "set", path: ["nameText"], value: next },
+						{ op: "set", path: ["nameSeq"], value: String(Date.now()) + "-nm" },
+						{ op: "set", path: ["pairSeq"], value: String(Date.now()) + "-nr" },
+					], rev))
+					.then(() => {
+						setNameNote("已保存：" + next + "，二维码已按新名字重出");
+						notify();
+					})
+					.catch((error) => {
+						setNameNote("保存失败：" + String((error && error.message) || error || "未知错误"));
+					});
 			};
 			/**
 			* v0.7.3：点按钮那一刻的 `pairStatus` 快照，用来判断「宿主有没有写回新结果」以提前解锁。
@@ -308,11 +334,12 @@ window.__ModuleLoader__.load({
 						style: { flex: "0 1 220px", padding: "4px 8px", borderRadius: 8, border: "1px solid currentColor", background: "transparent", color: "inherit", fontSize: 13 },
 					}),
 					react.createElement("button", {
-						type: "button", disabled: !writable || String(nameDraft || "").trim() === webName, onClick: saveName,
-						style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: (!writable || String(nameDraft || "").trim() === webName) ? 0.5 : 1 },
+						type: "button", disabled: String(nameDraft || "").trim() === webName, onClick: saveName,
+						style: { padding: "6px 12px", borderRadius: 8, border: "1px solid currentColor", opacity: String(nameDraft || "").trim() === webName ? 0.5 : 1 },
 					}, "保存名称")),
 				react.createElement("div", { style: { fontSize: 12, opacity: 0.55 } },
 					"手机里显示的就是这个名字。改完二维码会重新生成；已经配对过的手机也会跟着改名（App ≥ 1.34.9），不用重扫码。"),
+				nameNote ? react.createElement("div", { style: { fontSize: 12, opacity: nameNote.indexOf("失败") >= 0 ? 1 : 0.7, color: nameNote.indexOf("失败") >= 0 ? "#e05353" : "inherit" } }, nameNote) : null,
 				react.createElement("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
 					react.createElement("button", {
 						type: "button", disabled: !writable, onClick: generate,
