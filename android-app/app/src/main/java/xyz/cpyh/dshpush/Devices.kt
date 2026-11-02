@@ -250,6 +250,21 @@ object Devices {
     }
 
     /**
+     * 换通行证（v1.34.8）：插件重新开通（/enroll）后 topic 与 token 全换，手机还挂着旧的那套，
+     * 表现就是「那台设备突然 403、推送没了」。插件会往**旧 topic** 补发一条 `#sysmove`，
+     * 这里就地改掉这台设备的订阅，用户不必重新扫码。
+     */
+    fun updatePass(ctx: Context, id: String, topic: String, token: String) {
+        if (topic.isBlank() || token.isBlank()) return
+        val list = all(ctx).toMutableList()
+        val i = list.indexOfFirst { it.id == id }
+        if (i < 0) return
+        if (list[i].topic == topic && list[i].token == token) return
+        list[i] = list[i].copy(topic = topic, token = token)
+        save(ctx, list)
+    }
+
+    /**
      * 这条推送是哪台机器发的。认不出返回空串（调用方就不标注、不改 web）。
      *
      * ① `#name` trailer 精确/前后缀匹配（同一个 topic 下多台机器全靠它区分）；

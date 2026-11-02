@@ -23,6 +23,7 @@ import {
   passText,
   provisionCall,
   provisionNameSuggest,
+  resolvePluginConfig,
   provisionUrl,
   PassProvisioner,
   resolveConfig,
@@ -52,6 +53,8 @@ const tick = (ms = 15) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** Collect every relay call the plugin makes. */
 const calls = { push: [], register: [], ack: [], pending: 0 }
+/** 最后一条「真实」推送：跳过 v0.7.27 起 start() 会先发的 `#syslink` 上线广播。 */
+const lastRealPush = () => [...calls.push].reverse().find((p) => !String(p.message ?? '').startsWith('#syslink'))
 let pendingItems = []
 const reply = (status, json) => ({ status, text: async () => JSON.stringify(json) })
 globalThis.fetch = async (url, init = {}) => {
@@ -209,8 +212,9 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   check('legacy question: answer acked away, not retried forever', calls.ack.length === 1 && calls.ack[0].callIds[0] === 'legacy-1', JSON.stringify(calls.ack))
   check('legacy question: userQuestions.answer never called', state.answers.length === 0)
   // v0.7.22：legacy 题的推送里不给作答链接、不给 #opts，改一句明说「去网页答」
-  // calls.push[0] 是题目本身那条；at(-1) 会是「手机上答不了」的回执通知
-  const legacyBody = String(calls.push[0]?.message ?? '')
+  // v0.7.27 起组件启动时会先推一条 `#syslink`（网页入口续期），所以不能按位置取，
+  // 要按内容挑出这道题本身那条。
+  const legacyBody = String(calls.push.find((c) => !String(c?.message ?? '').startsWith('#syslink'))?.message ?? '')
   check('legacy question: no phone answer link', !legacyBody.includes('📱 作答:'), legacyBody)
   check('legacy question: no #opts trailer', !legacyBody.includes('#opts'), legacyBody)
   check('legacy question: says answer on the web instead', legacyBody.includes('本题未开手机作答'), legacyBody)
@@ -304,6 +308,32 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
     JSON.stringify(result),
   )
   check('claimForeground: answer acked', calls.ack.length === 1)
+}
+
+// ── 6a. v0.7.26: 只有 pre-execute 触发（waterfall 没来）也要持有前台 ─────────────────
+// 2026-11-02 工作 VM 实测：某些提问只有 pre-execute 那条 `call_…`，随后没有 `:ptc:1`，
+// 于是 hold() 从未建立，手机答完只能无限 "not answerable yet (state=undefined)"。
+{
+  reset()
+  const { ctx, state } = makeCtx()
+  apply(ctx, { ...TOKENS, claimForeground: true })
+  const settled = state.listeners.get('tools/pre-execute')(
+    {
+      callId: 'call_pre_only',
+      arguments: { questions: [question()] },
+      agent: { id: 'ag1', session: { id: 's-pre' } },
+    },
+    () => new Promise(() => {}), // 工具侧一直等，不会自己返回
+  )
+  await tick()
+  pendingItems = [{ callId: 'call_pre_only', agentId: 'ag1', qids: ['q1'], answers: [{ id: 'q1', selected: ['first'] }] }]
+  await state.intervals[0].callback()
+  const result = await settled
+  check(
+    'pre-execute alone still holds the foreground for the phone',
+    JSON.stringify(result) === JSON.stringify({ answers: [{ id: 'q1', selected: ['first'] }] }),
+    JSON.stringify(result),
+  )
 }
 
 // ── 6b. 新用户默认预设（legacy 工具）也必须能在手机上答 ──────────────────────────────
@@ -431,7 +461,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
 
   const before = calls.push.length
   state.listeners.get('user-questions/request')(
-    { questions: [question()], wait: { callId: 'call-pending', timed: true }, agent: { id: 'ag1', session: { id: 's1' } } },
+    { questions: [question({ id: 'q-pending', question: 'Pending one?' })], wait: { callId: 'call-pending', timed: true }, agent: { id: 'ag1', session: { id: 's1' } } },
     () => undefined,
   )
   await tick()
@@ -474,7 +504,8 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
     () => undefined,
   )
   await tick()
-  let body = String(calls.push.at(-1)?.message ?? '')
+  // v0.7.27：start() 会先推一条 `#syslink` 上线广播，取「最后一条真实推送」而不是 calls.push.at(-1)。
+  let body = String(lastRealPush()?.message ?? '')
   check('empty webBase: #web uses the freshest logged URL as-is', body.includes('\n#web http://100.0.0.9:3080/?token=NEWtok'), body)
 
   reset()
@@ -487,6 +518,27 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   await tick()
   body = String(calls.push.at(-1)?.message ?? '')
   check('webBase set: #web rehosted on the base with the freshest token', body.includes('\n#web http://<tailnet-windows>:3080/?token=NEWtok'), body)
+}
+
+// ── 11d. 上线即广播 #syslink（v0.7.27）────────────────────────────────────────
+// 为什么值得一条测试：手机上存的网页链接只对「本次宿主运行」有效，DSH 一重启就 401。
+// 修法是每次 relay ready 后推一条 `#syslink`，App 只更新链接、不入列表。它要是静默失效，
+// 表现就是用户又得重新扫码——和没修一样，所以必须钉住。
+{
+  const fixture = join(tmpdir(), 'dsh-push-selftest-syslink.log')
+  writeFileSync(fixture, 'dsh web: http://100.0.0.9:3080/?token=NEWtok\n', 'utf8')
+
+  reset()
+  const made = makeCtx()
+  // 生产里会先等 8 秒让 token 坐实（v0.7.32），自测把它调成 0 秒，否则这里要真睡 13 秒。
+  apply(made.ctx, { ...TOKENS, webLog: fixture, webBase: 'http://<tailnet-windows>:3080/', webName: '笔电', announceSettleMs: 0 })
+  await tick()
+  const sys = calls.push.find((c) => String(c?.message ?? '').startsWith('#syslink'))
+  const body = String(sys?.message ?? '')
+  check('startup announces #syslink', body.startsWith('#syslink'), body)
+  check('startup #syslink carries a fresh #web', body.includes('\n#web http://<tailnet-windows>:3080/?token=NEWtok'), body)
+  check('startup #syslink carries #name', /\n#name \S/.test(body), body)
+  check('startup #syslink is silent (priority 1)', Number(sys?.priority) === 1, String(sys?.priority))
 }
 
 // ── 11b. #web carries the source conversation as a URL fragment (v0.2.2) ─────────────
@@ -511,7 +563,7 @@ const TOKENS = { host: 'test1', hostToken: 'hk_x', regToken: 'rt', ntfyToken: 't
   apply(made.ctx, { ...TOKENS, webLog: fixture, notifyTurns: true })
   made.state.listeners.get('agent/turn-stopping')({ turn: 1, agent: { session: { header: { id: SID, cwd: '/srv/app' } } } })
   await tick()
-  body = String(calls.push.at(-1)?.message ?? '')
+  body = String(lastRealPush()?.message ?? '')
   check('turn-end #web carries the session id as a fragment', body.includes('\n#web http://100.0.0.9:3080/?token=NEWtok#' + SID), body)
 
   reset()
@@ -1003,6 +1055,21 @@ panel.publishDefault()
 const outOfSync = CREDENTIAL_CONFIG_KEYS.filter((key) => !Object.prototype.hasOwnProperty.call(CREDENTIAL_KEYS, key))
 check('credentials: every CREDENTIAL_CONFIG_KEYS entry is actually readable (two lists in sync)',
   outOfSync.length === 0, 'missing from CREDENTIAL_KEYS: ' + outOfSync.join(', '))
+// 2026-11-02：`topic` 的 schema 默认值是非空的 'dsh'，而 explicit 只丢掉 '' ⇒ 默认值冒充「用户显式配置」，
+// 把凭据文件里自助开通拿到的 topic 顶掉。VM1 上真实发生过：creds 里 topic=u-4a2b2af2、日志却是 topic=dsh，
+// 那台机器的推送全发进了别人的主题（手机端表现为「推送没了」）。
+const topicFromFile = resolvePluginConfig(
+  { topic: 'dsh', credentialsFile: 'C:/tmp/selftest-creds.json' },
+  { env: {}, readFile: () => JSON.stringify({ v: '1', topic: 'u-enrolled' }) },
+)
+check('credentials: 只填了默认值的 topic 不会顶掉凭据文件里的 topic',
+  topicFromFile.resolved.topic === 'u-enrolled', 'topic=' + topicFromFile.resolved.topic)
+const topicExplicitlySet = resolvePluginConfig(
+  { topic: 'mine', credentialsFile: 'C:/tmp/selftest-creds.json' },
+  { env: {}, readFile: () => JSON.stringify({ v: '1', topic: 'u-enrolled' }) },
+)
+check('credentials: 显式写的非默认 topic 仍然优先',
+  topicExplicitlySet.resolved.topic === 'mine', 'topic=' + topicExplicitlySet.resolved.topic)
 const parsedProv = parseCredentials(JSON.stringify({ v: '1', topic: 'dsh-a', provisionToken: 'sek-really-long-value', provisionBase: 'https://x/provision' }))
 check('credentials: provisionToken and provisionBase survive parseCredentials',
   parsedProv.value.provisionToken === 'sek-really-long-value' && parsedProv.value.provisionBase === 'https://x/provision',
@@ -1198,7 +1265,10 @@ check('gate: 没有作答队列时不往中继登记问句', askSink.registered.
   check('dedupe: 同一道题的真实 callId + pq- 兜底 id 只推一条通知', dup.pushed.length === 1, 'pushed=' + String(dup.pushed.length))
   await host.onRequest({ questions: q, wait: { callId: 'call_second:ptc:1', timed: true }, agent }, () => {})
   await new Promise((resolve) => setTimeout(resolve, 30))
-  check('dedupe: 真实 callId 永远不被内容去重拦下', dup.pushed.length === 2, 'pushed=' + String(dup.pushed.length))
+  check('dedupe: 10 秒内同题的真 id 也被拦下（v0.7.26）', dup.pushed.length === 1, 'pushed=' + String(dup.pushed.length))
+  await host.onRequest({ questions: [{ id: 'choice-9', question: 'pick another', options: ['x'] }], wait: { callId: 'call_third:ptc:1', timed: true }, agent }, () => {})
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  check('dedupe: 换一道题照常推送', dup.pushed.length === 2, 'pushed=' + String(dup.pushed.length))
 }
 
 // v0.7.21：host 有、hostToken 空时，用凭据里的 regToken 自动补一只

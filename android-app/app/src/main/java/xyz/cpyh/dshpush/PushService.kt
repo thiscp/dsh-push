@@ -640,6 +640,31 @@ class PushService : Service() {
                 return
             }
 
+            // 换通行证（v1.34.8）：插件重新开通（/enroll）后 topic 与 token 全换，旧订阅立刻 403。
+            // 插件在换之前会往**旧 topic** 补一条 `#sysmove`（带新的 topic/token/网页），
+            // 这里就地改掉这台设备的凭据并重连，用户不必重扫码。
+            if (body.startsWith("#sysmove")) {
+                val newTopic = Regex("\n#topic (\\S+)").find(body)?.groupValues?.get(1) ?: ""
+                val newToken = Regex("\n#token (\\S+)").find(body)?.groupValues?.get(1) ?: ""
+                if (attrId.isNotEmpty() && newTopic.isNotEmpty() && newToken.isNotEmpty()) {
+                    Devices.updatePass(this, attrId, newTopic, newToken)
+                    if (webLink.isNotEmpty()) Devices.setWeb(this, attrId, webLink)
+                    handler.post { connectAll() }
+                }
+                return
+            }
+
+            // 网页入口自动续期（v1.34.7）：插件每次上线广播一条 `#syslink` + `#web`，
+            // 这里只更新这台设备存的网页链接，**不入消息列表、不弹通知**。
+            // 为什么需要：DSH 一重启 token 全换，手机上存的旧链接点进去就是 401，
+            // 用户只能重新扫码；有了这条，重启后链接自动换成新的。
+            if (body.startsWith("#syslink")) {
+                if (attrId.isNotEmpty() && webLink.isNotEmpty()) {
+                    Devices.setWeb(this, attrId, webLink)
+                }
+                return
+            }
+
             val callId = linkRegex.find(body)?.groupValues?.get(1)?.let {
                 try { URLDecoder.decode(it, "UTF-8") } catch (e: Exception) { it }
             }

@@ -4242,3 +4242,66 @@ host=""               hostToken=""
   **187/187**（证明发布出来的 tarball 本身行为正确，不只是工作副本）。
 - `selftest-pair` 59/59、`selftest-remote-bin` 21/21、`selftest-remote-status` 41/41。
 - VM1 重启日志出现 `claimForeground=on`。
+
+## §7.56 设备网页链接自动续期（`#syslink` / `#sysmove`）+ 两个更深的 topic bug（2026-11-02）
+
+用户需求（m132643）：「可以把2做进去，完成后实际跑一下来验收」——修法 2 指「App 向插件要当前链接」。
+最终没有做请求/响应，而是让插件在**上线时主动广播**：少一个新接口、少一套鉴权面，且能覆盖「宿主重启后
+链接全废」这个最常见场景。
+
+### 一、协议（两条静默控制消息，App 不入消息列表）
+
+```
+#syslink                    ← 插件 relay ready 后广播当前网页入口
+#web  http://host:3080/?token=…
+#name 笔电                    ← 可选
+```
+
+```
+#sysmove                    ← 换 topic 之前发到**旧 topic**，把手机带过去
+#topic dsh-u-86a9ab30
+#token tk_…                 ← 新 topic 的只读令牌
+#web   http://…/?token=…     ← 可选
+#name 工作VM                  ← 可选
+```
+
+App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
+- `#syslink`：解析 `#web` 后 `Devices.setWeb(this, attrId, webLink)` 就 `return`，不建消息条目、不响铃。
+- `#sysmove`：`Devices.updatePass(...)` 换 topic+令牌，同时更新 web，然后按新 topic 重连。
+
+### 二、两个比 `#syslink` 本身更严重的 topic bug（都已修）
+
+| 版本 | 真因 | 判据 |
+|---|---|---|
+| 0.7.29 | `resolvePluginConfig` 的 `explicit` 只丢 `''/undefined/null`，而 `topic` 的 schema 默认值是**非空**的 `'dsh'` ⇒ 默认值被当成「用户显式写的」，把凭据文件里自助开通拿到的 topic 顶掉 | VM1 凭据 `topic=u-4a2b2af2`，运行日志 `topic=dsh` |
+| 0.7.34 | 上一条只修好了 `resolved.topic`；预检走 `cred('topic')` → `readAny()` → **先读当前 fiber 的 live config**，那里 `topic` 永远是 `'dsh'` ⇒ 依旧 403 | VM1 日志连刷 `凭据预检被拒：HTTP 403（topic dsh，将重新开通）`，最后一次真的重开，topic 变成 `dsh-u-4a2b2af2`，手机那行当场失效 |
+
+0.7.34 的修法：`cred()` 一律以 `resolved`（defaults → 凭据文件 → 显式配置）为准，只有它为空才回落到 live config。
+
+### 三、广播「上一轮 token」（0.7.30 → 0.7.33）
+
+插件 fiber 往往先于 web 监听器就绪，此刻读 `web.log` 拿到的是**上一次启动**的 token，手机存下来一刷就 401。
+
+- 0.7.30 用 `statSync(mtime) >= 进程启动时间` 判新鲜 —— **无效**：任何一行日志都会推进 mtime。
+- 0.7.32 改成按值判：先等 8 秒让这行坐实，发完再盯 120 秒，值一变就补发（最多两条）。
+- 0.7.33 修掉循环里的 `break`：值没变就跳出等于永远只发上一轮，必须继续盯到 deadline。
+
+代价是刚启动时可能收到两条 `#syslink`，App 都咽掉。
+
+### 四、0.7.34 的另一半：自动重开通也要发 `#sysmove`
+
+换 topic 的两条路径里，只有 `PassProvisioner`（面板「一键开通」）发 `#sysmove`；预检 403 触发的
+`autoEnroll()` 不发 ⇒ 用户看到的就是「那台设备突然收不到了」。现在两条路径都发。
+
+### 五、验收证据（真机，2026-11-02 17:00–17:25）
+
+- VM1：`relay ready host=u-4a2b2af2 topic=u-4a2b2af2`，App 里该设备 web 令牌 = 当轮真值 `_OEgc0Z0…`。
+- 工作 VM：手工补一条 `#sysmove`（旧 token `tk_wcpjji1…` 发到 `dsh-work`），App 那行当场变成
+  `topic=dsh-u-86a9ab30`、web 令牌 `wXa33jIq…`，全程没有重新扫码。
+- App 侧 1.34.8 / versionCode 168 已发布（`?v=168`，`Content-Length: 16925285`，10/10 passed）。
+- 插件 0.7.34 已发布并装到 VM1 / 工作 VM。
+
+### 六、踩到的构建坑
+`./gradlew assembleDebug` 出来的 APK 字节数与上一版**完全一样**（16924681），一度以为没编译进去。
+真相：APK 有三个 dex（`classes.dex` / `classes2.dex` / `classes3.dex`），我们的代码在 **`classes3.dex`**；
+只 grep `classes.dex` 必然为 0。判新旧要看 dex 内容，不能看体积。

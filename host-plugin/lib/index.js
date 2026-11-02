@@ -41,7 +41,7 @@
  *
  * @module dsh-push-host
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -299,6 +299,8 @@ function preferCodedError(errors) {
 
 /** v0.7.21: how long the same question (content-identical) is considered already announced. */
 const ANNOUNCE_DEDUPE_MS = 120000
+/** 两个入口的 id 前缀不固定（`pq-…` 与 `chatcmpl-tool-…`/`call_…`），真 id 那一侧只给 10 秒窗口去重。 */
+const ANNOUNCE_DEDUPE_MS_TIGHT = 10000
 
 /** `session|qid|text|options` - used only to tell "the same question" apart. */
 function questionSignature(sessionId, questions = []) {
@@ -423,6 +425,86 @@ class PushHost {
       ' poll=' + String(this.config.pollIntervalMs) + 'ms' +
       (this.config.claimForeground === true ? ' claimForeground=on' : ''),
     )
+    void this.announceWebLink()
+  }
+
+  /**
+   * v0.7.27: tell the phone where this machine's DSH web is **right now**.
+   *
+   * Why: the pairing QR carries a `?token=` link that is only good for the current host run.
+   * The phone stores it and, after any DSH restart, every tap lands on a 401 page — the only
+   * way out was to re-scan the QR. The `#web` trailer already rides along on real pushes, but
+   * an idle machine never pushes, so the stored link goes stale silently. Announcing on every
+   * `relay ready` keeps the phone's copy current with no user action.
+   *
+   * The body starts with `#syslink`, which the App treats like `#ans`: update that device's
+   * web link and stop — no list entry, no notification.
+   */
+  async announceWebLink() {
+    if (!this.pushEnabled) return
+    // v0.7.32：插件 fiber 往往比 web 监听器先就绪，此时读 web.log 拿到的是**上一轮**的 token
+    // （2026-11-02 VM1 连续三次重启实测：手机存的永远是上一次的 token，一次 401、一次能用、交替）。
+    // 用 mtime 判「新鲜」不管用（任何一行日志都会推进 mtime），所以改成按值判：
+    //   第一次发之前先等 8 秒「稳定」；发完之后继续盯 120 秒，token 一变就再补发一次（最多两次）。
+    // 手机上最终留下的就是本轮 token；代价是刚启动时最多两条 `#syslink`，App 会把它们都咽掉。
+    const sleep = (ms) => new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms)
+      if (typeof timer.unref === 'function') timer.unref()
+    })
+    const readWeb = () => {
+      try {
+        return this.webUrl()
+      } catch {
+        return ''
+      }
+    }
+    const settleMs = Math.max(0, Number(this.config.announceSettleMs ?? 8000) || 0)
+    let sentWeb = ''
+    let sends = 0
+    const deadline = Date.now() + 120000
+    while (sends < 2 && Date.now() < deadline) {
+      let web = readWeb()
+      if (!web) {
+        await sleep(5000)
+        continue
+      }
+      if (web === sentWeb) {
+        // v0.7.33：已经在等「下一轮 token」时不能 break —— 工作 VM 实测 web 在插件之后才写日志，
+        // 5 秒内值没变就直接跳出，等于永远只广播上一轮。继续盯到 deadline 为止。
+        await sleep(5000)
+        continue
+      }
+      if (sends === 0) {
+        // 先让这一行「坐实」：真刚起来的进程，8 秒内这行就会换成自己的 token。
+        await sleep(settleMs)
+        const settled = readWeb()
+        if (settled && settled !== web) continue
+        web = settled || web
+      }
+      await this.sendWebLink(web)
+      sentWeb = web
+      sends += 1
+      if (sends >= 2) break
+      await sleep(5000)
+    }
+  }
+
+  /** One `#syslink` push; logs the HTTP status because a 4xx does not throw. */
+  async sendWebLink(web) {
+    const name = this.config.webName.trim()
+    const NL = String.fromCharCode(10)
+    let body = '#syslink'
+    body += NL + '#web ' + web
+    if (name) body += NL + '#name ' + name.split(NL).join(' ')
+    try {
+      const sent = await this.relay.push({ title: 'DSH 上线', body, priority: 1 })
+      // v0.7.31：push() 不抛错也不代表发送成功（ntfy 用 4xx 表达拒绝），把状态码写进日志，
+      // 否则「已广播」这句话在真正的投递失败面前是假证据。
+      this.log('web link announced: ' + (name || '(no name)') + ' -> ' + web.replace(/token=[^&]+/, 'token=***')
+        + ' (status=' + String(sent?.status ?? '?') + ')')
+    } catch (error) {
+      this.log('web link announce failed: ' + String(error?.message ?? error))
+    }
   }
 
   /**
@@ -559,13 +641,17 @@ class PushHost {
     } else if (owner === undefined) {
       this.ownerBySignature.set(signature, callId)
     }
-    // Only the `pq-<uuid>` fallback id is dropped: a real `call_...` id is always announced,
-    // because two genuinely different questions can share text and options.
+    // v0.7.26：两个入口的 id 前缀不固定（工作 VM 实测过 `chatcmpl-tool-…:ptc:1` 与
+    // `pq-…` 这一对），只按 `pq-` 前缀去重会漏掉真 id 那一侧，手机上就是两条一样的卡片。
+    // 同一 session + 同一题干 + 同一组选项在 10 秒内重复出现，一律判为同一道题：
+    // 保留先到的 id 作为 owner，后到的只登记别名（答案仍能落到 waiter）。
     const guessedId = String(callId).startsWith('pq-')
-    if (guessedId && seenAt !== undefined && nowMs - seenAt < ANNOUNCE_DEDUPE_MS) {
+    const duplicate = seenAt !== undefined && nowMs - seenAt < (guessedId ? ANNOUNCE_DEDUPE_MS : ANNOUNCE_DEDUPE_MS_TIGHT)
+    if (duplicate) {
       this.questions.set(callId, { questions: relayQuestions(questions), timed, ts: nowMs, echoed: false })
-      this.log('question ' + callId + ' suppressed (fallback id): same question pushed ' +
-        String(Math.round((nowMs - seenAt) / 1000)) + 's ago')
+      this.log('question ' + callId + ' suppressed: same question pushed ' +
+        String(Math.round((nowMs - seenAt) / 1000)) + 's ago' +
+        (owner !== undefined && owner !== callId ? ' (owner ' + owner + ')' : ''))
       return
     }
     this.announcedByContent.set(signature, nowMs)
@@ -699,6 +785,41 @@ class PushHost {
    * fragment across redirects; and the web client has no router, so nothing else reads path or
    * query. Clients that ignore the fragment keep behaving exactly as before.
    */
+  /**
+   * Wait until this process's own `dsh web: …?token=…` line has landed in the web log.
+   *
+   * v0.7.30. Called from announceWebLink(). Returns as soon as the log's mtime is at/after this
+   * process's start time; otherwise polls (2s) up to 90s and then gives up silently — a stale-ish
+   * link is still better than blocking startup. Never throws.
+   */
+  async waitWebLogFresh() {
+    const configured = String(this.config.webLog ?? '')
+    const file = configured.length > 0 ? configured : join(homedir(), '.dsh', 'web.log')
+    const graceMs = 1500
+    const startedAt = Date.now() - Math.round(process.uptime() * 1000) - graceMs
+    // 读不到这个文件就不用等：等下去也换不出 token（webUrl() 会自己报错并返回 ''）。
+    try {
+      statSync(file)
+    } catch {
+      return
+    }
+    const fresh = () => {
+      try {
+        return statSync(file).mtimeMs >= startedAt
+      } catch {
+        return true
+      }
+    }
+    if (fresh()) return
+    for (let waited = 0; waited < 90000; waited += 2000) {
+      await new Promise((resolve) => {
+        const timer = setTimeout(resolve, 2000)
+        if (typeof timer.unref === 'function') timer.unref()
+      })
+      if (fresh()) return
+    }
+  }
+
   webUrl(sessionId = '') {
     const base = this.config.webBase.trim()
     const file = this.config.webLog.length > 0 ? this.config.webLog : join(homedir(), '.dsh', 'web.log')
@@ -748,10 +869,20 @@ class PushHost {
           // 由 questionBody 按「未知=可以答」处理，等 waterfall 给出权威的 true/false。
           timed: typeof args.timeout === 'number' ? args.timeout !== -1 : undefined,
         }
+        const looksLikeAsk = (Array.isArray(args.questions) && args.questions.length > 0) ||
+          (typeof args.plan === 'string' && args.plan.length > 0)
         if (Array.isArray(args.questions) && args.questions.length > 0) {
           void this.announce({ ...common, questions: args.questions })
         } else if (typeof args.plan === 'string' && args.plan.length > 0) {
           void this.announce({ ...common, questions: [{ id: 'plan', question: args.plan, options: [] }] })
+        }
+        // v0.7.26：`user-questions/request` 这条 waterfall 不一定触发。2026-11-02 工作 VM 实测
+        // 只看到 pre-execute 的 `call_8563…`，没有随后那条 `:ptc:1`，于是 hold() 从未建立，
+        // 手机答完只能无限 "not answerable yet (state=undefined)"。pre-execute 是必定会跑的那
+        // 一侧，所以把「持有前台」也搬到这里：谁先到谁持有；两边都持有时 hold() 会通过
+        // aliases 复用同一个 waiter，不会互相顶掉。
+        if (looksLikeAsk && this.holdsForeground()) {
+          return this.firstOf([this.hold(callId, { agent }), Promise.resolve().then(() => next())], exec?.signal, callId)
         }
       }
     } catch (error) {
@@ -947,6 +1078,14 @@ class PushHost {
     }
 
     const known = this.questions.get(targetId) ?? this.questions.get(callId)
+    if (waiter === undefined) {
+      // v0.7.26 现场取证用：答案到了却没有 waiter，说明这一侧从没持有前台。
+      this.log(
+        'no foreground waiter for ' + callId + ' (target ' + targetId + '); held=' +
+        JSON.stringify([...this.waiters.keys()].slice(0, 6)) +
+        ' known=' + (known !== undefined ? 'yes timed=' + String(known.timed) : 'no'),
+      )
+    }
     if (known !== undefined && known.timed === false) {
       this.log(
         'cannot apply the phone answer to ' + callId + ': the question has no timed wait, ' +
@@ -1141,6 +1280,12 @@ export function resolvePluginConfig(config = {}, { env = process.env, readFile =
     const value = (rawValue !== null && typeof rawValue === 'object' && typeof rawValue.get === 'function')
       ? volatileValue(rawValue, '')
       : rawValue
+    // v0.7.29: `topic` 的 schema 默认值是非空的 `'dsh'`，而 explicit 只丢掉 ''/undefined/null
+    // ⇒ **默认值被当成「用户显式写的」**，把凭据文件里自助开通拿到的 topic 顶掉。
+    // 2026-11-02 在 VM1 上实测：`credentials.json` 里 topic=u-4a2b2af2，运行日志却是 `topic=dsh`，
+    // 于是这台机器的推送全都发进了别人的主题，手机那行永远收不到（表现是「推送没了」）。
+    // 只等于默认值的，一律当作「没设置」，让凭据文件（或默认值）来填。
+    if (key === 'topic' && value === DEFAULTS.topic) continue
     if (value !== '' && value !== undefined && value !== null) explicit[key] = value
   }
   const resolved = resolveConfig({ ...fromCredentials, ...explicit })
@@ -1772,6 +1917,11 @@ export class PassProvisioner {
       if (action === 'enroll') {
         // 一键开通（v0.7.0）：全新用户没有发号密钥，走免鉴权的 /enroll 领第一张通行证。
         // 成功即写凭据文件并把新值注入内存 + 重新起轮询，用户不必重启宿主就能收到第一条推送。
+        // v0.7.28：先把旧的一套留个底 —— 重新开通会换掉 topic/token，手机的旧订阅立刻 403，
+        // 要往旧 topic 补一条 `#sysmove` 才能把手机带过去（见下面的 mover）。
+        const prevTopic = String(this.resolved.topic || '')
+        const prevToken = String(this.resolved.ntfyToken || '')
+        const prevBase = String(this.resolved.relayBase || '')
         const out = await enrollCall({
           base: this.resolved.provisionBase, name, fetchImpl: this.fetchImpl,
         })
@@ -1780,6 +1930,32 @@ export class PassProvisioner {
           this.log('自助开通失败：' + out.error)
         } else {
           const data = out.data || {}
+          // v0.7.28：重开通换了 topic，手机那头的订阅立刻失效（表现是「那台设备突然 403」）。
+          // 换之前先往**旧 topic** 补一条 `#sysmove`（带新 topic/token/网页），App 收到后
+          // 就地改凭据并重连，用户不必重新扫码。
+          if (prevTopic && prevToken && data.topic && prevTopic !== data.topic) {
+            try {
+              const mover = new RelayClient({
+                relayBase: prevBase || this.resolved.relayBase,
+                topic: prevTopic,
+                ntfyToken: prevToken,
+                host: this.resolved.host,
+                hostToken: this.resolved.hostToken,
+                regToken: this.resolved.regToken,
+                fetch: this.fetchImpl,
+              })
+              let web = ''
+              try { web = this.webUrl() } catch { web = '' }
+              const lines = ['#sysmove', '#topic ' + data.topic, '#token ' + data.readToken]
+              if (web) lines.push('#web ' + web)
+              const nm = String(this.config.webName || '').trim()
+              if (nm) lines.push('#name ' + nm)
+              await mover.push({ title: 'DSH 换了新通行证', body: lines.join('\n'), priority: 1 })
+              this.log('moved phone subscriptions: ' + prevTopic + ' -> ' + data.topic)
+            } catch (error) {
+              this.log('move notice failed: ' + String(error && error.message ? error.message : error))
+            }
+          }
           const text = passText({
             relayBase: data.relayBase || this.resolved.relayBase,
             topic: data.topic, readToken: data.readToken,
@@ -2419,6 +2595,14 @@ export class PairBox {
   cred(key) {
     const fresh = this.freshCreds && this.freshCreds[key]
     if (fresh !== undefined && fresh !== null && fresh !== '') return String(fresh)
+    // v0.7.34：`readAny()` 先读**当前 fiber 的 config**，而那份 config 里 `topic` 永远有 schema 默认值
+    // `'dsh'`（非空）⇒ 凭据文件里的 topic 又一次被顶掉，0.7.29 的修复等于没生效。
+    // 2026-11-02 VM1 实测：`resolvePluginConfig` 已经把 resolved.topic 修正成 u-4a2b2af2，
+    // 但预检走 cred('topic') 读到的还是 dsh → 403 → 反复「将重新开通」→ 最后一次真的重开，
+    // topic 变成 dsh-u-4a2b2af2，手机那行的旧 topic 直接失效（比原来更糟）。
+    // 凭据键一律以 resolved（defaults → 凭据文件 → 显式配置）为准，只有它为空才回落到 live config。
+    const fromResolved = this.resolved ? this.resolved[key] : undefined
+    if (fromResolved !== undefined && fromResolved !== null && fromResolved !== '') return String(fromResolved)
     return String(this.readAny(key) || '')
   }
 
@@ -2592,6 +2776,12 @@ export class PairBox {
         return
       }
       const data = out.data || {}
+      // v0.7.34：自动重开通同样会换 topic（2026-11-02 VM1 实测：预检 403 → 重开 → topic 从
+      // u-4a2b2af2 变成 dsh-u-4a2b2af2，手机那行当场失效，而这条自动路径当时**不发** `#sysmove`）。
+      // 和 PassProvisioner 一样，换之前先往旧 topic 补一条，App 就地改凭据并重连。
+      const prevTopic = String(this.resolved.topic || '')
+      const prevToken = String(this.resolved.ntfyToken || '')
+      const prevBase = String(this.resolved.relayBase || '')
       const patch = {
         host: data.host || data.topic,
         topic: data.topic,
@@ -2601,6 +2791,29 @@ export class PairBox {
       if (data.hostToken) patch.hostToken = data.hostToken
       if (data.relayBase) patch.relayBase = data.relayBase
       if (data.answerBase) patch.answerBase = data.answerBase
+      if (prevTopic && prevToken && data.topic && prevTopic !== data.topic) {
+        try {
+          const mover = new RelayClient({
+            relayBase: prevBase || this.resolved.relayBase,
+            topic: prevTopic,
+            ntfyToken: prevToken,
+            host: this.resolved.host,
+            hostToken: this.resolved.hostToken,
+            regToken: this.resolved.regToken,
+            fetch: this.fetchImpl,
+          })
+          let web = ''
+          try { web = this.webUrl() } catch { web = '' }
+          const lines = ['#sysmove', '#topic ' + data.topic, '#token ' + data.readToken]
+          if (web) lines.push('#web ' + web)
+          const nm = String(this.config.webName || '').trim()
+          if (nm) lines.push('#name ' + nm)
+          await mover.push({ title: 'DSH 换了新通行证', body: lines.join('\n'), priority: 1 })
+          this.log('moved phone subscriptions: ' + prevTopic + ' -> ' + data.topic)
+        } catch (error) {
+          this.log('move notice failed: ' + String(error && error.message ? error.message : error))
+        }
+      }
       if (this.credentialsPath) {
         try {
           // 别名一起写（理由同 PassProvisioner）：文件里两只 token 的新旧必须一致，
