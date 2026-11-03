@@ -2062,16 +2062,21 @@ class WebActivity : Activity() {
     }
 
     /** 标题栏与最近任务标签带上实例名（v1.30.0）：
-     *  按 host:port 反查 v1.29 的实例清单（名称来自推送 #name 或用户改名），
-     *  查不到退化为 host:port——工作 VM 还是本地台式机一眼可辨。 */
+     *  按 host:port 反查实例清单，查不到退化为 host:port——工作 VM 还是本地台式机一眼可辨。
+     *
+     *  v1.34.11（用户 m134171）：名字要**跟随创建二维码时设的机器名**。那份名字在 `Devices`
+     *  （配对/重扫时写入、改名即更新），而 `DshHosts` 是推送 `#name` 喂的另一份，两者可能不一致。
+     *  所以这里以 `Devices` 为准，只在它没有这台时退回 `DshHosts`。 */
     private fun applyInstanceLabel(url: String) {
         if (url.isEmpty()) return
         val id = DshHosts.hostOf(url)
         val name = try {
-            DshHosts.all(this).firstOrNull { it.id == id }?.name
+            Devices.nameForWeb(this, url).ifEmpty {
+                DshHosts.all(this).firstOrNull { it.id == id }?.name ?: ""
+            }
         } catch (e: Exception) {
-            null
-        } ?: id
+            ""
+        }.ifEmpty { id }
         titleView?.text = "DSH 网页 · $name"
         // 最近任务卡片标题同步——多开时也能分清哪张是哪台
         title = "DSH · $name"

@@ -184,11 +184,8 @@ class MainActivity : Activity() {
                 setPadding(0, dp(2), 0, 0)
             })
         }, LinearLayout.LayoutParams(0, -2, 1f))
-        // 多 DSH 常驻入口（v1.29.0）：自己挑进哪台；卡片按钮仍指向各自推送来源
-        header.addView(pill(Button(this)).apply {
-            text = getString(R.string.hosts_btn)
-            setOnClickListener { showHosts() }
-        }, LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(8) })
+        // v1.34.11：多 DSH 入口的胶囊**去掉**（用户 m134171「dsh入口这个就可以取消了吧，功能重复了」）。
+        // 现在点状态卡、或「头像 → 设备清单里点某台」都能进，比原来那颗粒子更直观。
         // 设置入口（v1.32.29）：主页只留常用操作，其余（换主题 / 后台服务 / 电池白名单 /
         // 保活体检 / 调试浮层）收进这个菜单——用户「主页的按钮太多了，能只保留常用的吗，
         // 其他的可以做个设置菜单放里面」。换主题原先这颗胶囊就搬进菜单第 4 项。
@@ -238,6 +235,9 @@ class MainActivity : Activity() {
                 leftMargin = dp(10)
                 gravity = Gravity.CENTER_VERTICAL   // 竖排胶囊垂直居中贴着正文
             })
+            // v1.34.11：原来那颗「DSH 入口」胶囊退休后，点状态卡就是「挑一台进去」的入口。
+            isClickable = true
+            setOnClickListener { showHosts() }
         }
         content.addView(card(statusBar, dp(14)))
 

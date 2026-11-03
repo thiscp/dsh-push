@@ -4387,3 +4387,35 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
 3. 手机侧用 `node C:/Temp/mkqr.js '<payload>' out.png` 造一张码，`adb push` 到
    `/sdcard/Pictures/` 再 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE`，
    App 里「扫码配对 → 从相册选一张」即可复现整条链路。
+
+## §7.58 去掉重复的「DSH 入口」+ 网页顶栏跟随二维码里的机器名（App 1.34.11 / 171，2026-11-03）
+
+用户 m134171：「这次是正常的了，但是 dsh入口这个就可以取消了吧，功能重复了，还有既然网页后上面的标签，
+设备名称应该跟随创建二维码时设置的设备名称吧」。
+
+### 一、两条改动
+1. **删掉头部那颗「DSH 入口」胶囊**（`MainActivity.kt` 的 `pill(...).apply { text = getString(R.string.hosts_btn) }`）。
+   入口改成**点状态卡**（`statusBar.isClickable = true; setOnClickListener { showHosts() }`）；
+   另一条更直接的路径本来就有：头像 → 设备清单 → 点某台的名字（`col.setOnClickListener` 里 `openWebUrl(d.web)`）。
+2. **网页顶栏的名字以「设备清单」为准**。新增 `Devices.nameForWeb(ctx, web)`：按 `webOrigin(web)` 找未吊销的那台，
+   返回它的 `name`；`WebActivity.applyInstanceLabel()` 改成 `Devices.nameForWeb(...).ifEmpty { DshHosts… }`。
+
+> 为什么要改：手机里其实有**两份**机器清单。`Devices` 是配对/重扫时写进去的（二维码 `#name` 就是它，改名即更新）；
+> `DshHosts` 是推送 `#name` 喂出来的（只在插件主动推时才更新）。网页顶栏原先只看后者，所以用户把名字改成 VM1 之后，
+> 设备清单已经是 VM1 而网页顶栏还停在旧名——两份清单各说各的。
+
+### 二、模拟器实测（`emulator-5556`，AVD `dsh-pixel`）
+- 装 1.34.11 后首屏只剩「设置」一颗胶囊；`uiautomator dump` 里已经没有 `hosts_btn` 那颗按钮的 bounds。
+- 点状态卡（状态卡文字 bounds `[83,402][883,598]`，点 `(400,480)`）→ 弹出标题为「进入哪台 DSH」的对话框。
+- 走相册配对一台 `name=VM1` 的设备（`dshpush://v1?…&topic=u-9df1c727&web=http://<tailnet-vm1>:3080/?token=…&name=VM1`）：
+  - `adb logcat -s ScanPair:*` 打 `album: 回来 result=-1 …` / `album: 解出=205` / `hit: 载荷长度=205 前缀=dshpush://v1?base=https%25`；
+  - 状态卡变成「已连接 2 台 / 设备：2 台在线」；设备清单里两行：`VM1C`（旧）与 `VM1`（新，带「点这里进它的网页」）。
+- 点 `VM1` 那一行 → 网页顶栏 `uiautomator dump` 读到 **`DSH 网页 · VM1`**（不是 `VM1C`，也不是 host:port）⇒ 需求达成。
+
+### 三、判据与坑
+- 改版 APK 体积与上一版几乎一样（16926629 vs 16926481），**判新旧要看 dex 内容**：
+  `unzip -p app-debug.apk classes3.dex | grep -ac nameForWeb` = 2（我们 App 的 Kotlin 代码全部落在 `classes3.dex`）。
+- 相册配对流程里必须先 `rm -f /sdcard/Pictures/*.png` 再 `adb push`，并广播
+  `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/q.png`，否则图库看不到新图。
+- `adb` 带 `/sdcard/...` 的路径在 Git-Bash 里会被改写，必须 `export MSYS_NO_PATHCONV=1`；
+  但本机 `C:/Temp/...` 又会因此不被转换，两者要在不同命令里分开设。

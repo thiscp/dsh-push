@@ -138,6 +138,20 @@ object Devices {
 
     fun byId(ctx: Context, id: String): Dev? = all(ctx).firstOrNull { it.id == id }
 
+    /**
+     * v1.34.11：按网页地址的 host:port 找这台机器的名字。
+     *
+     * 网页顶栏原先只查 `DshHosts`（推送 `#name` 喂的那份清单），于是用户把设备名改成 VM1 之后，
+     * 手机里的设备清单已经是 VM1，而网页顶栏还停在旧名字——两份清单各说各的。
+     * 以「创建二维码时设的名字」（`Devices` 这份，重扫就会更新）为准。
+     */
+    fun nameForWeb(ctx: Context, web: String): String {
+        val origin = webOrigin(web)
+        if (origin.isEmpty()) return ""
+        return all(ctx).firstOrNull { !it.revoked && it.name.isNotBlank() && webOrigin(it.web) == origin }
+            ?.name ?: ""
+    }
+
     private fun save(ctx: Context, list: List<Dev>) {
         val arr = JSONArray()
         for (d in list) {
