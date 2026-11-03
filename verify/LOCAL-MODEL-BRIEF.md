@@ -25,7 +25,7 @@ dsh-push = **手机 App**（`xyz.cpyh.dshpush`，大肥鱼盯梢）+ **DSH 插�
 | 插件 tgz（博客） | `https://blog.cpyh.xyz/dl/dsh-push-host-latest.tgz` |
 | 仓库 HEAD | 见 `git log --oneline -1`（1.34.11 提交 `f7afa8d`） |
 | 公共镜像 | gitee / github / origin master / github main 四处同 commit（`export-public.ps1`） |
-| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.58）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
+| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.59；2026-11-03 修过一次重号：原两个 §7.57 → 现 §7.57/§7.58，原 §7.58 → §7.59）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
 
 **没有未完成的开发任务**。下一步等用户提。
 
@@ -78,10 +78,12 @@ powershell.exe -NoProfile -File verify/release.ps1 -Version 1.34.12 -VersionCode
 # ★ 本机没有 pwsh 7，必须写全路径 powershell.exe
 
 # ---------- 插件自测 + 发版 ----------
-node host-plugin/plugin-selftest.mjs          # 期望全绿（当前 195/195）
+node host-plugin/plugin-selftest.mjs          # 期望全绿（当前 197/197，2026-11-03 复跑）
 node host-plugin/selftest-pair.mjs            # 59/59
 node host-plugin/selftest-remote-bin.mjs      # 21/21
 node host-plugin/selftest-remote-status.mjs   # 41/41
+# ★ 这四条要用 DSH 自带 node 跑：E:/programs/dsh/resources/runtime/primary-runtime/dependencies/node/bin/node.exe
+#   （harness 自带的 node 在工作区里会 EPERM copyfile）
 # 改 host-plugin/package.json 的 version 后：
 cd host-plugin && npm publish
 # ★ token 必须勾了 Bypass 2FA，否则 403；registry 读延迟 1-2 分钟，npm view 慢一步是正常的

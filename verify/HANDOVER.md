@@ -12,6 +12,7 @@
 
 | 字段 | 值 |
 |---|---|
+| **✅ 插件 0.7.38 + App v1.34.11 / 171 已发布：通行证按机器隔离、机器名终于存得下来、网页顶栏跟随设备清单** | 三段连修（2026-11-02 → 11-03）。**① 0.7.36 / 1.34.9**：通行证按 topic 隔离——中继 `/usr/local/bin/dsh-provd.py` 加 `GET /list?topic=`、`POST /revoke` 带 `{name, topic}`，三台机器各自只看到自己的（旧行为是所有人共用一份、谁都能吊销谁）；吊销 404 的真因是面板给的名字不是服务端真实用户名，现在先聚合真实用户名再删；面板机器名改成可填。**② 0.7.38 / 1.34.10**：「点保存没有提示、重扫还是旧名」两层独立真因——面板写 `webName` 不落盘（只写 volatile `nameText`）⇒ 插件 `persistName()` 用 `ctx.configEditor.edit()` 自己落盘；App `Devices.idOf()` 把机器名算进 id ⇒ 改名后重扫出两行，`upsert()` 归并顺序改为 id → 名字 → **web 的 host:port**。**③ 1.34.11 / 171**：删掉重复的「DSH 入口」胶囊（入口改成点状态卡），新增 `Devices.nameForWeb(ctx, web)` 让网页顶栏以设备清单为准（根因：手机里两份清单，`Devices` 由配对/改名写、`DshHosts` 由推送 `#name` 喂，顶栏原先只看后者）。验收：模拟器相册配对 `name=VM1` 后点该行 → 顶栏 `uiautomator dump` 读到 `DSH 网页 · VM1`；判新旧看 `classes3.dex`（`grep -ac nameForWeb` = 2）。发布与自测：selftest **197/197** + pair 59/59 + remote-bin 21/21 + remote-status 41/41（2026-11-03 复跑全绿）、npm `latest` = 0.7.38、线上 `?v=171` 200 + 16926629 B、提交 `f7afa8d`。细节见 §7.57 / §7.58 / §7.59。 |
 | **✅ 插件 0.7.18 + App v1.34.4 / 164 已发布：二维码终于带机器名，App 再用网页地址认机器——手工配凭据的 VM1 不再顶掉 laptop** | 用户「我刚刚更新到最新版，扫VM1的配对码，显示的laptop，点进去还是VM1」。第二层根因：VM1 凭据是手工配的、`credentials.json` 里**没有 `host`**，而插件 `payload()` 的 name 只取 `resolved.host` ⇒ 二维码里根本没有 `name=` ⇒ App 落进 §7.47 的「无机器名→退老逻辑」分支，把 laptop 那行的 token/web 换成 VM1 的。修法两侧都改：插件 `pairName()` = `host → webName → os.hostname()`；App 加 `webOrigin()/hostOf()`，无机器名时按**网页 host:port 指纹**判是不是另一台（清单里已有别的机器且没有一台对得上 ⇒ 新增一行）。验收用载荷字节数：VM1 的码 183 → **210 字节**，差的正是 `&name=%E6%B5%8B%E8%AF%95VM1`。插件 selftest 161+59+21+41 全过；APK 16923633 字节、`?v=164` 200+sha256 一致、通知 id `7rhI2Y32zh0k`；VM1 已升 0.7.18 并重启（新 token 已给用户）。细节见 §7.48。 |
 | **✅ v1.33.20 / 126 已发布：右面板打开时左边缘不再被侧栏糊住——只在收起态把 rightbarCol 抬到 90，复原笔电的绘制顺序** | 用户「右边侧边栏打开的时候，VM上的左边侧边栏会完全遮挡住一部分，笔电上的是半透明的，能保持和笔电上一样的效果吗」。CDP 实测根因：右面板是 rightbarCol 里的 absolute 满屏浮层（**收起态实测 box 也是 0,0,360,671、底色 transparent**），DOM 顺序排在侧栏之后 ⇒ 原生笔电是「面板在上、侧栏透过它的透明底看得见」；而 125 给 *_sidebarCol 抬的 z-index:80 把**收起态**侧栏反过来压在面板上，面板左边那 56px 被 0.45 白纱糊住。同机 A/B 截图与用户三张图逐像素对上：C:/Temp/ab-vm1-a.png（卡片被切在侧栏右边缘、文件夹图标被吃一半）vs ab-vm1-b.png（卡片伸到侧栏底下、图标透过侧栏可见）。**第一版不分状态直抬 z:90 被四态矩阵拦下**（测试VM1/expanded 侧栏 alpha 0.45 不在 [0.87,0.97]——矩阵是命中测试量底色，量到的是面板的 0.45），改成只在收起态抬：[class*='_frame']:has([class*='_collapsed']) [class*='_rightbarCol']{position:relative!important;z-index:90!important}；:has() 判据实测精确（收起态全页只有侧栏根带 _collapsed、展开态一个都没有），老 WebView 不认 :has() 就整条丢弃 = 退回 125 行为。装机实测 injected=true、hasRule=true、收起态 rbZ=90、colZ=80 仍在。发布 -Deploy **10/10**、geom-matrix 冷跑 **PASS states=4 fails=0**（流水线里那次是 ENV 超时不算，装机后单独冷跑过；顺带查出 CDP 的 setDeviceMetricsOverride 会残留在 WebView 里、让矩阵静默退出，跑前先 clearDeviceMetricsOverride + force-stop 重启 App）、update-notify Ou8lHtNSv8Hf、线上 11,099,972 B = 本机构建字节数。**真机验收：用户 2026-10-18 装 126 后回复「安装最新版，验证通过」**——右面板打开时左边缘透出、展开态仍可点，这条需求到此关闭 |
 | **✅ 补记 v1.33.13→v1.33.19（120–125）这一路的结论（2026-10-18）** | **120** 回退 118/119 的 backdrop-filter 改动——那是**浅色模拟器给的假结论**（真机走 WebView 算法变暗，去掉模糊后用户 09:36 的图确认内容太刺眼）；**121–123** 在「通用选择器 vs 只匹配笔电那份哈希」之间来回（122 用 :not(*) 停用时把笔电一起废了，123 恢复笔电哈希）；**124** 用**横屏对照截图**坐实用户的判断「笔电=侧栏是独立图层、VM=同一图层把聊天往右顶」，把两条布局规则改回通用（_frame / _sidebarCol>*>_root）、声明与笔电一字不差 ⇒ 三台都成为独立图层、聊天窗不再被顶走；**125** 修「展开后点不到」——聊天在 overlayLayer（absolute z=20），侧栏虽 z=70 却被关在**没有 z-index 的列**里，给 *_sidebarCol 加 position:relative + z-index:80 把整个侧栏子树抬到聊天层之上。**125 的副作用正是 126 要修的**（见上一行）。这一段当时没逐条记行，教训已全部进 skill §14 |
@@ -4349,7 +4350,11 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
 ### 五、版本
 插件 **0.7.36**（已 npm publish，VM1 / 工作 VM 均已装并重启验过），App **1.34.9 / 169**。
 
-## §7.57 机器名称改了不生效：两层 bug + 一个重复设备（插件 0.7.38 / App 1.34.10，2026-11-02）
+## §7.58 机器名称改了不生效：两层 bug + 一个重复设备（插件 0.7.38 / App 1.34.10，2026-11-02）
+
+> 编号说明：2026-11-03 复核发现本节与上一节（0.7.36 / 1.34.9）**重号**，两节都写成 §7.57。
+> 本节改为 §7.58，原 §7.58（App 1.34.11 / 171）顺延为 §7.59；提交 `f7afa8d` 的 message 里那句「文档 §7.58」
+> 指的是后一节。外部引用只有 `verify/LOCAL-MODEL-BRIEF.md` §1 一处，已同步改成 §7.59。
 
 用户（m133873）「我点保存没有任何保存成功的提示呢，重新扫码后显示的还是测试VM1」，
 0.7.37 让提示出现了且回「已保存」，但重扫仍是旧名字（m133927）。这里记两个互相独立的真因。
@@ -4388,7 +4393,7 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
    `/sdcard/Pictures/` 再 `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE`，
    App 里「扫码配对 → 从相册选一张」即可复现整条链路。
 
-## §7.58 去掉重复的「DSH 入口」+ 网页顶栏跟随二维码里的机器名（App 1.34.11 / 171，2026-11-03）
+## §7.59 去掉重复的「DSH 入口」+ 网页顶栏跟随二维码里的机器名（App 1.34.11 / 171，2026-11-03）
 
 用户 m134171：「这次是正常的了，但是 dsh入口这个就可以取消了吧，功能重复了，还有既然网页后上面的标签，
 设备名称应该跟随创建二维码时设置的设备名称吧」。
@@ -4419,3 +4424,11 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
   `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/q.png`，否则图库看不到新图。
 - `adb` 带 `/sdcard/...` 的路径在 Git-Bash 里会被改写，必须 `export MSYS_NO_PATHCONV=1`；
   但本机 `C:/Temp/...` 又会因此不被转换，两者要在不同命令里分开设。
+
+### 四、版本与发布（2026-11-03 复核）
+
+- 插件 **0.7.38**：npm `dsh-push-host` 的 `dist-tags.latest` 实测 = **0.7.38**（`curl https://registry.npmjs.org/dsh-push-host`）。
+- App **1.34.11 / versionCode 171**：线上 `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=171` 实测 `200 OK`、
+  `Content-Length: 16926629`；提交 `f7afa8d`。
+- 插件自测基线现为 **197/197**（另 `selftest-pair` 59/59、`selftest-remote-bin` 21/21、
+  `selftest-remote-status` 41/41）——2026-11-03 用 DSH 自带 node 复跑四项全绿。

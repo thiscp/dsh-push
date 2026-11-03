@@ -164,7 +164,7 @@ timed 路径行为不变。插件侧修不了（`firstOf` 赢后够不着那条 
 | **任务结束推送** | topic 收到 `DSH 任务结束 [1150afd5]`，正文 `目录: F:\work\work_dsh` + `#name win-test`，priority 3（同轮只发一次） |
 | **UI/任意端作答回声** | 真工具调用返回答案后 topic 收到 `DSH 已答` + `#ans <callId> first`，priority 1（`tools/post-execute` 路径） |
 | 挂载验收 | `--dump-config` 尾部 `# == dsh-push-host` / `- id: push-host` / `name: dsh-push-host` |
-| 纯逻辑回归 | `node plugin-selftest.mjs` → `48/48 checks passed` |
+| 纯逻辑回归 | `node plugin-selftest.mjs` → `48/48 checks passed`（**首轮验收时的基线**；2026-11-03 当前基线 **197/197**，另有 pair 59/59、remote-bin 21/21、remote-status 41/41） |
 
 ## 分发（npm 包）
 
@@ -422,6 +422,31 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
 快速隧道的域名每次重启都变（Cloudflare 免费策略），**但口令不变，所以旧链接仍然可用到过期**；
 域名变了会重推一条新的。想要固定地址需要自己的域名 + 命名隧道，那是下一版的事。
 
+## 0.6 → 0.7.x 新增能力（2026-10-29 之后，逐条实测）
+
+- **扫码配对（0.5.x 起，配套 App 1.34）**：面板把配对载荷 `dshpush://v1?base=&topic=&token=&web=&name=`
+  画成二维码，App 扫一下即配（相机扫或相册选图）；进 volatile 的只有点阵 `{count,bits}`（见下文
+  「浏览器只能写 volatile 字段」那条硬事实）。
+- **App 下载入口**：插件页展示 App 下载二维码，新机器扫码装 APK（`../verify/HANDOVER.md` §7.34）。
+- **一键开通免 provisionToken（0.7.0–0.7.2）**：面板点「一键开通」直接 `POST /enroll`，服务端按 IP
+  限流 2/h、6/d；边缘 nginx 必须开 PROXY protocol 把真实 IP 透传给 provd，否则限流按网关地址算。
+- **推送与作答解耦（0.7.19/0.7.20）**：`host`/`hostToken` 缺失不再让整个 relay 侧停用，只停用作答侧，
+  通知照推；缺 `hostToken` 时 0.7.21 起经 regToken 自愈补发。
+- **10s 内容去重（0.7.21）**：`tools/pre-execute`（`pq-<uuid>`）与 `user-questions/request`
+  （`call_…:ptc:1`）两个入口不再把同一题推两遍；设置面板多一行「作答通道」直接显示当前能否手机作答。
+- **`claimForeground` 默认改 true（0.7.24）+ 判据修正（0.7.25）**：见「配置」一节。
+- **链接自动续期（0.7.30–0.7.34）**：每次上线推一条静默 `#syslink` + `#web <当前 webUrl()>`，App 只更新
+  该设备的网页链接、不弹窗；两条换 topic 的路径（一键开通 / 发通行证）都发 `#sysmove` + `#topic` +
+  `#token` + `#web` + `#name`，App 原地改行、不用重扫。
+- **通行证按 topic 隔离（0.7.36）**：面板 `GET /list?topic=`、吊销 `POST /revoke {name, topic}`，
+  每台机器只看到自己签的那份；吊销前先聚合出服务端真实用户名（面板里填的名字 ≠ 用户名，这是吊销 404 的真因）。
+  `webName` 同时改成可填。
+- **机器名落盘（0.7.38）**：面板只写 volatile `nameText`，由插件 `persistName()` 调
+  `ctx.configEditor.edit()` 落盘——浏览器经 settings RPC 写 config 字段会被持久化进 `cordis.patch.yml`
+  并热重启该插件 fiber，把结果镜像清零。
+
+逐条的验收判据与踩坑记录在 `../verify/HANDOVER.md`：0.7.36 → §7.57、0.7.38 → §7.58、App 1.34.11 → §7.59。
+
 ## 给一个真实用户开通（凭据文件 + 配对）
 
 **目标**：开通一个用户，操作者要做的只有两件事 —— 在 relay 上跑一条开号命令、把打印出来的
@@ -521,9 +546,11 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
 = `HTTP 403`（ntfy 的 topic 级 ACL）；`relay-host-token` 用假 `hk_` = `HTTP 401 bad host token`。
 即"令牌对不对"这件事在手机上动手之前就能判出来。
 
-> **App 侧现状**：App 目前没有导入按钮——relay / topic / readToken 仍要在 App 里手填
-> （见仓库 `README.md` 的"APP 侧"）。导入路径的提案（不改 App，只出方案）在
-> `openspec/changes/dsh-push-distribution/specs/companion-app/spec.md`。
+> **App 侧现状（2026-11-03 更新）**：App 1.34 起有**扫码配对**——相机扫或从相册选一张，
+> 一次收下 base / topic / readToken / web / name 五项（细节见 `../verify/HANDOVER.md` §7.33）。
+> 手填三项仍是兜底路径：一串裸 `tk_…` 通行证会退回内置中继 + topic `dsh`。当年那份「不改 App、
+> 只出导入方案」的提案留在 `openspec/changes/dsh-push-distribution/specs/companion-app/spec.md`，
+> 最终落地走的是扫码那条。
 
 ### 一个用户跑起来之前需要什么（清单）
 
@@ -578,12 +605,18 @@ DSH 有两道栅栏，都是 2026-10-28 实测的：
 | `pushQuestions` | `true` | 关掉就只提问不推送 |
 | `notifyTurns` | `true` | 轮次结束（`agent/turn-stopping`）推 `DSH 任务结束`，即旧 `Stop` hook 的等价物 |
 | `echoAnswers` | `true` | 作答后发 `#ans` 静默回声（撤手机通知；relay 自己的回声写死在 topic `dsh`，多租户下到不了你家 topic） |
-| `claimForeground` | `false` | 打开则**抢前台**：把问题挂在 waterfall 上，手机答得更早；代价是与 Web UI 竞速，见下 |
+| `claimForeground` | **`true`**（0.7.24 起） | 打开则**抢前台**：把问题挂在 waterfall 上，手机答案直接当返回值交回会话；代价是与 Web UI 竞速，见下 |
 | `webLog` | `~/.dsh/web.log` | 只用来取最后一个 `?token=` 拼 `#web` |
 | `webBase` / `webName` | 空 | `#web` 直达链接基址 / `#name` 实例名。**`webBase` 留空不再等于没有网页入口**（v0.1.1）：插件直接改用 web.log 里 DSH 自己打印的那条 URL——能不能打开取决于 DSH 实际绑的地址（绑 `127.0.0.1` 就只对本机可达）。手机要从别的网络打开，就把手机可达的地址写进 `webBase` |
 | `log` | `true` | `ctx.logger` + stdout 诊断 |
 
-### `claimForeground` 为什么默认关
+### `claimForeground`：0.7.24 起默认开（曾经默认关）
+
+**0.7.24 之前默认 `false`**，代价被用户实测出来：默认「事后投递」时手机已经答了、网页却收不到，
+因为会话投影里根本不带那道题（`state=undefined`），答案只能等 timeout。0.7.24 起默认 `true`
+（插件持有前台，答案直接当返回值交回）；0.7.25 又修了「设置里开了却报未开启」——判据改成
+`phoneAnswerable = timed !== false || holdsForeground()`，不再只看默认预设 `ptc` 里的 legacy 条目。
+下面这段是当年选择默认关时的取舍记录，保留备查。
 
 通知层骨架的取舍（research 作者建议、本插件采用）：**监听器 prepend + `return next()`**，
 前台作答权留给 DSH Web UI —— 浏览器在线时体验与现在完全一致，插件只在旁边推通知。
@@ -642,7 +675,8 @@ hook 那边恢复 `hooks.json` 即可回到旧链路（两条链路互不破坏�
 ## 验收
 
 ```powershell
-# 1) 纯逻辑：假 ctx + 假 relay，48 项断言（含 open 期答案必须留在队列里的回归项）
+# 1) 纯逻辑：假 ctx + 假 relay，197 项断言（2026-11-03 实测；首轮验收时是 48 项，
+#    含 open 期答案必须留在队列里的回归项）
 & $dsh-node host-plugin\plugin-selftest.mjs
 #   需要本地 node_modules/@deepseek-ai/schemastery（宿主本来自带，测试时用 junction 指过去）
 
@@ -732,7 +766,9 @@ prompt 里要写明"不要传 timeout 字段"。
 
 - **三个触发点都在插件里**（提问推送 / 结束推送 / 作答回声）；`deploy/windows/hooks.json` 那条
   旧 hook **必须保持退役**（现在是 `{"hooks":{}}`），否则双推。
-- **`mode: legacy` 下手机只能收通知、不能作答**（见上文硬约束 1）。
+- **`mode: legacy` 且插件没持有前台时，手机只能收通知**（见上文硬约束 1）。0.7.24 起
+  `claimForeground` 默认 true，所以默认配置下 legacy 的问题也能被手机答；判据是
+  `phoneAnswerable = timed !== false || holdsForeground()`（0.7.25）。
 - **模型显式传 `timeout: -1` 时也是 legacy 路径**：那个"必须等到答案"的调用没有 timed wait，
   手机答不了（问题会当场以 `NO_PROVIDER` 结束）。这是调用方的选择，不是链路故障。
 - 手机作答经过 relay 队列，**队列里的 callId 带 `|`**：任何把它交给 shell 的地方都必须引号包住
@@ -742,8 +778,9 @@ prompt 里要写明"不要传 timeout 字段"。
   回滚：`Enable-ScheduledTask -TaskName DshAnswerBridge` + `Start-ScheduledTask`）。
 - **单实例单 host**：一个进程一个 `host`/`topic`；多台机器用 `deploy/relay-user-add.sh <user>` 各开一条。
 - 令牌从**凭据文件或环境变量**读（都不写进 YAML）；插件与宿主同进程同权限，装之前按第三方插件审一遍代码。
-- **配对只做到"产出载荷"**：载荷怎么进 App 由 App 决定；App 目前没有导入按钮（提案见
-  `openspec/changes/dsh-push-distribution/specs/companion-app/spec.md`），所以手机上仍要手填三项。
+- **配对：插件产出载荷，App 已能扫码导入**（App 1.34 起「扫码配对」支持相机扫与相册选图，
+  载荷 `dshpush://v1?base=&topic=&token=&web=&name=`）；手填三项仍是兜底路径——一串 `tk_…`
+  通行证会退回内置中继 + topic `dsh`。
 - **本包不包含 relay 服务端**：`deploy/` 里的脚本与 `answer-relay.py` 是服务端侧，需要操作者自己在
   自己的主机上部署（见 `../deploy/README.md`）；默认 `relayBase` 指向本项目的实例，别家部署要改。
 

@@ -9,7 +9,7 @@
 | 编排机 | DSH Windows（跑 DSH Web 这台） | 跑 `verify/dsh-app-verify.ps1`，持有到其余三方的 ssh key | ssh + curl.exe + scp |
 | 编译机 | Linux VM（ssh 目标写在 `config.local.ps1`） | gradle assembleDebug | JDK17 + Android SDK34 + gradle-8.7 |
 | 模拟器机 | 家里笔电（Windows，tailscale 可达） | Android 16 (API 36) AVD 常驻 + adb | WHPX、计划任务 `dsh-emu-sw`（swiftshader，见下方 `-gpu host` 那条）、`G:\Android` SDK 树（`emu-bootstrap.ps1` 一键装） |
-| 分发/中继 | 云主机（ssh 别名 `aliyun`）+ ntfy 服务器 | APK 下载 `https://<ntfy>/dl/dsh-push.apk?v=<versionCode>`；推送 topic `dsh` | 写令牌发消息、读令牌给 APP |
+| 分发/中继 | 云主机（ssh 别名 `aliyun`）+ ntfy 服务器 | APK 下载 `https://<ntfy>/dl/dsh-push.apk?v=<versionCode>`；推送 topic `dsh`（**App 1.33.0 起通行证可带别的 topic，每台设备一个**；APK 更新通知仍走 `dsh`） | 写令牌发消息、读令牌给 APP |
 
 ## 一键用法（编排机上）
 
@@ -93,6 +93,11 @@ powershell -File verify\dsh-app-verify.ps1
   `-Topic` 只改发布端 —— 换测试 topic 时模拟器收不到，`push-received`/`mid-unique`/`entry-unread` 三项必然 FAIL；
   **2026-10-13 更正**：ntfy 的 `global-topic-limit` 已由 5 提到 **50**，但上限只是**第二道门** —— 本机 `auth-default-access: deny` 且逐 topic 精确授权，所以对任何新 topic 发消息一律 **403 forbidden(40301)**（与上限无关）；要跑测试 topic 得先显式授权一个专用 topic：`docker exec ntfy ntfy access <user> <topic> write-only`（订阅方再加 `read-only`），现网已备好 `dsh-verify`（dshpub 写 / dshphone 读）。不加授权就只能
   `-Topic dsh`（代价：手机收到一条 `auto-verify <epoch>` 测试推送，不是 APK 更新通知）。
+- **2026-11-03 更正：上面「订阅哪个 topic 是编译期常量」只对老配置成立。** App **1.33.0** 起解析通行证
+  `dshpush://v1?base=&topic=&token=&web=&name=`，**按通行证里的 base+topic 派生订阅地址**；**1.34.0** 起
+  更是**每台设备一条 WS**、设备清单存在 prefs 里。只有粘回一串**裸 `tk_…`** 通行证时才退回内置中继 +
+  topic `dsh`。⇒ 「换测试 topic 时 `push-received`/`mid-unique`/`entry-unread` 必然 FAIL」这一条，
+  现在只在「prefs 里种的是裸读令牌」时成立；喂一条带 topic 的通行证（扫码或相册选码）就能收。
 - 推送正文里别放和断言正则冲突的字样（本项目 mid 断言曾被正文里的 "mid" 字样干扰）
 
 **连模拟器机（笔电）**

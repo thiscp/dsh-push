@@ -4,6 +4,10 @@
 
 ## 工作机（跑 DSH 的 Linux 机器，`work/`）
 
+> **2026-11-03 状态标注：下面三行是「旧 hook 桥时代」的部署，现已退役。** 现役链路是插件
+> `host-plugin/`（进程内推送 + 轮询回收作答），`hooks.json` 现为 `{"hooks":{}}`、老 bridge 已 disable。
+> 这些文件保留是为了回滚与对照，**别再当现役链路**（见 `../host-plugin/README.md`「范围与限制」）。
+
 | 文件 | 部署位置 | 说明 |
 |---|---|---|
 | `dsh-ntfy-push` | `/usr/local/bin/`（root） | DSH hook → ntfy 推送。由 net.patch.yml 里 `hooks-claude-code` 插件的 hooks.json 调起（Stop + PreToolUse）。去重：Stop 3s（按 session）、提问 15s（按 tool_use_id）。调试日志 `~/.cache/dsh-ntfy-push/{invoke,stdin,error}.log` |
