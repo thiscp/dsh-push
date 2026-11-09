@@ -52,7 +52,7 @@ DSH 宿主进程
 - 历史链路（已退役，别再配）：`hooks.json` 的 Stop/PreToolUse → `deploy/{work|windows}/dsh-ntfy-push`，作答走 `deploy/work/dsh-answer-bridge.mjs`。旧 hook 必须保持退役（现在是 `{"hooks":{}}`），否则双推
 - 全部凭据走外部文件，不入库（见 `deploy/README.md`）
 
-## APP 功能一览（v1.34.11）
+## APP 功能一览（v1.34.12）
 
 - 推送接收：前台服务 + `BOOT_COMPLETED` 自启（Android 16 适配）+ WS 断线自动重连
 - 通知即答：问题在通知栏原生渲染（单选/多选/自填），提交后 DSH 任务当场继续；应用内快答浮窗 + ComfyUI 生成的六套立绘成功动画（透明背景 webp）
@@ -64,6 +64,7 @@ DSH 宿主进程
 - **扫码配对**：插件面板出二维码 → App「扫码配对」（相机扫或从相册选图）即配；载荷 `dshpush://v1?base=&topic=&token=&web=&name=`
 - **机器名跟随**：`#name` 热改名（v1.34.9）；改名后重扫不再出现重复设备行（v1.34.10：`upsert()` 按 id → 名字 → **web 的 host:port** 归并）；网页顶栏标签取设备清单里的名字（v1.34.11 `Devices.nameForWeb()`），入口也从「DSH 入口」胶囊改成**点状态卡**（v1.34.11）
 - **链接自动续期**：吃插件的 `#syslink` / `#sysmove`（v1.34.8），网页 token 变了或 topic 漂移都不用重扫
+- **适配 DSH 0.2.2 侧栏改版（v1.34.12）**：不再用 `transform:none` 覆盖宿主的收起位移——收起侧边栏后「工作区」那一行不再浮在正文上；改用后代选择器隐藏被自绘图标顶替的原生 svg，窄屏抽屉里「插件市场」「专家」不再各显示两个图标；鲸鱼浮钮改按几何判定展开/收起
 
 ## 插件功能一览（`dsh-push-host` 0.7.38）
 

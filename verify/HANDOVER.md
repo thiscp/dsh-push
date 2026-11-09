@@ -12,6 +12,7 @@
 
 | 字段 | 值 |
 |---|---|
+| **✅ App v1.34.12 / 172 已发布：内置浏览器适配 DSH 0.2.2 侧栏改版（浮空「工作区」与重复导航图标）** | 用户「dsh 更新到最新版后，左侧的插件栏好像出现重复的了。还有就是工作区这一栏，我把侧边栏缩放后还在屏幕上显示」。CDP 取证（裸 Edge 基线 vs App WebView 现场，360x698 dpr4）定位到**两个独立根因**。**① 浮空「工作区」是我们自己的注入 CSS 造成的**：0.2.2 把侧栏收起改成「列 `translateX(-280)` + `visibility:hidden`」，而 `bw-narrow-fix` 里那条 `transform:none!important`（`e67e56b` / v1.32.4 为绕开 `backdrop-filter` 裁剪加的）把位移杀掉 ⇒ 列停在 x=0，列内 `GAkraW_sectionLabel GAkraW_wide`、`GAkraW_iconButton` 的 computed visibility 又被 DSH 自己的 `*_wide` 规则穿透成 visible ⇒ 标题加三个图标浮在正文上；裸 Edge 不注入时列在 -280 屏外，所以只有 App 里看得见。**② 重复图标是 0.2.2 挪 DOM 造成的**：导航行 svg 从 button 直接子挪进 `span.wtg9ga_panelGlyph > div[data-slot]`，于是 DSH 核心 `[data-dsh-market-nav-icon] > svg{display:none}` 与插件 `@michengai/dsh-agency-agents` 1.2.26 `[data-aag-nav-icon] > svg{display:none!important}` 两条**直接子**选择器同时失配、而 `::before` 自绘图标照常画 ⇒「插件市场」（DSH 核心画的）与「专家」（插件画的）各多一个图标；桌面 1280 宽不打标（实测该元素数 0）故不复现。修法四处（只动 `WebActivity.kt` 注入段）：删 `transform:none`（保留真正起作用的 `backdrop-filter:none`/`filter:none`）、追加 `[data-dsh-market-nav-icon] svg,[data-aag-nav-icon] svg{display:none!important}`、`bwFabOpen()` 改几何判据 `r.width>0&&r.right>1`、观察器锚点加 `[class*='_sidebarCol'] [class*='_root']` 兜底。验收：emulator-5554 装 172 后 CDP 实测收起态列 `x=-280`、`tf=matrix(1,0,0,1,-280,0)`、屏内浮空元素 **9→0**、鲸鱼钮 `left` 由 +6px 变负（正确半隐），展开态 `x=0`、遮罩 `opacity=1`、注入样式 2307→**2360 B**；双图标在裸 Edge 360 宽实测修复（原生 svg 变 0x0 hidden），**模拟器那个 DSH 会话只有 5 条导航行、没有「插件市场/专家」，故 App 侧未复现该项**。发布 -Deploy **10/10**（geom-matrix `verdict=ENV states=0` 不拦发布）、线上 `?v=172` 200 + **16926693 B**、update-notify `nfotPxE0MO6C`、四处公共镜像 `6d431df`、私有 HEAD `36ff6e1`。细节见 §7.60。 |
 | **✅ 插件 0.7.38 + App v1.34.11 / 171 已发布：通行证按机器隔离、机器名终于存得下来、网页顶栏跟随设备清单** | 三段连修（2026-11-02 → 11-03）。**① 0.7.36 / 1.34.9**：通行证按 topic 隔离——中继 `/usr/local/bin/dsh-provd.py` 加 `GET /list?topic=`、`POST /revoke` 带 `{name, topic}`，三台机器各自只看到自己的（旧行为是所有人共用一份、谁都能吊销谁）；吊销 404 的真因是面板给的名字不是服务端真实用户名，现在先聚合真实用户名再删；面板机器名改成可填。**② 0.7.38 / 1.34.10**：「点保存没有提示、重扫还是旧名」两层独立真因——面板写 `webName` 不落盘（只写 volatile `nameText`）⇒ 插件 `persistName()` 用 `ctx.configEditor.edit()` 自己落盘；App `Devices.idOf()` 把机器名算进 id ⇒ 改名后重扫出两行，`upsert()` 归并顺序改为 id → 名字 → **web 的 host:port**。**③ 1.34.11 / 171**：删掉重复的「DSH 入口」胶囊（入口改成点状态卡），新增 `Devices.nameForWeb(ctx, web)` 让网页顶栏以设备清单为准（根因：手机里两份清单，`Devices` 由配对/改名写、`DshHosts` 由推送 `#name` 喂，顶栏原先只看后者）。验收：模拟器相册配对 `name=VM1` 后点该行 → 顶栏 `uiautomator dump` 读到 `DSH 网页 · VM1`；判新旧看 `classes3.dex`（`grep -ac nameForWeb` = 2）。发布与自测：selftest **197/197** + pair 59/59 + remote-bin 21/21 + remote-status 41/41（2026-11-03 复跑全绿）、npm `latest` = 0.7.38、线上 `?v=171` 200 + 16926629 B、提交 `f7afa8d`。细节见 §7.57 / §7.58 / §7.59。 |
 | **✅ 插件 0.7.18 + App v1.34.4 / 164 已发布：二维码终于带机器名，App 再用网页地址认机器——手工配凭据的 VM1 不再顶掉 laptop** | 用户「我刚刚更新到最新版，扫VM1的配对码，显示的laptop，点进去还是VM1」。第二层根因：VM1 凭据是手工配的、`credentials.json` 里**没有 `host`**，而插件 `payload()` 的 name 只取 `resolved.host` ⇒ 二维码里根本没有 `name=` ⇒ App 落进 §7.47 的「无机器名→退老逻辑」分支，把 laptop 那行的 token/web 换成 VM1 的。修法两侧都改：插件 `pairName()` = `host → webName → os.hostname()`；App 加 `webOrigin()/hostOf()`，无机器名时按**网页 host:port 指纹**判是不是另一台（清单里已有别的机器且没有一台对得上 ⇒ 新增一行）。验收用载荷字节数：VM1 的码 183 → **210 字节**，差的正是 `&name=%E6%B5%8B%E8%AF%95VM1`。插件 selftest 161+59+21+41 全过；APK 16923633 字节、`?v=164` 200+sha256 一致、通知 id `7rhI2Y32zh0k`；VM1 已升 0.7.18 并重启（新 token 已给用户）。细节见 §7.48。 |
 | **✅ v1.33.20 / 126 已发布：右面板打开时左边缘不再被侧栏糊住——只在收起态把 rightbarCol 抬到 90，复原笔电的绘制顺序** | 用户「右边侧边栏打开的时候，VM上的左边侧边栏会完全遮挡住一部分，笔电上的是半透明的，能保持和笔电上一样的效果吗」。CDP 实测根因：右面板是 rightbarCol 里的 absolute 满屏浮层（**收起态实测 box 也是 0,0,360,671、底色 transparent**），DOM 顺序排在侧栏之后 ⇒ 原生笔电是「面板在上、侧栏透过它的透明底看得见」；而 125 给 *_sidebarCol 抬的 z-index:80 把**收起态**侧栏反过来压在面板上，面板左边那 56px 被 0.45 白纱糊住。同机 A/B 截图与用户三张图逐像素对上：C:/Temp/ab-vm1-a.png（卡片被切在侧栏右边缘、文件夹图标被吃一半）vs ab-vm1-b.png（卡片伸到侧栏底下、图标透过侧栏可见）。**第一版不分状态直抬 z:90 被四态矩阵拦下**（测试VM1/expanded 侧栏 alpha 0.45 不在 [0.87,0.97]——矩阵是命中测试量底色，量到的是面板的 0.45），改成只在收起态抬：[class*='_frame']:has([class*='_collapsed']) [class*='_rightbarCol']{position:relative!important;z-index:90!important}；:has() 判据实测精确（收起态全页只有侧栏根带 _collapsed、展开态一个都没有），老 WebView 不认 :has() 就整条丢弃 = 退回 125 行为。装机实测 injected=true、hasRule=true、收起态 rbZ=90、colZ=80 仍在。发布 -Deploy **10/10**、geom-matrix 冷跑 **PASS states=4 fails=0**（流水线里那次是 ENV 超时不算，装机后单独冷跑过；顺带查出 CDP 的 setDeviceMetricsOverride 会残留在 WebView 里、让矩阵静默退出，跑前先 clearDeviceMetricsOverride + force-stop 重启 App）、update-notify Ou8lHtNSv8Hf、线上 11,099,972 B = 本机构建字节数。**真机验收：用户 2026-10-18 装 126 后回复「安装最新版，验证通过」**——右面板打开时左边缘透出、展开态仍可点，这条需求到此关闭 |
@@ -4432,3 +4433,58 @@ App 侧（`android-app/app/src/main/java/xyz/cpyh/dshpush/PushService.kt`）：
   `Content-Length: 16926629`；提交 `f7afa8d`。
 - 插件自测基线现为 **197/197**（另 `selftest-pair` 59/59、`selftest-remote-bin` 21/21、
   `selftest-remote-status` 41/41）——2026-11-03 用 DSH 自带 node 复跑四项全绿。
+
+---
+
+## §7.60 内置浏览器适配 DSH 0.2.2 侧栏改版（App 1.34.12 / 172，2026-11-09）
+
+### 一、现象与判据
+
+用户真机两条投诉：① 收起侧边栏后「工作区」那一行（标题 + 搜索/视图选项/加工作区三个图标）仍浮在正文上；
+② 左侧插件栏出现重复图标。裸 Edge（无 App 注入）在 390x844 与 360x698(dpr4,mobile) 下看同一台 DSH 0.2.2
+**完全正常**（8 个导航标签各 n=1、每行 1 个 svg；侧栏收起时 `mP3x-q_sidebarCol` x=-280 + `visibility:hidden`）
+⇒ 先排除「DSH 网页自己坏了」，再进 App WebView 现场取证。
+
+App WebView 现场（`adb root` → `am start -n xyz.cpyh.dshpush/.WebActivity --es url http://10.0.2.2:3081/?token=…`
+→ `/proc/net/unix` 找 `webview_devtools_remote_<pid>` → `adb forward`）实测：
+`mP3x-q_frame` 的 grid-template-columns 是 `0px 360px 0px`（我们注入的规则），列 `x=0`、`visibility:hidden`，
+但列内 `GAkraW_sectionLabel GAkraW_wide`、`GAkraW_iconButton GAkraW_wide`、`GAkraW_iconButton`、`_root_1p5el_1`
+的 computed visibility 是 **visible** ⇒ 这一行浮在正文上。**结论：两处异常都是 App 侧要改。**
+
+### 二、根因
+
+1. **浮空工作区**：`bw-narrow-fix` 里 `[class*='_sidebarCol']{…transform:none!important…}`。
+   `git log -S` 追到 `e67e56b`「app: fix the narrow sidebar panel being clipped by a backdrop-filter ancestor (v1.32.4)」——
+   同一条规则里 `backdrop-filter:none!important` + `filter:none!important` 才是真修法，`transform:none` 对该 bug 冗余，
+   而 0.2.2 恰好要用 `translateX(-280)` 收起侧栏 ⇒ 被我们杀掉。
+2. **重复图标**：0.2.2 的导航行 DOM 是
+   `<button class="wtg9ga_panelRow"><span class="wtg9ga_panelGlyph"><div data-slot="sidebar.panellist"><svg …></div></span><span class="wtg9ga_panelTitle wtg9ga_wide">…</span></button>`，
+   svg 距 button 隔了两层 ⇒ 核心与插件那两条 `> svg` 直接子选择器双双失配，`::before`（16x16 mask）照常画。
+   第二个图标是**伪元素**，只数真实子元素会漏（`row::before` 实测 content=\"\"、w=16px、h=16px）。
+   「插件市场」那行是 **DSH 0.2.2 核心自己**画的（按钮带 `data-dsh-market-nav-icon=""`），「专家」那行才是插件画的。
+3. 顺带查出两处注入 JS 在 0.2.2 已静默空转：`bwFabOpen()` 只量面板盒宽（0.2.2 收起态盒宽仍是 280）⇒ 恒判展开；
+   观察器锚点 `_2H3hWW_root` 与「按外壳哈希推前缀」两条路都落空 ⇒ 观察器从不挂载。
+4. 普查（0.2.2 类名令牌计数）：`_collapsed`=0、`mAtvLq_`/`hIlkoa_`/`_9lTDKa_`/`_2H3hWW_`/`EBLgjq_`/`WgQWqa_` 全 =0，
+   `wtg9ga_`=40、`GAkraW_`=19 ⇒ **六条按老哈希类名认元素的规则（含 ≥40px 触控靶心）在 0.2.2 全部空转**。
+   本轮**故意不动**它们：老版 DSH 用户仍需要，且空转无害；是否重写几何化靶心另议。
+
+### 三、修法（`WebActivity.kt` 注入段四处，提交 `972c41a`）
+
+- `:439` 删 `transform:none!important;`（保留 `-webkit-backdrop-filter:none!important;filter:none!important;`）。
+- `:470` 后追加 `[data-dsh-market-nav-icon] svg,[data-aag-nav-icon] svg{display:none!important}`（后代选择器，新旧 DOM 都命中）。
+- `:919` `bwFabOpen()` 改 `if(!s)return false;var r=s.getBoundingClientRect();return r.width>0&&r.right>1;`。
+- `:938` 观察器目标加兜底 `if(!psb)psb=document.querySelector("[class*='_sidebarCol'] [class*='_root']");`。
+- 语法闸：`node verify\extract-injected-js.mjs` + `node --check` ⇒ 两段内联注入 JS 全 SYNTAX_OK。
+
+### 四、验收与遗留
+
+- 修前基线（1.34.11 原包）：列 `x=0 tf=none vis=hidden`、屏内浮空元素 **9 个**、鲸鱼钮 `left=6px`。
+- 修后（装 172 的同一台模拟器）：列 `x=-280 tf=matrix(1,0,0,1,-280,0)`、**浮空 0 个**、钮 `left` 为负；
+  展开态列 `x=0 vis=visible`、遮罩 `opacity=1`、面板 fixed 280、5 条导航行各 1 个图标。
+  现场确认注入样式 `bw-narrow-fix` 由 2307 B 变 **2360 B**（−25 删 transform、+78 加图标规则）。
+- 双图标只在裸 Edge 360 宽验到（模拟器那个 DSH 会话只有 5 条导航行，`data-dsh-market-nav-icon`/`data-aag-nav-icon`
+  元素数均 0，WS 已连、reload 后仍如此，原因未查）；桌面 1280 宽确认不受影响。
+- 上游已备好两份 issue 草稿（本机 `C:/Temp/dsh022/upstream-dsh.md`、`upstream-agency-agents.md`）：
+  建议核心与插件都把 `> svg` 改成后代选择器；核心另建议收起态让子元素继承 `visibility:hidden`。
+- 发布：`release.ps1 -Version 1.34.12 -VersionCode 172` → -Deploy **10/10**（geom-matrix `verdict=ENV states=0`，
+  本轮不拦发布）、线上 `?v=172` 200 + 16926693 B、update-notify `nfotPxE0MO6C`、四处镜像 `6d431df`。

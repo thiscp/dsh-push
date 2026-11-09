@@ -14,18 +14,18 @@ dsh-push = **手机 App**（`xyz.cpyh.dshpush`，大肥鱼盯梢）+ **DSH 插�
 
 ---
 
-## §1 当前状态（2026-11-03）
+## §1 当前状态（2026-11-09）
 
 | 项 | 值 |
 |---|---|
-| App 版本 | **1.34.11 / versionCode 171**，16926629 B |
-| 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=171` |
+| App 版本 | **1.34.12 / versionCode 172**，16926693 B |
+| 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=172` |
 | 博客下载 | `https://blog.cpyh.xyz/dsh-push-latest.apk`（每小时 :17 由 `blog-dl-sync.py` 自动同步） |
 | 插件版本 | **0.7.38**（npm `dsh-push-host`，dist-tag latest） |
 | 插件 tgz（博客） | `https://blog.cpyh.xyz/dl/dsh-push-host-latest.tgz` |
-| 仓库 HEAD | 见 `git log --oneline -1`（1.34.11 提交 `f7afa8d`） |
+| 仓库 HEAD | 见 `git log --oneline -1`（1.34.12 发版提交 `36ff6e1`，代码改动 `972c41a`） |
 | 公共镜像 | gitee / github / origin master / github main 四处同 commit（`export-public.ps1`） |
-| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.59；2026-11-03 修过一次重号：原两个 §7.57 → 现 §7.57/§7.58，原 §7.58 → §7.59）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
+| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.60；2026-11-03 修过一次重号：原两个 §7.57 → 现 §7.57/§7.58，原 §7.58 → §7.59）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
 
 **没有未完成的开发任务**。下一步等用户提。
 
