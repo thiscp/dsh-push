@@ -436,7 +436,7 @@ class WebActivity : Activity() {
                         "[class*='_frame']:has([class*='_sidebarCol']){grid-template-columns:0px minmax(0,1fr) minmax(0,0px)!important}" +
                         "[class*='_sidebarCol'] [class*='_root'][class*='_collapsed']{display:none!important}" +
                         "[class*='_sidebarCol']{position:relative!important;z-index:80!important;overflow:visible!important;backdrop-filter:none!important;" +
-                        "-webkit-backdrop-filter:none!important;filter:none!important;transform:none!important;" +
+                        "-webkit-backdrop-filter:none!important;filter:none!important;" +
                         "contain:none!important;will-change:auto!important}" +
                         "[class*='_sidebarCol']>*>[class*='_root']:not([class*='_collapsed']){position:fixed!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;" +
                         "left:0;top:0;bottom:0;width:280px!important;max-width:280px!important;" +
@@ -467,7 +467,13 @@ class WebActivity : Activity() {
                         "justify-content:center!important;margin:-8.5px 0!important}" +
                         "[class*='WgQWqa_chevron']{min-width:20px!important;min-height:40px!important;" +
                         "display:inline-flex!important;align-items:center!important;" +
-                        "justify-content:center!important;margin:-8.5px -3.9px -8.5px 1.3px!important}}\";" +
+                        "justify-content:center!important;margin:-8.5px -3.9px -8.5px 1.3px!important}" +
+                        // DSH 0.2.2 起导航行的 svg 挪进 span.glyph > div[data-slot]（不再是 button 直接子），
+                        // DSH 核心自己那条 [data-dsh-market-nav-icon] > svg{display:none} 与第三方插件
+                        // @michengai/dsh-agency-agents 的 [data-aag-nav-icon] > svg 双双失配，而它们的 ::before
+                        // 自绘图标照常画 ⇒ 抽屉里「插件市场」「专家」各出现两个图标（真机 m00584 实证，
+                        // 桌面 1280 宽不复现）。改成后代选择器 = 让两家的原意重新生效，App 不加新图标。
+                        "[data-dsh-market-nav-icon] svg,[data-aag-nav-icon] svg{display:none!important}}\";" +
                 "document.head.appendChild(s);" +
                 // ★ v1.32.16 D2（P2）：上面整段样式表按**类名前缀**认元素，换宿主哈希命名后
                 //   **整体空转**。vm1 实测（verify/qa-d1-vm1b.json 的 census）：BynINW_=0、
@@ -916,7 +922,11 @@ class WebActivity : Activity() {
                 //   1.33.30 首版拆 33 行曾把编译器栈炸穿 StackOverflowError。）
                 "function bwFabGet(){var p=null;try{p=JSON.parse(localStorage.getItem('bwFabPos'));}catch(e1){}if(!p||(p.side!=='left'&&p.side!=='right')||typeof p.y!=='number')p=window.__bwFabPos;if(!p||(p.side!=='left'&&p.side!=='right')||typeof p.y!=='number')p={side:'left',y:0.5};return p;}" +
                 "function bwFabSave(p){window.__bwFabPos=p;try{localStorage.setItem('bwFabPos',JSON.stringify(p));}catch(e2){}}" +
-                "function bwFabOpen(){var s=document.querySelector(\"[class*='_sidebarCol'] [class*='_root']:not([class*='_collapsed'])\");return !!(s&&s.getBoundingClientRect().width>0);}" +
+                "function bwFabOpen(){var s=document.querySelector(\"[class*='_sidebarCol'] [class*='_root']:not([class*='_collapsed'])\");" +
+                        // DSH 0.2.2 收起侧栏改用「列 translateX(-280) + visibility:hidden」，不再有 _collapsed 类，
+                        // 面板盒宽仍是 280 ⇒ 只量 width 会恒判「展开」，鲸鱼钮在收起态也全显（实测 left=6px）。
+                        // 加一条几何判据：面板右缘必须真在屏幕内才算展开——老宿主收起态是 display:none（宽 0）同样成立。
+                        "if(!s)return false;var r=s.getBoundingClientRect();return r.width>0&&r.right>1;}" +
                 "function bwFabPlace(f,p,anim){var vw=window.innerWidth,vh=window.innerHeight;var cy=Math.min(Math.max(p.y*vh,64),vh-64);var op='1';var x=p.side==='right'?(bwFabOpen()?vw-50:vw-22):(bwFabOpen()?6:-22);if(!bwFabOpen()){op='.5';}f.style.transition=anim?'left .18s ease-out,top .18s ease-out,opacity .18s ease-out':'none';f.style.left=x+'px';f.style.top=Math.round(cy)-22+'px';f.style.transform='none';f.style.opacity=op;}" +
                 "function bwFab(){var f=document.getElementById('bw-whale-fab');if(!f&&document.body){f=document.createElement('button');f.id='bw-whale-fab';f.type='button';f.setAttribute('aria-label','Toggle sidebar');f.textContent='🐳';" +
                 "f.style.cssText='position:fixed;left:-22px;top:50%;z-index:120;width:44px;height:44px;border-radius:50%;padding:0;border:1px solid rgba(255,255,255,.25);background:rgba(18,24,40,.55);color:#fff;font-size:22px;display:flex;align-items:center;justify-content:center;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);touch-action:none;box-shadow:0 4px 16px rgba(0,0,0,.35)';" +
@@ -936,6 +946,9 @@ class WebActivity : Activity() {
                 "window.__bwPanelBg=bwPanelBg;bwPanelBg();" +
                 "setTimeout(bwPanelBg,300);setTimeout(bwPanelBg,1200);" +
                 "var psb=document.querySelector(\"[class*='_2H3hWW_root']\");" +
+                        // 0.2.2 换了 CSS-module 命名空间（侧栏根 = *_root *_quietBars，外壳 = mP3x-q_frame），
+                        // 老锚点与按外壳哈希推前缀两条路都落空 ⇒ 观察器从不挂载。兜底用结构选择器。
+                        "if(!psb)psb=document.querySelector(\"[class*='_sidebarCol'] [class*='_root']\");" +
                 "if(!psb&&bwPrefix())psb=document.querySelector(\"[class*='\" + bwPrefix() + \"_root']\");" +
                 "if(psb&&!window.__bwPanelBgObs){window.__bwPanelBgObs=1;" +
                 "new MutationObserver(function(){bwPanelBg();})" +
