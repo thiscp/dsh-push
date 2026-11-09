@@ -57,7 +57,7 @@ function hostsFromPrefs() {
     return { name: h.name, url: h.url || h.baseUrl };
   });
 }
-const PROBE = "(" + "function(){var J=JSON.stringify;function R(n){if(!n)return null;var r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),x:Math.round(r.left)}}function A(n){if(!n)return null;var cs=getComputedStyle(n);var m=(n.getAttribute('style')||'').match(/background-color:[^;]+/);return {bg:cs.backgroundColor,inline:m?m[0].slice(0,60):''}}var o={};o.vw=window.innerWidth;o.vh=window.innerHeight;o.host=location.host;o.pinned=!!window.__bwW;o.sbPub=!!window.__bwSbEl;var fc=document.querySelector('[class*=centerCol]');o.centerCol=R(fc);o.colW=(function(){var sc=document.querySelector('[class*=_sidebarCol]');return sc?Math.round(sc.getBoundingClientRect().width):-1})();o.fab=!!document.getElementById('bw-whale-fab');o.convVar=fc?String(getComputedStyle(fc).getPropertyValue('--dsh-conversation-column-width')).trim():'';var sb=window.__bwSbEl||null;var list=document.querySelectorAll('div,section,aside');var best=null;for(var i=0;i<list.length;i++){var q=list[i];var cls=String(q.className);if(cls.indexOf('_root')<0)continue;var r=q.getBoundingClientRect();if(r.height<o.vh*0.6||r.left>2)continue;if(!best||r.width<best.getBoundingClientRect().width)best=q}sb=sb||best||document.querySelector('[class*=_root]');o.sbFromCls=!!window.__bwSbEl?'__bwSbEl':'fallback';o.sbCls=sb?String(sb.className).slice(0,60):null;o.sbRect=R(sb);o.sbBg=A(sb);var de=getComputedStyle(document.documentElement);o.docBg=de.backgroundColor;o.bodyBg=document.body?getComputedStyle(document.body).backgroundColor:null;return J(o)})()";
+const PROBE = "(" + "function(){var J=JSON.stringify;function R(n){if(!n)return null;var r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),x:Math.round(r.left)}}function A(n){if(!n)return null;var cs=getComputedStyle(n);var m=(n.getAttribute('style')||'').match(/background-color:[^;]+/);return {bg:cs.backgroundColor,inline:m?m[0].slice(0,60):''}}var o={};o.vw=window.innerWidth;o.vh=window.innerHeight;o.host=location.host;o.pinned=!!window.__bwW;o.sbPub=!!window.__bwSbEl;var fc=document.querySelector('[class*=centerCol]');o.centerCol=R(fc);o.colW=(function(){var sc=document.querySelector('[class*=_sidebarCol]');o.colRect=R(sc);o.colVis=sc?getComputedStyle(sc).visibility:null;return sc?Math.round(sc.getBoundingClientRect().width):-1})();o.fab=!!document.getElementById('bw-whale-fab');o.convVar=fc?String(getComputedStyle(fc).getPropertyValue('--dsh-conversation-column-width')).trim():'';var sb=window.__bwSbEl||null;var list=document.querySelectorAll('div,section,aside');var best=null;for(var i=0;i<list.length;i++){var q=list[i];var cls=String(q.className);if(cls.indexOf('_root')<0)continue;var r=q.getBoundingClientRect();if(r.height<o.vh*0.6||r.left>2)continue;if(!best||r.width<best.getBoundingClientRect().width)best=q}sb=sb||best||document.querySelector('[class*=_root]');o.sbFromCls=!!window.__bwSbEl?'__bwSbEl':'fallback';o.sbCls=sb?String(sb.className).slice(0,60):null;o.sbRect=R(sb);o.sbBg=A(sb);var de=getComputedStyle(document.documentElement);o.docBg=de.backgroundColor;o.bodyBg=document.body?getComputedStyle(document.body).backgroundColor:null;return J(o)})()";
 let ws = null, id = 0; const pend = new Map();
 const send = (m, p) => new Promise((res, rej) => { const i = ++id; pend.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method: m, params: p || {} })); setTimeout(() => { if (pend.delete(i)) rej(new Error('CDP 超时 ' + m)); }, 30000); });
 const ev = async (x) => { const r = await send('Runtime.evaluate', { expression: x, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error('JS:' + JSON.stringify(r.exceptionDetails).slice(0, 200)); return r.result && r.result.value; };
@@ -169,7 +169,15 @@ function judge(tag, o) {
     // v1.33.29：收起态侧栏整个 display:none——alpha 读不到（旧 [0.4,0.5] 断言作废，
     // 且 PROBE 的 _root 兜底会抓到 left=0 的聊天根误判）。改断言侧栏列(*_sidebarCol)
     // 实测宽度已塌到 0（colW<8），配合上面的 FAB 存在 + 聊天列满宽即等价于旧断言。
-    if (o.colW >= 8) bad.push('收起态侧栏列未隐藏 colW=' + o.colW);
+    // DSH 0.2.2 起收起态换了机制：轨道不再压成 0px，而是整列 translateX(-280) +
+    // visibility:hidden（App 1.34.12 删掉注入段里的 transform:none!important 才恢复这套机制，
+    // 见 HANDOVER §7.60）。所以「已收起」判据改成三选一：轨道塌成 0 / 计算样式 visibility:hidden /
+    // 整列移出屏幕左缘。三条都不成立才算没隐藏——那正好是「浮空工作区」这个回归的形态，
+    // 比旧的 colW<8 更贴真机（旧断言在 0.2.2 上会把正常收起误判成 FAIL）。
+    const colOff = !!(o.colRect && o.colRect.x + o.colRect.w <= 2);
+    if (!(o.colW < 8 || o.colVis === 'hidden' || colOff)) {
+      bad.push('收起态侧栏列未隐藏 colW=' + o.colW + ' vis=' + o.colVis + ' x=' + (o.colRect ? o.colRect.x : '?'));
+    }
   }
   const tr = String(o.docBg).indexOf('rgba(0, 0, 0, 0)') >= 0 || String(o.docBg) === 'transparent';
   if (!tr) bad.push('页面不透明(壁纸红线) html=' + o.docBg);

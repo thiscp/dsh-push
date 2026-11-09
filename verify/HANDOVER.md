@@ -4486,5 +4486,26 @@ App WebView 现场（`adb root` → `am start -n xyz.cpyh.dshpush/.WebActivity -
   元素数均 0，WS 已连、reload 后仍如此，原因未查）；桌面 1280 宽确认不受影响。
 - 上游已备好两份 issue 草稿（本机 `C:/Temp/dsh022/upstream-dsh.md`、`upstream-agency-agents.md`）：
   建议核心与插件都把 `> svg` 改成后代选择器；核心另建议收起态让子元素继承 `visibility:hidden`。
-- 发布：`release.ps1 -Version 1.34.12 -VersionCode 172` → -Deploy **10/10**（geom-matrix `verdict=ENV states=0`，
-  本轮不拦发布）、线上 `?v=172` 200 + 16926693 B、update-notify `nfotPxE0MO6C`、四处镜像 `6d431df`。
+- 发布：`release.ps1 -Version 1.34.12 -VersionCode 172` → -Deploy **10/10**（geom-matrix 那次 `verdict=ENV states=0`，
+  原因见下面「五」）、线上 `?v=172` 200 + 16926693 B、update-notify `nfotPxE0MO6C`；四处镜像：发版时 `6d431df`、
+  文档对齐后 `4756297`（gitee pub-dsh-push master、github thiscp/dsh-push master+main 四处独立 ls-remote 复核 SAME）。
+  博客 `blog.cpyh.xyz/dsh-push-latest.apk` 由 aliyun 上的 `/usr/local/bin/blog-dl-sync.py`（`/etc/cron.d/blog-dl-sync`
+  每小时 :17）同步，本轮手动跑过一次：`apk=UPDATED e02a6a83 -> ba917a6e (16926693 bytes)`。
+
+### 五、发布闸门补记：geom-matrix 在 0.2.2 上连踩三个坑（2026-11-09 补测）
+
+1. **闸门会静默空转**：脚本默认 `--hosts 笔电,测试VM1`，而模拟器 prefs 里的宿主是 **笔电/工作VM** ⇒
+   抛「宿主 测试VM1 不在 prefs 里」→ `verdict=ENV states=0`，而流水线**不因 ENV 拦发布**，于是第 10 项形同虚设。
+   跑法：显式 `--hosts 笔电,工作VM`（宿主名以 prefs 为准，改名后必须同步）。
+2. **prefs 里的宿主 URL 带 token，DSH 一重启就作废**：冷跑打开的是
+   `dsh web authentication required; reopen the URL printed by dsh web.` 这一页，于是「聊天列 0」四态全 FAIL。
+   判据：`curl -s -o NUL -w "%{http_code}" "http://<tailnet-laptop>:3080/?token=<prefs 里那个>"` 回 **401** 即过期
+   （现 token 走 `~\.dsh\web.log` 里 `^dsh web:` 那行；`[dsh-push-host] web link announced` 行里是掩码 `***`）。
+   绕法：把拉下来的 prefs 副本里的 token 换成现 token，用 `--prefs C:/Temp/geom-prefs-fresh.xml` 跑，不动真机 prefs。
+3. **旧收起态断言在 0.2.2 恒 FAIL**：0.2.2 收起侧栏不再把网格轨道压成 0px，而是整列
+   `translateX(-280)` + `visibility:hidden`（正是 App 1.34.12 删掉 `transform:none!important` 才恢复的机制），
+   所以 `colW<8` 会把**正常收起**判成「收起态侧栏列未隐藏 colW=280」。已改：PROBE 补 `colRect`/`colVis`，
+   collapsed 判据改成三选一——轨道 <8px / 计算样式 `visibility:hidden` / 整列移出屏幕左缘；
+   三条都不成立才算没隐藏，而那正是「浮空工作区」的形态 ⇒ 新断言比旧的更能抓这个回归。
+4. 补测结果：冷跑 `node verify\geom-matrix.mjs --json --hosts 笔电 --prefs C:/Temp/geom-prefs-fresh.xml`
+   → **PASS states=2 fails=0**（exit 0，收起态 + 展开态各一张截图）。
