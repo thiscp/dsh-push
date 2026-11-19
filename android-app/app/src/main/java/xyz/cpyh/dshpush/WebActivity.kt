@@ -45,6 +45,13 @@ class WebActivity : Activity() {
     private var barFullH = 0
     private var barShown = true
 
+    // v1.34.13（用户 m01157「点推送进网页不要重新加载」+ m01207「任何入口都要走这套」）：
+    // 这两个字段只在**我们自己发起 loadUrl** 的那一刻写。不能拿 lastUrl / web.url 去判
+    // 「屏幕上是不是同一台」——DSH 的 ?token= 入口会 303 到 Cookie 鉴权地址，两者都被抹成
+    // 不带 token 的串，于是「DSH 重启换了 token（那页 WebSocket 已死，必须重载）」永远判不出来。
+    private var loadedUrl: String = ""
+    private var loadedToken: String = ""
+
     /** 原生顶栏收起/展开：动画 height（LinearLayout 里 WebView 随之获得/让出空间）。
      *  160ms，Chrome 地址栏同款手感；重复调用幂等。 */
     private fun setBarShown(show: Boolean) {
@@ -216,6 +223,22 @@ class WebActivity : Activity() {
         }
         titleView = tv
         bar.addView(tv)
+        // v1.34.13（用户 m01157）：热复用之后必须留一个「我就是要重新拉一次」的出口 ⇒ 顶栏加「刷新」；
+        // 「关闭」同时改成收后台保温（见 leaveWarm），页面与 WebSocket 不销毁，下次进来秒开。
+        bar.addView(Button(this).apply {
+            text = "刷新"
+            textSize = 12f
+            setBackgroundResource(R.drawable.bg_pill)
+            setTextColor(c(R.attr.dshAccent))
+            stateListAnimator = null
+            minHeight = 0
+            minimumHeight = 0
+            minWidth = 0
+            minimumWidth = 0
+            setPadding(dp(13), dp(4), dp(13), dp(4))
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) }
+            setOnClickListener { manualRefresh() }
+        })
         bar.addView(Button(this).apply {
             text = "关闭"
             textSize = 12f
@@ -227,7 +250,8 @@ class WebActivity : Activity() {
             minWidth = 0
             minimumWidth = 0
             setPadding(dp(13), dp(4), dp(13), dp(4))
-            setOnClickListener { finish() }
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) }
+            setOnClickListener { leaveWarm() }
         })
         // v1.33.44：通栏——零外边距，bar 自己铺满整行宽度
         barBox.addView(bar, FrameLayout.LayoutParams(-1, -2))
@@ -1963,7 +1987,7 @@ class WebActivity : Activity() {
                     loadErrored = false
                     hideError()
                     val target = currentUrl()
-                    if (target.isNotEmpty()) web?.loadUrl(target)
+                    if (target.isNotEmpty()) loadFresh(target)
                 }
             })
         }
@@ -2007,7 +2031,8 @@ class WebActivity : Activity() {
         restoreCanceled = false
         applyInstanceLabel(url)
         lastUrl = url
-        web?.loadUrl(url)
+        // v1.34.13：新建窗口这条路必然要加载，改走 loadFresh 只为登记 host+token 供热复用判定
+        loadFresh(url)
     }
 
     /** 从 URL 片段里取出会话 id（v1.33.41）。没有片段/形态不合法返回空串。 */
@@ -2130,6 +2155,9 @@ class WebActivity : Activity() {
         }
     }
 
+    /** 切对话用的 JS：只写 location.hash，host-plugin 的 revealFromHash 认这个形态（v1.34.13）。 */
+    private fun hashJs(sess: String): String = "location.hash='" + sess + "'"
+
     private fun showNetBanner() {
         web?.evaluateJavascript(bannerJs(true), null)
     }
@@ -2154,7 +2182,7 @@ class WebActivity : Activity() {
             if (target.isEmpty()) return@Runnable
             retryAttempt += 1
             loadErrored = false   // 本次尝试成败由回调重新判定
-            web?.loadUrl(target)
+            loadFresh(target)
         }
         retryPending = r
         ui.postDelayed(r, secs * 1000L)
@@ -2163,6 +2191,87 @@ class WebActivity : Activity() {
     private fun cancelRetry() {
         retryPending?.let { ui.removeCallbacks(it) }
         retryPending = null
+    }
+
+    /** URL 里的 token，取不到就空串（v1.34.13）。 */
+    private fun tokenOf(url: String): String = try {
+        android.net.Uri.parse(url).getQueryParameter("token") ?: ""
+    } catch (e: Exception) {
+        ""
+    }
+
+    /** 发起一次**真正**的加载，顺手登记这次的地址与 token，供热复用判定用（v1.34.13）。 */
+    private fun loadFresh(url: String) {
+        loadedUrl = url
+        loadedToken = tokenOf(url)
+        web?.loadUrl(url)
+    }
+
+    /**
+     * 热复用判定（v1.34.13，用户 m01157「点推送进 dsh 网页相当于新开实例重新加载，很浪费时间」
+     * + m01207「不止推送，从任何地方进对应设备的 dsh web 都要走这套」）：
+     * 屏幕上已经是这台 DSH 且页面健康，就不该再 loadUrl 整页重载。
+     * 必须重载的三种情况：① host 不是这台；② token 变了（DSH 重启换 token，那页的 WebSocket 已死）；
+     * ③ 上次加载失败 / 错误层还盖着。
+     * 裸链（设备卡里的 d.web 可能不带 token）与「当初进来时就没带 token」都按通配放行——
+     * 页面本来就靠 Cookie 鉴权；判错成「该重载却复用」的代价由顶栏「刷新」按钮兜底。
+     */
+    private fun warmTarget(url: String): Boolean {
+        val w = web ?: return false
+        val cur = w.url ?: ""
+        if (!cur.startsWith("http")) return false
+        if (loadedUrl.isEmpty()) return false
+        if (loadErrored) return false
+        if (errorLayer?.visibility == View.VISIBLE) return false
+        if (DshHosts.hostOf(cur) != DshHosts.hostOf(url)) return false
+        val t = tokenOf(url)
+        return t.isEmpty() || loadedToken.isEmpty() || t == loadedToken
+    }
+
+    /**
+     * 热复用命中时只切对话、不重载（v1.34.13）：host-plugin 的 revealFromHash 挂着 hashchange
+     * 监听（v1.33.41 那套落地机制的补刀就是它），所以写 location.hash 就能落到目标会话。
+     * 之后照旧交给 recheckRestoreTarget 复核（2.5s/7s 两拍，用户一碰屏幕就撤闸）。
+     */
+    private fun warmJump(url: String) {
+        val sess = sessOfUrl(url)
+        if (sess.isEmpty()) return
+        restoreTarget = sess
+        restoreAt = System.currentTimeMillis()
+        restoreSkip = 0
+        restoreCanceled = false
+        // 形状沿用 showNetBanner + bannerJs：JS 由助手函数产出、调用行里不写字符串字面量。
+        // 这不是洁癖——verify/extract-injected-js.mjs 按「哪一行有 evaluateJavascript(」定段起点，
+        // 调用行里内联字符串会被它当注入段收走并截成碎串误报语法错（v1.34.13 实测）。
+        web?.evaluateJavascript(hashJs(sess), null)
+        recheckRestoreTarget()
+    }
+
+    /** 顶栏「刷新」＝用户要的全新加载（v1.34.13）：清掉重试与错误态，重新拉一次入口地址。 */
+    private fun manualRefresh() {
+        cancelRetry()
+        retryAttempt = 0
+        loadErrored = false
+        hideError()
+        hideNetBanner()
+        val target = if (loadedUrl.isNotEmpty()) loadedUrl else currentUrl()
+        if (target.isNotEmpty()) loadFresh(target)
+    }
+
+    /**
+     * 顶栏「关闭」＝退到后台保温（v1.34.13，用户 m01157「把已有的缓存起来」）：
+     * 不再 finish() 销毁 WebView，而是把消息列表顶回前面，网页窗口留在任务栈下一层活着
+     * （onPause 只暂停渲染，页面与 WebSocket 都在）。下次点推送 / 点设备卡走 onNewIntent
+     * 的热复用分支 ⇒ 秒开不重载。真要彻底关掉就在最近任务里划掉卡片，那时才走 onDestroy。
+     */
+    private fun leaveWarm() {
+        try {
+            val i = android.content.Intent(this, MainActivity::class.java)
+            i.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            startActivity(i)
+        } catch (e: Exception) {
+            finish()
+        }
     }
 
     /** 当前该重载的地址：优先 WebView 正在用的 http(s) 地址，退化到最初那次 loadUrl。 */
@@ -2198,7 +2307,7 @@ class WebActivity : Activity() {
                         loadErrored = false
                         hideError()
                         val target = currentUrl()
-                        if (target.isNotEmpty()) web?.loadUrl(target)
+                        if (target.isNotEmpty()) loadFresh(target)
                     }
                 }
             }
@@ -2231,16 +2340,28 @@ class WebActivity : Activity() {
             if (revive) u = restoreSessUrl(u)
             // ★ v1.33.41（用户 m07251）：只有 revive（=从实例选择器进来）才设落地目标，
             //   窗口复用这条路同样要过写盘闸与落地复核。点消息卡片的精确落点不设闸。
-            restoreTarget = if (revive) sessOfUrl(u) else ""
-            restoreAt = System.currentTimeMillis()
-            restoreSkip = 0
-            restoreCanceled = false
             applyInstanceLabel(u)
             lastUrl = u
-            loadErrored = false
-            cancelRetry()
-            retryAttempt = 0
-            web?.loadUrl(u)
+            // ★ v1.34.13（用户 m01157 + m01207）：这台 DSH 的页面还在屏幕上就别重载整页——
+            //   片段不同就改 location.hash 切对话（秒开）；host 换了、token 换了或上次没加载
+            //   成功，才走下面真正的 loadUrl。所有入口（推送按钮 / 消息卡片 / 设备卡 / 实例选择器）
+            //   都汇到 onNewIntent，所以只在这一处判一次。
+            if (warmTarget(u)) {
+                android.util.Log.d("dshwarm", "reuse host=" + DshHosts.hostOf(u) +
+                    " sess=" + sessOfUrl(u) + " (skip reload)")
+                warmJump(u)
+            } else {
+                android.util.Log.d("dshwarm", "reload host=" + DshHosts.hostOf(u) +
+                    " tokenChanged=" + (tokenOf(u) != loadedToken))
+                restoreTarget = if (revive) sessOfUrl(u) else ""
+                restoreAt = System.currentTimeMillis()
+                restoreSkip = 0
+                restoreCanceled = false
+                loadErrored = false
+                cancelRetry()
+                retryAttempt = 0
+                loadFresh(u)
+            }
         }
     }
 
