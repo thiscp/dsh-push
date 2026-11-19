@@ -12,6 +12,7 @@
 
 | 字段 | 值 |
 |---|---|
+| **✅ App v1.34.14 / 174 已发布：链接里的 token 不同也不再重载（热复用补刀）** | 用户 m01397「点头像选设备进去还是会自动刷新」+ m01446「刚点进去确实是之前缓存的画面，差不多 1s 左右就重新加载，有点像之前那个进入后判断在哪个对话的功能」。模拟器实测（173）定位到**不是**落地复核：`dshwarm` 日志显示同 host 换 token 走的是 `reload ... tokenChanged=true` 分支——1.34.13 把「token 变了」一票判成必须重载，可设备上清单里那条链接与这次点进来的那条是不同时刻抓的，DSH 每次重启又换 token，两者常态不相等。修法：`warmTarget` 只判「是不是这台 + 页面健康」；token 不同时**先复用**，再由 `scheduleAuthGuard` 在 2.5s/6s 探两次页面自己的「dsh web authentication required」文案，真是那台重启了才 `location.replace` 到来链；`loadedToken` 跟着更新，下次就是干净快路。顺带修 `verify/extract-injected-js.mjs`：起点行自带 `, null)` 的单行调用式不当注入段（终点从起点行自己算），否则去远处找 `, null)` 会把几十行注释收成碎串误报语法错。模拟器四步验收：整页加载计数恒为 1。|
 | **✅ App v1.34.13 / 173 已发布：再进同一台 DSH 不再整页重载——网页窗口热复用 + 顶栏「刷新」** | 用户 m01157「如果通过点击推送的进入dsh 网页…相当于开的一个新的web实例会重新加载…能不能把已有的缓存起来」+ m01207 更正「不止从推送里面进去时，从任何地方进去对应设备的dsh web都应该使用这套逻辑」。根因不在推送链路：WebActivity 早就是 singleTask（入口本来就复用同一个实例），是 onNewIntent 无条件 loadUrl + onDestroy 直接 destroy 两道把缓存抹平。修法：loadedUrl/loadedToken 记账（?token= 被 303 抹掉 ⇒ lastUrl/web.url 判不出 token 轮换）⇒ 同 host 同 token 只改 location.hash 切对话、不重载；顶栏加「刷新」、「关闭」改保温不销毁。详见 §7.61 |
 | **✅ App v1.34.12 / 172 已发布：内置浏览器适配 DSH 0.2.2 侧栏改版（浮空「工作区」与重复导航图标）** | 用户「dsh 更新到最新版后，左侧的插件栏好像出现重复的了。还有就是工作区这一栏，我把侧边栏缩放后还在屏幕上显示」。CDP 取证（裸 Edge 基线 vs App WebView 现场，360x698 dpr4）定位到**两个独立根因**。**① 浮空「工作区」是我们自己的注入 CSS 造成的**：0.2.2 把侧栏收起改成「列 `translateX(-280)` + `visibility:hidden`」，而 `bw-narrow-fix` 里那条 `transform:none!important`（`e67e56b` / v1.32.4 为绕开 `backdrop-filter` 裁剪加的）把位移杀掉 ⇒ 列停在 x=0，列内 `GAkraW_sectionLabel GAkraW_wide`、`GAkraW_iconButton` 的 computed visibility 又被 DSH 自己的 `*_wide` 规则穿透成 visible ⇒ 标题加三个图标浮在正文上；裸 Edge 不注入时列在 -280 屏外，所以只有 App 里看得见。**② 重复图标是 0.2.2 挪 DOM 造成的**：导航行 svg 从 button 直接子挪进 `span.wtg9ga_panelGlyph > div[data-slot]`，于是 DSH 核心 `[data-dsh-market-nav-icon] > svg{display:none}` 与插件 `@michengai/dsh-agency-agents` 1.2.26 `[data-aag-nav-icon] > svg{display:none!important}` 两条**直接子**选择器同时失配、而 `::before` 自绘图标照常画 ⇒「插件市场」（DSH 核心画的）与「专家」（插件画的）各多一个图标；桌面 1280 宽不打标（实测该元素数 0）故不复现。修法四处（只动 `WebActivity.kt` 注入段）：删 `transform:none`（保留真正起作用的 `backdrop-filter:none`/`filter:none`）、追加 `[data-dsh-market-nav-icon] svg,[data-aag-nav-icon] svg{display:none!important}`、`bwFabOpen()` 改几何判据 `r.width>0&&r.right>1`、观察器锚点加 `[class*='_sidebarCol'] [class*='_root']` 兜底。验收：emulator-5554 装 172 后 CDP 实测收起态列 `x=-280`、`tf=matrix(1,0,0,1,-280,0)`、屏内浮空元素 **9→0**、鲸鱼钮 `left` 由 +6px 变负（正确半隐），展开态 `x=0`、遮罩 `opacity=1`、注入样式 2307→**2360 B**；双图标在裸 Edge 360 宽实测修复（原生 svg 变 0x0 hidden），**模拟器那个 DSH 会话只有 5 条导航行、没有「插件市场/专家」，故 App 侧未复现该项**。发布 -Deploy **10/10**（geom-matrix `verdict=ENV states=0` 不拦发布）、线上 `?v=172` 200 + **16926693 B**、update-notify `nfotPxE0MO6C`、四处公共镜像 `6d431df`、私有 HEAD `36ff6e1`。细节见 §7.60。 |
 | **✅ 插件 0.7.38 + App v1.34.11 / 171 已发布：通行证按机器隔离、机器名终于存得下来、网页顶栏跟随设备清单** | 三段连修（2026-11-02 → 11-03）。**① 0.7.36 / 1.34.9**：通行证按 topic 隔离——中继 `/usr/local/bin/dsh-provd.py` 加 `GET /list?topic=`、`POST /revoke` 带 `{name, topic}`，三台机器各自只看到自己的（旧行为是所有人共用一份、谁都能吊销谁）；吊销 404 的真因是面板给的名字不是服务端真实用户名，现在先聚合真实用户名再删；面板机器名改成可填。**② 0.7.38 / 1.34.10**：「点保存没有提示、重扫还是旧名」两层独立真因——面板写 `webName` 不落盘（只写 volatile `nameText`）⇒ 插件 `persistName()` 用 `ctx.configEditor.edit()` 自己落盘；App `Devices.idOf()` 把机器名算进 id ⇒ 改名后重扫出两行，`upsert()` 归并顺序改为 id → 名字 → **web 的 host:port**。**③ 1.34.11 / 171**：删掉重复的「DSH 入口」胶囊（入口改成点状态卡），新增 `Devices.nameForWeb(ctx, web)` 让网页顶栏以设备清单为准（根因：手机里两份清单，`Devices` 由配对/改名写、`DshHosts` 由推送 `#name` 喂，顶栏原先只看后者）。验收：模拟器相册配对 `name=VM1` 后点该行 → 顶栏 `uiautomator dump` 读到 `DSH 网页 · VM1`；判新旧看 `classes3.dex`（`grep -ac nameForWeb` = 2）。发布与自测：selftest **197/197** + pair 59/59 + remote-bin 21/21 + remote-status 41/41（2026-11-03 复跑全绿）、npm `latest` = 0.7.38、线上 `?v=171` 200 + 16926629 B、提交 `f7afa8d`。细节见 §7.57 / §7.58 / §7.59。 |
@@ -4562,3 +4563,52 @@ App WebView 现场（`adb root` → `am start -n xyz.cpyh.dshpush/.WebActivity -
 3. 顶栏「刷新」→ 必重载；
 4. 点「关闭」再点设备卡 → 应 `reuse`；
 5. **未实测的风险**：保温页面的 WebSocket 在后台可能被 Chromium 冻结后断开，页面显示「重连中」——点一次「刷新」即恢复；跨宿主 LRU 池（同时保温两台）本轮也没做，一次只保温当前这一台。
+
+
+## §7.62 热复用补刀：token 不同也不再重载（App 1.34.14 / 174，2026-11-19）
+
+### 一、现象与用户原话
+- m01397（真机 1.34.13）：「最开始是好的确实没有重新加载，但是之后我通过点头像选择设备进去，还是会自动刷新加载呢」。
+- m01446（补充观察，这条才是判据）：「刚点进去确实是之前缓存的画面，但是差不多 1s 左右就重新加载了，有点像是之前做的进入后判断是在哪个对话的功能导致的刷新」。
+
+### 二、模拟器实测定位（用户 m01410 起允许开模拟器）
+环境：adb 在 `G:\Android\Sdk\platform-tools\adb.exe`；`emulator-5554`；入口一律用
+`adb shell am start -n xyz.cpyh.dshpush/.WebActivity --es url '<链接>' -f 0x30000000`。
+**整页加载计数器**：`adb logcat -d -s chromium:W | grep -c "Fenced frames"`——chromium 每次新建文档才打这三条
+WARNING，所以它就是「有没有重载」的客观判据。
+
+| 步骤 | 173（用户装的那版） | 174（本次修法） |
+|---|---|---|
+| E1 冷启动（新 token + `#session-`） | 加载 1 次 | 加载 1 次 |
+| E2 同一条链接再进 | `dshwarm reuse ... (skip reload)`，不加载 | 同样不加载 |
+| E3 **同一台、token 不同** | `dshwarm reload host=... tokenChanged=true` ⇒ **整页重载** | `dshwarm reuse ... tokenChanged=true (skip reload)`，加载计数不变 |
+| E4 再进一次同一条 stale 链接 | —— | `tokenChanged=false`（loadedToken 已跟着更新），快路 |
+
+⇒ 根因是 1.34.13 的第三道放行写反了：`return t.isEmpty() || loadedToken.isEmpty() || t == loadedToken`，
+token 不等 ⇒ warmTarget 返回 false ⇒ onNewIntent 走 loadFresh。用户看到的「缓存画面 1s 后被换掉」正是
+`loadUrl` 之后旧文档还在屏幕上、新文档到达才替换的那一段。
+**用户猜的「进入后判断在哪个对话的功能」（recheckRestoreTarget）无罪**：它只写 `location.hash`，从不 loadUrl；
+模拟器上它出现的 `got=none` 只是慢启动时页面还没渲染出 `[data-conversation-session]`（该属性在 DSH 0.2.2-rc.5 的
+`dsh-client-ui-conversation/lib/client.js` 里仍在写，`data-row-key="session:<id>"` 挪到了
+`dsh-client-ui-workspace/lib/client.js`，插件那两个选择器都还有效）。
+
+### 三、改动
+| 位置 | 改动 |
+|---|---|
+| `WebActivity.kt:2219` `warmTarget` | 删掉 token 一票否决，只判 host + 页面健康（错误层可见 / loadErrored / loadedUrl 空 / cur 非 http 仍重载） |
+| 新增 `authGuardJs(url)` | 页面自己判 `document.body.innerText` 里有没有 `authentication required` / `reopen the url`（DSH Web 鉴权失效原文：`dsh web authentication required; reopen the URL printed by dsh web.`），命中就 `location.replace(url)`（不入历史，返回键行为不变）。JS 由助手函数产出、调用行自带 `, null)`，语法闸不受影响 |
+| 新增 `scheduleAuthGuard(url)` | 2.5s / 6s 各探一次；`isFinishing/isDestroyed` 撤闸；地址含单引号直接不探（会拼坏那段 JS） |
+| `onNewIntent` 热支 | 先算 `tokenChanged`（两边都非空且不等才算），reuse 命中后 `loadedUrl/loadedToken` 跟着这次链接走，只有 tokenChanged 才挂守卫；日志加 `tokenChanged=` |
+| `verify/extract-injected-js.mjs:29` | 终点扫描从起点行**自己**开始：单行调用式（bannerJs / hashJs / authGuardJs）不当注入段 |
+
+编译坑一个：`url.indexOf(39)` 在 Kotlin 的 String 上没有 `indexOf(Int)`（只有 char/String 重载），
+174 首次构建就是死在这（`None of the following functions can be called with the arguments supplied`），改成 `url.contains("'")`。
+
+### 四、发版与验收
+- `release-fast.ps1 -Version 1.34.14 -VersionCode 174`：apk **16928393 B**，
+  `blog.cpyh.xyz/dsh-push-latest.apk` 与 `ntfy.cpyh.xyz/dl/dsh-push.apk?v=174` 都 200 + SHA256 一致，通知 id `4w2t5mhaaJUV`。
+- 模拟器（174）E1→E4：整页加载计数**恒为 1**；守卫在健康页上不误跳（E3/E4 之后计数不变）。
+- 未实测的一条：DSH 真重启后守卫的**正例**（页面变成「需要重新鉴权」→ 该跳到来链）。要造这场景得重启承载本会话的
+  DSH 实例，代价大，留给真机；顶栏「刷新」是这条路的兜底。
+- 真机回归判据（交用户）：① 点头像 → 设备清单点那台 ⇒ 秒开、不换画面；② 点推送 likewise；
+  ③ 顶栏「刷新」必重载；④ 重启 DSH 后再进，若页面显示要重新鉴权会自动跳过去（或手点刷新）。

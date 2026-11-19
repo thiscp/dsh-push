@@ -2208,11 +2208,15 @@ class WebActivity : Activity() {
     }
 
     /**
-     * 热复用判定（v1.34.13，用户 m01157「点推送进 dsh 网页相当于新开实例重新加载，很浪费时间」
-     * + m01207「不止推送，从任何地方进对应设备的 dsh web 都要走这套」）：
-     * 屏幕上已经是这台 DSH 且页面健康，就不该再 loadUrl 整页重载。
-     * 必须重载的三种情况：① host 不是这台；② token 变了（DSH 重启换 token，那页的 WebSocket 已死）；
-     * ③ 上次加载失败 / 错误层还盖着。
+     * 热复用判定（v1.34.13 引入；v1.34.14 去掉 token 一票否决，用户 m01446
+     * 「刚点进去确实是之前缓存的画面，但是差不多 1s 左右就重新加载了」）：
+     * 屏幕上已经是这台 DSH 且页面健康，就不 loadUrl 整页重载。
+     * 必须重载的只剩两种：① host 不是这台；② 上次加载失败 / 错误层还盖着。
+     * ⚠ token 不同**不再**直接重载。DSH 每次重启换 token，而「设备清单里那条链接」与
+     *   「这次点进来的那条」是不同时刻抓的，真机上两者经常不相等；模拟器实测（装 173 后
+     *   同一台换个 token 再进）走的就是 reload tokenChanged=true，正是用户看到的那次重载。
+     *   页面本身靠 Cookie 鉴权，token 只是入口门票 ⇒ 改成先复用缓存画面，再由
+     *   scheduleAuthGuard 探一次「页面是否已要求重新鉴权」，确实是那台重启了才跳到来链。
      * 裸链（设备卡里的 d.web 可能不带 token）与「当初进来时就没带 token」都按通配放行——
      * 页面本来就靠 Cookie 鉴权；判错成「该重载却复用」的代价由顶栏「刷新」按钮兜底。
      */
@@ -2223,9 +2227,8 @@ class WebActivity : Activity() {
         if (loadedUrl.isEmpty()) return false
         if (loadErrored) return false
         if (errorLayer?.visibility == View.VISIBLE) return false
-        if (DshHosts.hostOf(cur) != DshHosts.hostOf(url)) return false
-        val t = tokenOf(url)
-        return t.isEmpty() || loadedToken.isEmpty() || t == loadedToken
+        // 只认「是不是这台」+「页面是否健康」；token 差异交给 scheduleAuthGuard 探。
+        return DshHosts.hostOf(cur) == DshHosts.hostOf(url)
     }
 
     /**
@@ -2245,6 +2248,34 @@ class WebActivity : Activity() {
         // 调用行里内联字符串会被它当注入段收走并截成碎串误报语法错（v1.34.13 实测）。
         web?.evaluateJavascript(hashJs(sess), null)
         recheckRestoreTarget()
+    }
+
+    /** 热复用后的一次性鉴权探针（v1.34.14）：让页面自己判断、命中就就地跳转。
+     *  不用 evaluateJavascript 的回调取值——调用行带 `, null)` 时注入段提取器才会当场收口，
+     *  否则它会把后面的杂行当注入段截成碎串误报语法错（v1.34.13 实测过，见 hashJs 注释）。
+     *  DSH Web 鉴权失效时页面上那句原文是 "dsh web authentication required; reopen the URL
+     *  printed by dsh web."（笔电 web.log 与 geom-matrix 截图都是这句），按小写形态判它。
+     *  用 location.replace 而不是 href：不在 WebView 历史里留一层，返回键行为不变。 */
+    private fun authGuardJs(url: String): String =
+        "(function(){var t=(document.body&&document.body.innerText||'').toLowerCase();" +
+        "if(t.indexOf('authentication required')<0&&t.indexOf('reopen the url')<0)return 'ok';" +
+        "try{location.replace('" + url + "')}catch(e){}return 'reload';})()"
+
+    /** token 变了但页面看着还健康（v1.34.14）：先秒开缓存画面，2.5s / 6s 各探一次，
+     *  只有页面确实变成「需要重新鉴权」才跳到来链——真机上那记 1s 重载就是这么来的。 */
+    private fun scheduleAuthGuard(url: String) {
+        // 上面那段 JS 用单引号包地址，带单引号的地址会拼坏它：这种链接直接不探（退化成不重载）。
+        // 别写 url.indexOf(39)——Kotlin 的 String 没有 indexOf(Int)，编译不过（174 首次构建实测）。
+        if (url.contains("'")) return
+        for (delay in longArrayOf(2500L, 6000L)) {
+            ui.postDelayed({
+                if (isFinishing || isDestroyed) return@postDelayed
+                try {
+                    web?.evaluateJavascript(authGuardJs(url), null)
+                } catch (e: Exception) {
+                }
+            }, delay)
+        }
     }
 
     /** 顶栏「刷新」＝用户要的全新加载（v1.34.13）：清掉重试与错误态，重新拉一次入口地址。 */
@@ -2346,13 +2377,22 @@ class WebActivity : Activity() {
             //   片段不同就改 location.hash 切对话（秒开）；host 换了、token 换了或上次没加载
             //   成功，才走下面真正的 loadUrl。所有入口（推送按钮 / 消息卡片 / 设备卡 / 实例选择器）
             //   都汇到 onNewIntent，所以只在这一处判一次。
+            // ★ v1.34.14（用户 m01446）：token 不同不再等于「该重载」——设备清单那条与这次
+            //   点进来的那条常常抓于不同时刻（DSH 每次重启换 token），先复用，两拍后再探鉴权。
+            val tok = tokenOf(u)
+            val tokenChanged = tok.isNotEmpty() && loadedToken.isNotEmpty() && tok != loadedToken
             if (warmTarget(u)) {
                 android.util.Log.d("dshwarm", "reuse host=" + DshHosts.hostOf(u) +
-                    " sess=" + sessOfUrl(u) + " (skip reload)")
+                    " sess=" + sessOfUrl(u) + " tokenChanged=" + tokenChanged + " (skip reload)")
                 warmJump(u)
+                if (tokenChanged) {
+                    loadedUrl = u
+                    loadedToken = tok
+                    scheduleAuthGuard(u)
+                }
             } else {
                 android.util.Log.d("dshwarm", "reload host=" + DshHosts.hostOf(u) +
-                    " tokenChanged=" + (tokenOf(u) != loadedToken))
+                    " tokenChanged=" + tokenChanged)
                 restoreTarget = if (revive) sessOfUrl(u) else ""
                 restoreAt = System.currentTimeMillis()
                 restoreSkip = 0

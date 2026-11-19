@@ -16,10 +16,12 @@ MUST NOT 用 `web.getUrl()` 或被重定向改写过的 `lastUrl` —— 入口�
 - **WHEN** 某台 DSH 的网页刚被打开过（窗口仍在任务栈内），用户再点该机的推送通知 / 设备卡 / 实例选择器
 - **THEN** 页面不重新加载即刻可用，登录态、所在会话与滚动位置原样保住；logcat `dshwarm` 打 `reuse host=…`
 
-#### Scenario: 换机与 token 轮换走重载
+#### Scenario: 换机走重载；token 差异交给鉴权守卫（1.34.14 改判）
 
-- **WHEN** 目标与当前页面不是同一 `host:port`，或来链 token 与窗口登记的 token 不一致
-- **THEN** 走完整重载路径（行为与改动前逐字一致），DSH 重启换 token 后不会停在 401 页
+- **WHEN** 目标与当前页面不是同一 `host:port`
+- **THEN** 走完整重载路径（行为与改动前逐字一致）
+- **AND** 只有 token 不同（同 host）MUST NOT 触发重载：先复用缓存画面，页面若显示要求重新鉴权（这台真重启了）
+  才由守卫 `location.replace` 到来链。判据是 logcat `dshwarm` 打 `reuse … tokenChanged=true (skip reload)`
 
 #### Scenario: 裸链入口按通配放行
 
@@ -65,12 +67,12 @@ App SHALL 解析推送中的 `\n#web <url>` 机器行（从正文剥离不展示
 
 #### Scenario: 窗口复用 · 同一台不重载
 
-- **WHEN** 网页窗口已停在某台 DSH，用户再点同一台的任意直达入口（同链接，或 token 未变的裸链）
+- **WHEN** 网页窗口已停在某台 DSH，用户再点同一台的任意直达入口（同链接、token 已换过的链接、或不带 token 的裸链）
 - **THEN** 复用同一窗口且**不重新加载**：登录态、当前会话与滚动位置原样保住，只按链接里的片段切到目标会话
 
-#### Scenario: 窗口复用 · 换机或 token 轮换才重载
+#### Scenario: 窗口复用 · 只有换机才重载
 
-- **WHEN** 网页窗口停在 A 机器时点 B 机器的入口，或目标 DSH 重启换了 token 后再点入口
+- **WHEN** 网页窗口停在 A 机器时点 B 机器的入口
 - **THEN** 仍在同一窗口内加载新链接（不叠加新窗口），标题栏与最近任务标签同步换成新实例名，不停留在 401 页面
 
 #### Scenario: 深色页面适配

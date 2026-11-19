@@ -1,4 +1,4 @@
-# 网页窗口热复用：再进同一台 DSH 不再整页重载（v1.34.13 / 173，已发布）
+# 网页窗口热复用：再进同一台 DSH 不再整页重载（v1.34.13–1.34.14，已发布）
 
 ## Why
 
@@ -25,8 +25,11 @@
 - 新增 `loadedUrl` / `loadedToken`（`WebActivity.kt:47-53`）：**只在自家 `loadFresh()` 里写**，
   永不参与重定向污染；四处加载点（错误层重试、`scheduleRetry`、`watchNetwork` onAvailable、`onCreate` 首发）全部改走 `loadFresh`。
 - 新增 `warmTarget(url)`：web 活着 && `web.url` 是 http && `loadedUrl` 非空 && `!loadErrored` && 错误层没盖着 &&
-  `DshHosts.hostOf(当前)==hostOf(来链)` && (token 相等 **||** 来链不带 token **||** `loadedToken` 为空)。
-  后两条故意通配：设备卡 `d.web` 常是裸链（`Devices.kt:40`），无 token 入口靠 Cookie 鉴权。
+  `DshHosts.hostOf(当前)==hostOf(来链)`。**1.34.14 起 token 差异不再是否决条件**：设备清单里那条与这次点进来的
+  那条常常抓于不同时刻（DSH 每次重启必换 token），真机上因此每次都要多重载一次（用户 m01446 的「缓存画面 1s 后被换掉」）。
+  裸链（`Devices.kt:40` 的 `d.web`）同样按同 host 放行，无 token 入口靠 Cookie 鉴权。
+- 新增 `authGuardJs(url)` + `scheduleAuthGuard(url)`（1.34.14）：token 变了也先复用缓存画面，2.5s / 6s 各探一次页面自己的
+  「dsh web authentication required」文案，命中才 `location.replace(来链)`——把「这台真重启了」与「两条链接新旧不一」分开处理。
 - 新增 `warmJump(url)`：不 `loadUrl`，只 `evaluateJavascript(hashJs(sess))` 改 `location.hash` —— DSH 网页的
   `revealFromHash` 挂着 `hashchange` 监听（被 `recheckRestoreTarget` `:2026-2057` 现成的 `jsForce` 兜底证实），
   改片段即可切会话；随后照旧跑 `recheckRestoreTarget()`（2.5s / 7s 读 `[data-conversation-session]`，不符补切）。
@@ -50,8 +53,13 @@
 本轮按 USER.md 的两轮制（首轮只改码 + 编译 + 发包，**不开模拟器**）**未做真机/模拟器实测**，交用户回归，判据：
 
 1. 同一台 DSH 从推送 / 设备卡 / 实例选择器反复进 → 秒开、不白屏、落回上次会话（`adb logcat | grep dshwarm` 见 `reuse`）；
-2. DSH 重启换 token 后用旧推送进入 → 应 `reload`，不停留 401；
+2. （1.34.14 改判）来链 token 与窗口登记的不同 → 仍应 `reuse`（日志 `reuse … tokenChanged=true (skip reload)`）、不白重载；
+   DSH 真重启使页面要求重新鉴权时，守卫自动跳到来链；
 3. 顶栏「刷新」→ 必重载；4. 点「关闭」再点设备卡 → 应 `reuse`。
+
+**1.34.14 已按用户 m01410 的授权在模拟器实测**（用户 m01397 报真机仍刷新之后）：判据换成客观计数器
+`adb logcat -d -s chromium:W | grep -c "Fenced frames"`（chromium 每次新建文档才打这三条 WARNING）——
+同一台换 token 再进，173 打 `reload tokenChanged=true` 且计数 +1，174 打 `reuse … tokenChanged=true (skip reload)` 且计数恒为 1。详见 HANDOVER §7.62。
 
 已知风险（未实测）：保温页面的 WebSocket 在后台可能被 Chromium 冻结后断开，页面显示「重连中」——点一次「刷新」即恢复；
 跨宿主 LRU 池（同时保温两台）本轮未做，一次只保温当前这一台。

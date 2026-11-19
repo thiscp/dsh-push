@@ -26,7 +26,10 @@ for (let i = 0; i < src.length; i++) {
   if (src[i].indexOf('evaluateJavascript(') < 0) continue;
   let start = i + 1;
   let end = -1;
-  for (let k = start; k < src.length; k++) { if (src[k].indexOf(', null)') >= 0) { end = k; break; } }
+  // 起点行自己就带 ", null)" 的是**单行调用式**（bannerJs / hashJs / authGuardJs 这种把整段
+  // JS 交给辅助函数的），不是内联注入段：终点就取起点行自己，别去远处找下一个 ", null)"
+  // ——那样会把中间几十行杂行收成碎串，还会误报语法错（v1.34.14 加 scheduleAuthGuard 时撞上）。
+  for (let k = i; k < src.length; k++) { if (src[k].indexOf(', null)') >= 0) { end = k; break; } }
   if (end < 0) { console.error('段 L' + (start + 1) + ' 找不到 , null) 终点'); process.exit(2); }
   const parts = [];
   const missed = [];

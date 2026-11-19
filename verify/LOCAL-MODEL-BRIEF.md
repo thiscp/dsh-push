@@ -18,16 +18,16 @@ dsh-push = **手机 App**（`xyz.cpyh.dshpush`，大肥鱼盯梢）+ **DSH 插�
 
 | 项 | 值 |
 |---|---|
-| App 版本 | **1.34.13 / versionCode 173**，16927917 B |
-| 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=173` |
+| App 版本 | **1.34.14 / versionCode 174**，16928393 B |
+| 线上 APK | `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=174` |
 | 博客下载 | `https://blog.cpyh.xyz/dsh-push-latest.apk`（每小时 :17 由 `blog-dl-sync.py` 自动同步） |
 | 插件版本 | **0.7.38**（npm `dsh-push-host`，dist-tag latest） |
 | 插件 tgz（博客） | `https://blog.cpyh.xyz/dl/dsh-push-host-latest.tgz` |
-| 仓库 HEAD | 见 `git log --oneline -1`（1.34.13 发版提交 `cfa6753`，代码改动 `64e30e8`；私有 gitee origin 已同步到 `cfa6753`） |
+| 仓库 HEAD | 见 `git log --oneline -1`（1.34.14 发版提交 `219af9a`，代码改动 `c92ed90`；私有 gitee origin 见下面「分发」） |
 | 公共镜像 | gitee / github / origin master / github main 四处同 commit（`export-public.ps1`） |
-| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.61；2026-11-03 修过一次重号：原两个 §7.57 → 现 §7.57/§7.58，原 §7.58 → §7.59）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
+| 文档 | `verify/HANDOVER.md`（§7.x 按事件编号，最新 §7.62；2026-11-03 修过一次重号：原两个 §7.57 → 现 §7.57/§7.58，原 §7.58 → §7.59）；技能 `C:\Users\<user>\.dsh\skills\dsh-push-app-dev\SKILL.md`（最新 §62） |
 
-**代码侧没有未完成的开发任务**。v1.34.13 走的是「首轮只发包」，**等用户真机回归**（判据见 HANDOVER §7.61 第六节：同机反复进应秒开、DSH 重启换 token 应重载、点刷新必重载）。
+**代码侧没有未完成的开发任务**。v1.34.13 走的是「首轮只发包」，**等用户真机回归**（判据见 HANDOVER §7.62 第四节：清单/推送/实例选择器进去都秒开、链接 token 不同也不重载、点刷新必重载、DSH 真重启后守卫自动跳到来链）。
 
 ---
 
@@ -73,7 +73,7 @@ ssh user@<tailnet-vm1> 'cd /home/user/work/projects/dsh-push/android-app && ./gr
 #   （APK 有 classes.dex / classes2 / classes3 三个，体积可能和上版完全一样，别看字节数）
 
 # ---------- App 发布（在本机，一条命令含构建+安装+断言+上传+通知） ----------
-powershell.exe -NoProfile -File verify/release.ps1 -Version 1.34.13 -VersionCode 173 -DeployNote "一句话说明"
+powershell.exe -NoProfile -File verify/release.ps1 -Version 1.34.14 -VersionCode 174 -DeployNote "一句话说明"
 # ★ 首轮（不跑模拟器）用 verify/release-fast.ps1 -Version … -VersionCode … -DeployNote …：16-110s 出包上传通知，别加 -Deploy
 # 期望输出 SUMMARY: 10/10 passed（第 10 项是四态几何矩阵）
 # ★ 本机没有 pwsh 7，必须写全路径 powershell.exe
