@@ -4689,3 +4689,48 @@ S1 进 A → S2 切 B（`reload host=<tailnet-work>:3080`）→ S3 回 A（`relo
   一并视为通过；**仍未实测的只剩 174 守卫的正例**（DSH 真重启后页面要求重新鉴权 ⇒ 自动跳到来链），只有代码路径 + 文案实测。
 - 编译坑三条：`try withPage(owner) {` 编译不过（Kotlin 的 try 必须跟块）；`Page` 缺 `lastUrl` 字段导致 193/194 行 Unresolved reference；
   `run_code` 里用 JS 模板串写 Kotlin 代码时 **美元符紧跟花括号会被 JS 插值**（ReferenceError: pages is not defined），要转义或改字符串加号拼接。
+
+## §7.65 发布闸门第 10 项在流水线里**从没真跑过**（2026-11-19，用户 m02063 一问查出来的）
+
+### 一、现象与根因
+- 症状：闸门每次都报 `geom-matrix … verdict=ENV states=0`，而 ENV 不拦发布 ⇒ 这项从 §7.60 之后依然形同虚设。
+- 根因三条（三条都修了）：
+  1. `verify/geom-matrix.mjs:34` 默认 `--hosts 笔电,测试VM1`，可模拟器 prefs 里的名字实际是 **laptop** 与 **工作VM** ⇒
+     按名字取不到就抛「宿主 测试VM1 不在 prefs 里」→ exit 2 → ENV。
+  2. 闸门调它只传 `--json --json-out --shots`（`verify/dsh-app-verify.ps1:555`），**从不传 --hosts / --prefs**。
+  3. `-Fresh` 那步只往 prefs 写 `token` 一个键（`dsh-app-verify.ps1:229-230`）⇒ 拉下来的 prefs 里 `hosts[]` 是空的
+     ⇒ 直接抛「prefs 里没有 hosts」。
+- 分清 VM1 的两个身份：**构建机（活、本机无 JDK 不可替代）**——`dsh-app-verify.ps1:233-259` build-vm1、
+  `verify/config.local.ps1:14` `$Vm1 = user@<tailnet-vm1>`、`release-fast.ps1:75-112`；
+  **geom-matrix 的被测宿主（死的只是那个写死的名字）**。几何四态测的是 App 自己的 WebView，宿主用谁不重要，
+  所以结论是「谁在册测谁」，不必把 VM1 注册成第三个被测宿主。
+
+### 二、修法：谁在册测谁 + token 候选重试环
+- `--hosts` 默认 `auto`：取 prefs `hosts[]` 里实际在册的（`--max-hosts` 默认 3）；不在册但仍想测的条目可以在
+  `--host-map`（默认 `verify/geom-hosts.local.json`，已 gitignore；样例 `verify/geom-hosts.example.json`）里带 `url` 补进来。
+- **token 策略**：prefs 里那条先试（闸门测的就是 App 自己那条链），打开后命中鉴权页/未就绪 ⇒ 换现取的下一个候选，
+  最多三发；全不成才算环境问题（ENV），并把试过的来源写进 `envNotes`。
+- 现取 token 的脚本 **`verify/geom-first-token.sh`**：`pgrep -f 'bin.js --patch'` 找运行中 DSH 的 pid →
+  读 `/proc/PID/fd/1` 指向的日志 → 退 `/tmp/dsh-market-restart-*.out.log` → 退 `~/.dsh/web.log`，一行一个 `<token>|<来源>`；
+  本机（`ssh=local`）直接读 `C:/Users/<user>/.dsh/web.log`。
+- 取证硬事实两条：
+  - **`~/.dsh/web.log` 不是第一真值**：VM1 的 web.log 最后写入 10:18，进程 10:21 被 market-restart 重启、stdout 改投
+    `/tmp/dsh-market-restart-2026-11-19T02-21-42.out.log` ⇒ web.log 里那条 token 已过期，真 token 只在重启日志里。
+  - **HTTP 探测判不了 token**：从笔电 fetch/curl 打 `http://<tailnet IP>:3080/?token=*** 一律 401（连 WebView 里
+    能用的那条也 401），VM1 上直连 `127.0.0.1:3081/?token=*** 同样 401 ⇒ 只有 WebView 里
+    `dsh web authentication required` 这段文案能判（`IS_AUTH`）。
+- 未鉴权 / 页面未就绪从 FAIL **降级为 ENV**（旧版四态全假 FAIL 就是这么来的）；`verdict` 加 `envStates`/`envNotes`；
+  `--json-out` 现在带完整 `rows`（cw/vw/sbw/alpha/docBg/shot/warn/fail），闸门日志里能直接看到证据。
+- **侧栏 alpha 只在基准宿主硬判**（基准 = prefs 里第一条，即用户日常那台）：本机 rc.5 实测 alpha≈0.92，
+  VM1 那套 npm 版是 0（透明 + 父层供色），这个数归 DSH 前端版本管、不归 App 管 ⇒ 其它宿主只 `warn` 不拦。
+  顺带发现：非基准宿主的侧栏元素在不同构建下会落到 fallback（VM1 两态都读到 `sbw=358`），数值仅供参考。
+- `shot()` 原来没建目录 ⇒ 传 `--shots C:/Temp/geom176d` 时截图**静默丢失**，已补 `fs.mkdirSync(SHOTS,{recursive:true})`。
+- `verify/dsh-app-verify.ps1:56` `$GeomTimeoutSec` 240→420（三宿主冷跑实测 3-4 分钟）。
+
+### 三、验收
+- 手工：`node verify/geom-matrix.mjs --json --json-out C:/Temp/geom176e.json --shots C:/Temp/geom176e`
+  → **PASS states=6 fails=0**，laptop / 工作VM / 测试VM1 三宿主两态全过；laptop 与工作VM 用的是 prefs 里的 token
+  （不 ssh），**测试VM1 的 token 来自 `/tmp/dsh-market-restart-…out.log`** ⇒ 重试环按设计工作。
+- 闸门（`powershell.exe -NoProfile -ExecutionPolicy Bypass -File verify/dsh-app-verify.ps1`）：geom-matrix 这一步 **[PASS] verdict=PASS; states=6 fails=0**，耗时 126s（第 10 项历史上第一次真跑并给出结果，此前一直是 verdict=ENV states=0），整条 SUMMARY: 8/8 passed，日志 C:/Temp/dsh-verify/verify-20261119-171348.log。再往前一次是 rc=2 verdict=ENV（laptop 那行瞬时鉴权页），修完本机 token 顺序 + 20s 同 URL 重试后才归零
+- 改这个文件的坑：`verify/geom-matrix.mjs` 在 HEAD 里是 **LF**（HANDOVER.md 是 CRLF）⇒ 用脚本改它要按 LF 写回，
+  否则整文件假改动（第一次写回 CRLF 时 diff 报了 556 行）。

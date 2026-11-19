@@ -53,7 +53,9 @@ param(
   [int]$EmuBootSec      = 300,          # emulator boot poll (cold start, swiftshader is slow)
   [int]$AssertSec       = 120,          # prefs assert poll inside the drive session
   [string]$Node         = "",            # node.exe for the geometry matrix (config.local.ps1; else PATH)
-  [int]$GeomTimeoutSec  = 240,          # geometry matrix: 2 hosts x 2 states, cold start
+  [int]$GeomTimeoutSec  = 420,          # geometry matrix: up to 3 hosts x 2 states, cold start (hosts auto = whatever is
+                                         # registered in the App prefs + verify/geom-hosts.local.json; tokens are re-taken
+                                         # from each host's ~/.dsh/web.log because DSH rotates them on every restart)
   [switch]$WatchdogSelfTest             # diagnostic: prove a hung command is killed + non-zero exit
 )
 # Local infra overrides (hosts/tokens), see config.example.ps1 - not published

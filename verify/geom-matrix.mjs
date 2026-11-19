@@ -2,7 +2,13 @@
 // 为什么要有它：v1.32.17 那个 P1（聊天列被钉成 56px、正文一字一行）穿过了 9/9，
 // 因为流水线里**一个列宽断言都没有**（只测卡片底色与壁纸红线）。见 GLASS-OVERLAY.md 11.14。
 //
-// 用法：node verify/geom-matrix.mjs [--hot] [--json] [--shots DIR] [--adb PATH] [--serial S] [--prefs FILE] [--hosts 名,名] [--states 状态,状态] [--noshot]
+// 用法：node verify/geom-matrix.mjs [--hot] [--json] [--shots DIR] [--adb PATH] [--serial S] [--prefs FILE]
+//        [--hosts auto|名,名] [--max-hosts N] [--host-map FILE] [--no-refresh] [--states 状态,状态] [--noshot]
+// 宿主清单（2026-11-19 改，HANDOVER §7.65）：--hosts 默认 **auto** = 用 App prefs 里实际在册的宿主（最多 --max-hosts 台），
+//   再加上 verify/geom-hosts.local.json 里"没在 App 注册但确实跑着 dsh web"的宿主。旧默认写死「笔电,测试VM1」，
+//   而 prefs 里的名字实际是 laptop/工作VM ⇒ 找不到就抛 ⇒ 闸门里这项**静默 ENV、从没真跑过**（闸门调用不传 --hosts）。
+// token：DSH 每次重启换 token，prefs 里那个会过期 ⇒ 过期时打开的是 authentication required 页（聊天列读 0，四态全假 FAIL）。
+//   现在按 host:port 查 geom-hosts.local.json 里的 ssh 目标，从对端 ~/.dsh/web.log 现取最后一条 "dsh web:" 的 token 替换进 URL。
 //   最快内环（改完注入段只想看一眼）：node verify/geom-matrix.mjs --hot --noshot --states collapsed  ≈8s
 //   冷跑（默认）：force-stop + am start 打开宿主，测两态 —— 这是**真机口径**，发版用它。
 //   热跑（--hot）：**只是烟雾测，不能当闸门**（2026-10-16 反向对照实测）。
@@ -31,7 +37,10 @@ const SER = opt('--serial', 'emulator-5554');
 const SHOTS = opt('--shots', here);
 const HOT = flag('--hot');
 const JSONOUT = flag('--json');
-const HOSTNAMES = (opt('--hosts', '笔电,测试VM1')).split(',');
+const HOSTREQ = opt('--hosts', 'auto');
+const MAXHOSTS = Math.max(1, Number(opt('--max-hosts', '3')) || 3);
+const HOSTMAPFILE = opt('--host-map', path.join(here, 'geom-hosts.local.json'));
+const NO_REFRESH = flag('--no-refresh');
 // 开发内环用：--states collapsed 只测一个状态、--noshot 不截图（截图 4 张 ≈8s 是内环最大开销）
 const STATES = (opt('--states', 'collapsed,expanded')).split(',');
 const NOSHOT = flag('--noshot');
@@ -39,7 +48,9 @@ const PKG = 'xyz.cpyh.dshpush';
 const PORT = 9223;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adb = (a, enc) => execFileSync(ADB, ['-s', SER].concat(a), { encoding: enc === undefined ? 'utf8' : enc, maxBuffer: 64e6 });
-function hostsFromPrefs() {
+const hostPortOf = (u) => { try { return new URL(u).host; } catch { return ''; } };
+function loadMap() { try { return JSON.parse(fs.readFileSync(HOSTMAPFILE, 'utf8')); } catch { return {}; } }
+function prefsHosts() {
   let f = opt('--prefs', '');
   if (!f) {
     try { adb(['root']); } catch {}
@@ -51,11 +62,84 @@ function hostsFromPrefs() {
   const m = t.match(new RegExp('name=' + String.fromCharCode(34) + 'hosts' + String.fromCharCode(34) + '[^>]*>([\\s\\S]*?)</string>'));
   if (!m) throw new Error('prefs 里没有 hosts');
   const arr = JSON.parse(m[1]);
-  return HOSTNAMES.map((n) => {
-    const h = arr.filter((x) => String(x.name).indexOf(n) >= 0)[0];
-    if (!h) throw new Error('宿主 ' + n + ' 不在 prefs 里（现有：' + arr.map((x) => x.name).join('/') + '）');
-    return { name: h.name, url: h.url || h.baseUrl };
+  return arr.filter((x) => x.url || x.baseUrl).map((x) => {
+    const url = x.url || x.baseUrl;
+    return { name: String(x.name || ''), url, id: String(x.id || hostPortOf(url)) };
   });
+}
+// 在册宿主（prefs）+ 地图里额外声明的宿主（如 VM1 没在 App 注册）
+function pickHosts() {
+  const ph = prefsHosts();
+  const map = loadMap();
+  let list;
+  if (HOSTREQ === 'auto') {
+    list = ph.slice(0, MAXHOSTS);
+    for (const [id, m] of Object.entries(map)) {
+      if (list.length >= MAXHOSTS) break;
+      if (!ph.some((h) => h.id === id) && m.url) list.push({ name: String(m.name || id), url: m.url, id });
+    }
+  } else {
+    const want = HOSTREQ.split(',').map((x) => x.trim()).filter(Boolean);
+    list = want.map((n) => {
+      const h = ph.filter((x) => x.name.indexOf(n) >= 0 || x.id === n)[0] ||
+        Object.entries(map).filter(([id, m]) => id === n || String(m.name || '') === n).map(([id, m]) => ({ name: String(m.name || id), url: m.url, id }))[0];
+      if (!h || !h.url) throw new Error('宿主 ' + n + ' 找不到（prefs 现有：' + ph.map((x) => x.name + '|' + x.id).join('/') + '；地图现有：' + Object.keys(map).join('/') + '）');
+      return h;
+    });
+  }
+  const out = list.filter((h) => h.url).map((h) => ({ name: h.name || h.id, url: h.url, id: h.id, map: map[h.id] || map[h.name] || null }));
+  // prefs 里第一条 = 用户日常那台 ⇒ 当基准宿主：只有它硬判侧栏 alpha（别的宿主跑的是别的 DSH 构建，
+  // 底色本来就不同，拦在闸门上只会天天假红）
+  if (out.length) out[0].primary = true;
+  return out;
+}
+// token 每次 DSH 重启必换。真值来源优先级见 geom-first-token.sh 顶部注释（实测 2026-11-19：VM1 的
+// ~/.dsh/web.log 落后一个重启周期，真 token 只在 /tmp/dsh-market-restart-*.out.log 里）。
+// 注意别用 HTTP 探测判 token：非浏览器请求带着对的 token 也回 401，只有 WebView 里
+// "dsh web authentication required" 这段文案能判 ⇒ 只能「先打开、看文案、再换下一个候选」。
+const FIRST_SH = path.join(here, 'geom-first-token.sh');
+function prefsTok(url) { const m = String(url).match(/[?&]token=([^&#]*)/); return m ? m[1] : ''; }
+function maskUrl(url) { return String(url).replace(/token=[^&#]*/, 'token=…'); }
+function discoverTokens(m) {
+  if (!m) return [];
+  let txt = '';
+  try {
+    if (m.ssh === 'local') {
+      const files = [m.log];
+      const home = process.env.USERPROFILE || process.env.HOME || '';
+      if (home) files.push(path.join(home, '.dsh', 'web.log'));
+      for (const f of files) if (f && fs.existsSync(f)) { txt = fs.readFileSync(f, 'utf8'); break; }
+      const hits = [];
+      for (const L of String(txt).split(/\r?\n/)) {
+        if (!L.startsWith('dsh web:')) continue;
+        const x = L.match(/[?&]token=([A-Za-z0-9_.\-]+)/);
+        if (x && !hits.some((y) => y.tok === x[1])) hits.push({ tok: x[1], src: '本机 web.log' });
+      }
+      // 一个文件里从上往下是「旧 → 新」，必须倒过来：闸门实测踩过——prefs 里那条过期后,
+      // 顺序取到的是两发更早的 token，最新那条反而排最后，白试两轮还是鉴权页。
+      return hits.reverse();
+    }
+    txt = execFileSync('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', m.ssh, 'sh -s'], { encoding: 'utf8', maxBuffer: 8e6, timeout: 30000, input: fs.readFileSync(FIRST_SH, 'utf8') });
+  } catch { return []; }
+  const out = [];
+  for (const L of String(txt).split(/\r?\n/)) {
+    const i = L.indexOf('|');
+    if (i < 12) continue;
+    const tok = L.slice(0, i);
+    if (!/^[A-Za-z0-9_.\-]{16,}$/.test(tok)) continue;
+    out.push({ tok, src: L.slice(i + 1).replace(/^\/home\/[^/]+/, '~') });
+  }
+  return out;
+}
+function setToken(url, tok) {
+  if (!tok) return url;
+  if (/[?&]token=/.test(url)) return url.replace(/([?&]token=)[^&#]*/, '$1' + tok);
+  const hi = url.indexOf('#');
+  const hash = hi >= 0 ? url.slice(hi) : '';
+  let base = hi >= 0 ? url.slice(0, hi) : url;
+  // 光 host:port 不带路径时补一个 /（http://h:3080?token=… 这种写法 dsh-net-proxy 不认）
+  if (/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+$/i.test(base)) base += '/';
+  return base + (base.indexOf('?') >= 0 ? '&' : '?') + 'token=' + tok + hash;
 }
 const PROBE = "(" + "function(){var J=JSON.stringify;function R(n){if(!n)return null;var r=n.getBoundingClientRect();return {w:Math.round(r.width),h:Math.round(r.height),x:Math.round(r.left)}}function A(n){if(!n)return null;var cs=getComputedStyle(n);var m=(n.getAttribute('style')||'').match(/background-color:[^;]+/);return {bg:cs.backgroundColor,inline:m?m[0].slice(0,60):''}}var o={};o.vw=window.innerWidth;o.vh=window.innerHeight;o.host=location.host;o.pinned=!!window.__bwW;o.sbPub=!!window.__bwSbEl;var fc=document.querySelector('[class*=centerCol]');o.centerCol=R(fc);o.colW=(function(){var sc=document.querySelector('[class*=_sidebarCol]');o.colRect=R(sc);o.colVis=sc?getComputedStyle(sc).visibility:null;return sc?Math.round(sc.getBoundingClientRect().width):-1})();o.fab=!!document.getElementById('bw-whale-fab');o.convVar=fc?String(getComputedStyle(fc).getPropertyValue('--dsh-conversation-column-width')).trim():'';var sb=window.__bwSbEl||null;var list=document.querySelectorAll('div,section,aside');var best=null;for(var i=0;i<list.length;i++){var q=list[i];var cls=String(q.className);if(cls.indexOf('_root')<0)continue;var r=q.getBoundingClientRect();if(r.height<o.vh*0.6||r.left>2)continue;if(!best||r.width<best.getBoundingClientRect().width)best=q}sb=sb||best||document.querySelector('[class*=_root]');o.sbFromCls=!!window.__bwSbEl?'__bwSbEl':'fallback';o.sbCls=sb?String(sb.className).slice(0,60):null;o.sbRect=R(sb);o.sbBg=A(sb);var de=getComputedStyle(document.documentElement);o.docBg=de.backgroundColor;o.bodyBg=document.body?getComputedStyle(document.body).backgroundColor:null;return J(o)})()";
 let ws = null, id = 0; const pend = new Map();
@@ -148,14 +232,16 @@ async function toggle() {
 async function shot(tag) {
   try {
     const buf = execFileSync(ADB, ['-s', SER, 'exec-out', 'screencap', '-p'], { encoding: 'buffer', maxBuffer: 64e6 });
+    if (!fs.existsSync(SHOTS)) fs.mkdirSync(SHOTS, { recursive: true });
     const p = path.join(SHOTS, 'geom-' + tag + '.png');
     fs.writeFileSync(p, buf);
     return p + ' ' + buf.length + 'B';
   } catch (e) { return '截图失败 ' + String(e.message).slice(0, 40); }
 }
 function alphaOf(bg) { const m = String(bg || '').match(/rgba?\(([^)]*)\)/); if (!m) return null; const p = m[1].split(','); return p.length >= 4 ? Number(p[3]) : 1; }
-function judge(tag, o) {
+function judge(tag, o, strict) {
   const bad = [];
+  o.warn = [];
   const cw = o.centerCol ? o.centerCol.w : 0;
   const min = Math.round(o.vw * 0.8);
   if (cw < min) bad.push('聊天列 ' + cw + ' < 0.8vw(' + min + ')');
@@ -164,7 +250,12 @@ function judge(tag, o) {
   if (tag.indexOf('expanded') >= 0) {
     const a = alphaOf(o.sbBg && o.sbBg.bg);
     if (a === null) bad.push('读不到侧栏 alpha');
-    else if (a < 0.87 || a > 0.97) bad.push('侧栏 alpha ' + a + ' 不在 [0.87,0.97]');
+    else if (a < 0.87 || a > 0.97) {
+      // 实测：本机 DSH 0.2.2-rc.5 的侧栏底色 alpha≈0.9，VM1 上那套 npm 版是 0（透明 + 父层供色）。
+      // 这个数归 DSH 前端版本管、不归 App 管 ⇒ 只有基准宿主硬判，其它宿主记下来给人眼看。
+      if (strict) bad.push('侧栏 alpha ' + a + ' 不在 [0.87,0.97]');
+      else o.warn.push('侧栏 alpha ' + a + '（非基准宿主，只记录不拦）');
+    }
   } else {
     // v1.33.29：收起态侧栏整个 display:none——alpha 读不到（旧 [0.4,0.5] 断言作废，
     // 且 PROBE 的 _root 兜底会抓到 left=0 的聊天根误判）。改断言侧栏列(*_sidebarCol)
@@ -185,21 +276,57 @@ function judge(tag, o) {
 }
 const rows = [];
 let envErr = null;
+const envNotes = [];
 try {
-  const hosts = hostsFromPrefs();
-  // 复用入库的抽取器（单一真值），用 process.execPath ⇒ 不写死 node 路径
-  const js = HOT ? execFileSync(process.execPath, [path.join(here, 'extract-injected-js.mjs')], { encoding: 'utf8', maxBuffer: 16e6 }).trim() : null;
+  const hosts = pickHosts();
   for (const h of hosts) {
+// DSH 的鉴权提示页判据（HTTP 探测判不了 token，只能看这段文案）
+const IS_AUTH = "(function(){var t=(document.body&&document.body.innerText)||'';return /authentication required|reopen the URL printed by dsh web/i.test(t)})()";
+  const js = HOT ? execFileSync(process.execPath, [path.join(here, 'extract-injected-js.mjs')], { encoding: 'utf8', maxBuffer: 16e6 }).trim() : null;
     const key = h.name.replace(/[\\/:*?"<>|\s]+/g, '') || 'host';
-    let ready;
-    if (HOT) { ready = await openHot(h.url); await ev(js); await sleep(1200); }
-    else { ready = await openCold(h.url); }
+    // token 每次 DSH 重启必换 ⇒ prefs 里那条先试（闸门测的就是 App 自己那条链），
+    // 命中鉴权页就换现取的下一个候选，最多三发；全不成才算环境问题。
+    const cands = [];
+    const pt = prefsTok(h.url);
+    if (pt) cands.push({ tok: pt, src: 'prefs' });
+    let ready = -1, auth = false;
+    const tried = [];
+    for (let i = 0; i < 3; i++) {
+      if (!cands[i]) for (const d of discoverTokens(h.map)) if (!cands.some((x) => x.tok === d.tok)) cands.push(d);
+      const c = cands[i];
+      if (!c) break;
+      tried.push(c.src);
+      h.url = setToken(h.url, c.tok);
+      h.tokenSrc = c.src;
+      ready = HOT ? await openHot(h.url) : await openCold(h.url);
+      if (HOT) { try { await ev(js); } catch {} await sleep(1200); }
+      if (ready < 0) break;
+      auth = !!(await ev(IS_AUTH));
+      if (!auth || HOT) break;
+    }
+    // 最后一发也撞上鉴权页时，别急着判 ENV：2026-11-19 闸门实测过一发「token 明明是对的、
+    // 页面仍是 authentication required」的瞬时状态（3080 那层代理还没热起来）。等 20s 用同一条
+    // URL 再开一次，成了就不算环境问题，只在行里留个 warn。
+    let transientNote = '';
+    if (auth && !HOT && cands.length) {
+      await sleep(20000);
+      if (await openCold(h.url) >= 0 && !(await ev(IS_AUTH))) { auth = false; (transientNote = 'token 第一发被拒、20s 后同 URL 重试成功（瞬时鉴权抖动）'); }
+    }
+    // 未鉴权/未就绪 = 环境问题，不是几何回归：别让它冒充 FAIL（旧版四态全假 FAIL 就是这个）
+    let blocked = '';
+    if (ready < 0) {
+      let why = '';
+      try { why = await ev("(function(){var t=(document.body&&document.body.innerText||'').replace(/\\s+/g,' ').trim();return (t?t.slice(0,70):'（空页）')+' @ '+location.href.slice(0,70)})()"); } catch {}
+      blocked = '页面未就绪（' + maskUrl(h.url) + (why ? '）' + why : '）') + ' 试过 ' + tried.join(' / ');
+    }
+    else if (auth) blocked = '未鉴权：打开的是 authentication required 页（试过 ' + tried.join(' / ') + '）';
+    if (blocked) { envNotes.push(h.name + '：' + blocked); for (const st of STATES) rows.push({ host: h.name, state: st, ready, env: true, fail: [], note: blocked }); continue; }
     for (const state of STATES) {
       if (state === 'expanded') { const t = await toggle(); if (!t) { rows.push({ host: h.name, state, ready, fail: ['找不到侧栏切换按钮'] }); continue; } }
       const o = JSON.parse(await ev(PROBE));
-      const fail = judge(state, o);
+      const fail = judge(state, o, !!h.primary);
       const s = NOSHOT ? '(略)' : await shot(key + '-' + state);
-      rows.push({ host: h.name, state, ready, cw: o.centerCol ? o.centerCol.w : 0, vw: o.vw, sbw: o.sbRect ? o.sbRect.w : 0, alpha: alphaOf(o.sbBg && o.sbBg.bg), pinned: o.pinned, sbPub: o.sbPub, docBg: o.docBg, shot: s, fail });
+      rows.push({ host: h.name, state, ready, tok: h.tokenSrc, cw: o.centerCol ? o.centerCol.w : 0, vw: o.vw, sbw: o.sbRect ? o.sbRect.w : 0, alpha: alphaOf(o.sbBg && o.sbBg.bg), pinned: o.pinned, sbPub: o.sbPub, docBg: o.docBg, shot: s, warn: o.warn.concat(transientNote ? [transientNote] : []), fail });
     }
   }
 } catch (e) { envErr = String(e && e.message).slice(0, 160); }
@@ -208,17 +335,20 @@ if (!JSONOUT) {
   if (HOT) console.log('  ⚠ 热跑测的是已装包的行为：已装注入段的观察者在持续纠页，会把你第二次求值的坏代码修回去。');
   for (const r of rows) {
     console.log('  ' + r.host.padEnd(10) + ' ' + r.state.padEnd(9) + ' 就绪=' + String(r.ready).padEnd(6) + ' 聊天列=' + String(r.cw).padEnd(5) + ' 侧栏=' + String(r.sbw).padEnd(5) + ' alpha=' + String(r.alpha).padEnd(5) + ' 钉住=' + r.pinned + ' 截图=' + r.shot);
+    if (r.warn && r.warn.length) console.log('      △ ' + r.warn.join(' ; '));
     if (r.fail && r.fail.length) console.log('      ✗ ' + r.fail.join(' ; '));
   }
 }
 const fails = rows.filter((r) => r.fail && r.fail.length);
-const verdict = envErr ? 'ENV' : (rows.length === 0 ? 'ENV' : (fails.length ? 'FAIL' : 'PASS'));
-const payload = JSON.stringify({ mode: HOT ? 'hot' : 'cold', verdict, envErr, states: rows.length, fails: fails.map((r) => r.host + '/' + r.state + ': ' + r.fail.join('; ')) });
+const envRows = rows.filter((r) => r.env);
+const verdict = envErr ? 'ENV' : (rows.length === 0 ? 'ENV' : (fails.length ? 'FAIL' : (envRows.length ? 'ENV' : 'PASS')));
+const payload = JSON.stringify({ mode: HOT ? 'hot' : 'cold', verdict, envErr, envNotes, states: rows.length, envStates: envRows.length, fails: fails.map((r) => r.host + '/' + r.state + ': ' + r.fail.join('; ')),
+  rows: rows.map((r) => ({ host: r.host, state: r.state, ready: r.ready, tok: r.tok, cw: r.cw, vw: r.vw, sbw: r.sbw, alpha: r.alpha, docBg: r.docBg, shot: r.shot, warn: r.warn, fail: r.fail })) });
 // --json-out：把结论写进文件。发布流水线靠这个文件取结论，不依赖 stdout 捕获
 // （cmd /c 在多对引号的命令行上会剥掉最外层引号，曾把看门狗的 > 重定向变成 node 的参数，输出全丢）。
 const jout = opt('--json-out', '');
 if (jout) fs.writeFileSync(jout, payload);
 if (JSONOUT) console.log(payload);
-console.log('VERDICT: ' + verdict + (envErr ? '  env=' + envErr : '') + '  states=' + rows.length + ' fails=' + fails.length);
+console.log('VERDICT: ' + verdict + (envErr ? '  env=' + envErr : '') + '  states=' + rows.length + ' fails=' + fails.length + (envNotes.length ? '  envNotes=' + envNotes.join(' | ') : ''));
 if (ws) { try { ws.close(); } catch {} }
 process.exit(verdict === 'PASS' ? 0 : verdict === 'FAIL' ? 1 : 2);
