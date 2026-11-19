@@ -35,7 +35,108 @@ import android.widget.Toast
 /** App 内置网页窗口（v1.9.8）：单实例复用，新链接在原窗口加载。
  *  vivo 浏览器无视 SINGLE_TOP 每次新开标签页（v1.9.7 实测），改为自控窗口彻底解决。 */
 class WebActivity : Activity() {
-    private var web: WebView? = null
+    /**
+     * v1.34.16（用户 m01723「跨设备切换要重新加载」）：**一台 DSH 一块 WebView**。
+     * 之前整个窗口只有一块 WebView，切到另一台只能 loadUrl 重新拉——那台的分组折叠、滚动位置、
+     * 输入草稿、WebSocket 全丢，来回切就是来回重连。现在每台留一块实例，切回来只改 visibility，
+     * 页面状态原样还在。活动页的 web / loadedUrl / restoreTarget 等仍走原来的字段名（facade），
+     * 老代码基本不动；后台页自己触发的回调一律按 owner 归到它自己那页（见 buildPage）。
+     */
+    private class Page(val key: String) {
+        var web: WebView? = null
+        var loadedUrl: String = ""
+        var loadedToken: String = ""
+        var loadErrored = false
+        var restoreTarget: String = ""
+        var restoreAt: Long = 0L
+        var restoreSkip: Int = 0
+        var restoreCanceled: Boolean = false
+        var retryAttempt = 0
+        var retryPending: Runnable? = null
+        var authGuard: Runnable? = null
+        var title: String = ""
+        var lastUrl: String = ""
+        /** 活动页那套老代码用的字段名是 lastUrl，这里给个别名，两边都不用改 */
+        var url: String
+            get() = lastUrl
+            set(v) { lastUrl = v }
+        var touchedAt: Long = 0L
+    }
+
+    /** 同时保温的页面数：超了销毁最久没碰的那台。两台设备正好都留着；
+     *  再多留不住——每块 WebView 几十 MB，手机端 3 块封顶。 */
+    private val maxPages = 3
+
+    /** 按 host（scheme://host:port）存活的页面 */
+    private val pages = LinkedHashMap<String, Page>()
+    private var activeKey: String = ""
+    private var shownKey: String = ""
+    private val activePage: Page? get() = pages[activeKey]
+    /** 正在处理的是不是屏幕上那页：只有它是，才允许动原生 UI（顶栏、错误层、进度） */
+    private val onScreen: Boolean get() = activeKey.isNotEmpty() && activeKey == shownKey
+
+    /**
+     * 回调上下文：WebChromeClient / WebViewClient / JS 桥的回调可能来自**后台那块 WebView**
+     * （它自己也在加载、也在报会话）。处理前把 activeKey 临时指到它的 owner 页，块里所有
+     * 走 facade 的老代码就自动落到正确的页上；动 UI 的地方另有 onScreen 把关。
+     */
+    private inline fun <T> withPage(p: Page, block: () -> T): T {
+        val prev = activeKey
+        activeKey = p.key
+        try {
+            return block()
+        } finally {
+            activeKey = prev
+        }
+    }
+
+    /** 把一个页面实例挂进容器；错误层是最后一个孩子，新页面插在它前面 */
+    private fun attachPage(p: Page) {
+        val box = webBox ?: return
+        val wv = p.web ?: return
+        if (wv.parent === box) return
+        box.addView(wv, box.childCount - 1, FrameLayout.LayoutParams(-1, -1))
+        wv.visibility = if (p.key == shownKey) View.VISIBLE else View.GONE
+    }
+
+    /** 切到某个页面：只改 visibility，不 loadUrl——这就是「切回另一台不重载」的全部秘密 */
+    private fun setPage(p: Page) {
+        for ((k, other) in pages) {
+            if (k == p.key) continue
+            other.web?.visibility = View.GONE
+            other.web?.onPause()
+        }
+        shownKey = p.key
+        activeKey = p.key
+        p.touchedAt = android.os.SystemClock.elapsedRealtime()
+        p.web?.visibility = View.VISIBLE
+        p.web?.onResume()
+        applyInstanceLabel(p.url)
+        // 错误层跟着可见页走：那页上次报错就还它错误层
+        if (p.loadErrored) showError() else hideError()
+        p.web?.evaluateJavascript(
+            "window.__dshDiagSet&&window.__dshDiagSet(" + DiagPrefs.on(this) + ")", null)
+    }
+
+    /** 超过上限就销毁最久没碰的那台（活动页永不销毁） */
+    private fun evictPages() {
+        while (pages.size > maxPages) {
+            val victim = pages.entries.filter { it.key != shownKey }
+                .minByOrNull { it.value.touchedAt } ?: return
+            pages.remove(victim.key)
+            (victim.value.web?.parent as? ViewGroup)?.removeView(victim.value.web)
+            victim.value.web?.destroy()
+            android.util.Log.d("dshpage", "evict host=" + victim.key + " keep=" + pages.size)
+        }
+    }
+
+    /** 每台页面的 WebView 都挂在这个容器里，错误层永远在最上面 */
+    private var webBox: FrameLayout? = null
+    private var rootView: FrameLayout? = null
+    private var contentView: LinearLayout? = null
+
+    /** 当前活动页那块 WebView（facade，见 Page）；不再自己存 */
+    private val web: WebView? get() = activePage?.web
     private var errorLayer: View? = null
     private var errText: TextView? = null
     // 标题栏文字（v1.30.0）：随加载的链接刷新成「DSH 网页 · 实例名」
@@ -49,8 +150,12 @@ class WebActivity : Activity() {
     // 这两个字段只在**我们自己发起 loadUrl** 的那一刻写。不能拿 lastUrl / web.url 去判
     // 「屏幕上是不是同一台」——DSH 的 ?token= 入口会 303 到 Cookie 鉴权地址，两者都被抹成
     // 不带 token 的串，于是「DSH 重启换了 token（那页 WebSocket 已死，必须重载）」永远判不出来。
-    private var loadedUrl: String = ""
-    private var loadedToken: String = ""
+    private var loadedUrl: String
+        get() = activePage?.loadedUrl ?: ""
+        set(v) { activePage?.loadedUrl = v }
+    private var loadedToken: String
+        get() = activePage?.loadedToken ?: ""
+        set(v) { activePage?.loadedToken = v }
 
     /** 原生顶栏收起/展开：动画 height（LinearLayout 里 WebView 随之获得/让出空间）。
      *  160ms，Chrome 地址栏同款手感；重复调用幂等。 */
@@ -78,12 +183,20 @@ class WebActivity : Activity() {
     //   loadErrored —— 本次加载的主文档出错过（onPageFinished 对错误页也会触发，
     //                  不能拿它当"成功"信号，必须靠这个旗标区分）
     private var offline = false
-    private var retryAttempt = 0
-    private var retryPending: Runnable? = null
-    private var loadErrored = false
+    private var retryAttempt: Int
+        get() = activePage?.retryAttempt ?: 0
+        set(v) { activePage?.retryAttempt = v }
+    private var retryPending: Runnable?
+        get() = activePage?.retryPending ?: null
+        set(v) { activePage?.retryPending = v }
+    private var loadErrored: Boolean
+        get() = activePage?.loadErrored ?: false
+        set(v) { activePage?.loadErrored = v }
     private val ui = Handler(Looper.getMainLooper())
     // 最初那次 loadUrl 的地址：WebView 自己报不出可用地址时用它兜底（v1.32.8）
-    private var lastUrl: String = ""
+    private var lastUrl: String
+        get() = activePage?.lastUrl ?: ""
+        set(v) { activePage?.lastUrl = v }
     // 网页文件选择的回调（v1.19.0）：onActivityResult 里喂结果
     private var fileCb: ValueCallback<Array<Uri>>? = null
     // ★ v1.33.41（用户 m07251）：本次进入要落到的会话（空 = 不恢复）。
@@ -92,15 +205,23 @@ class WebActivity : Activity() {
     //   「手动切了对话，再进来还是标签那个对话」的一种成因（写盘被抢）；
     //   ② onPageFinished 后复核：时间够久还没落到目标就补一次 `location.hash`，
     //   让 host-plugin 的 revealFromHash 重新切（片段在 replaceState 前后丢过也能救）。
-    private var restoreTarget: String = ""
-    private var restoreAt: Long = 0L
+    private var restoreTarget: String
+        get() = activePage?.restoreTarget ?: ""
+        set(v) { activePage?.restoreTarget = v }
+    private var restoreAt: Long
+        get() = activePage?.restoreAt ?: 0L
+        set(v) { activePage?.restoreAt = v }
     //   ③ 但闸门**最多只拦一次**：页面落定前那个过渡会话只会上报一次；若用户在这几秒里
     //   自己切了对话（第二次不同的上报），就必须认页面为准——否则会出现「刚进来马上切走、
     //   结果没存上」的另一半 bug（v1.33.41 实测踩过这一层的设计取舍）。
-    private var restoreSkip: Int = 0
+    private var restoreSkip: Int
+        get() = activePage?.restoreSkip ?: 0
+        set(v) { activePage?.restoreSkip = v }
     // v1.34.3（用户 m131328）：补切定时器按值捕获 want，落地后仍会写回旧 hash ->
     // "切过去几秒又被拽回来"。每次触发都要重读状态，用户一动手就整体作废。
-    private var restoreCanceled: Boolean = false
+    private var restoreCanceled: Boolean
+        get() = activePage?.restoreCanceled ?: false
+        set(v) { activePage?.restoreCanceled = v }
 
     // v1.34.3：任何一次真实触摸都视为用户接管，立刻停掉补切
     override fun dispatchTouchEvent(ev: android.view.MotionEvent?): Boolean {
@@ -141,6 +262,7 @@ class WebActivity : Activity() {
         // 主题壁纸叠放（v1.25.0）：场景矢量 + 52% 立绘，与主界面同一套规则；
         // 网页区透明叠在其上，DSH Web 空隙处透出壁纸与鲸鱼娘
         val root = FrameLayout(this)
+        rootView = root
         root.addView(ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             val wp = android.util.TypedValue()
@@ -257,10 +379,31 @@ class WebActivity : Activity() {
         barBox.addView(bar, FrameLayout.LayoutParams(-1, -2))
         content.addView(barBox)
         topBar = barBox
+        contentView = content
 
+        // 页面实例本体在 buildPage() 里：一台 DSH 一块 WebView（v1.34.16，用户 m01723）
+        buildPage(DshHosts.hostOf(intent?.getStringExtra("url") ?: ""))
+        buildShell()
+        startFirstPage(savedInstanceState)
+    }
+
+    /**
+     * 造「这台 host」的 WebView 实例并登记成活动页。
+     * 下面这一整块是从原 onCreate 里原样搬来的（一字未改逻辑），只有三处不同：
+     *   · `web = WebView(...)` → `val w = WebView(...)`，块尾接到 owner 上
+     *   · 建之前先 pages[key]=owner; activeKey=key ⇒ 块里那些走 facade 的状态都落在这一页
+     *   · 页面上自己触发的回调（标题、会话回传、顶栏）按 owner 归位，后台页不串台
+     */
+    private fun buildPage(key: String): Page {
+        val owner = Page(key)
+        pages[key] = owner
+        activeKey = key
+        // 第一页就是屏幕上那页；后面建的页先挂成 GONE，由 setPage 决定谁可见
+        if (pages.size == 1) shownKey = key
+        owner.touchedAt = android.os.SystemClock.elapsedRealtime()
         // 深色三档：仅所选主题为深色时开，浅色主题保持亮页（v1.12.0）
         val dark = ThemePrefs.KEYS[ThemePrefs.current(this)] in setOf("night", "starry")
-        web = WebView(this).apply {
+        val w = WebView(this).apply {
             // v1.33.1：调试浮层开着时顺带打开 WebView 远程调试 + 控制台转发（tag dshweb），
             // 这样能用 USB/adb 从电脑直接连进手机里那个页面读真实 DOM 与生效样式。
             if (DiagPrefs.on(this@WebActivity)) {
@@ -274,7 +417,7 @@ class WebActivity : Activity() {
             addJavascriptInterface(object {
                 @android.webkit.JavascriptInterface
                 fun barShow(show: Boolean) {
-                    runOnUiThread { setBarShown(show) }
+                    runOnUiThread { if (owner.key == shownKey) setBarShown(show) }
                 }
 
                 // v1.33.39（用户 m06190）：页面把「当前停留的对话」报上来，按宿主存盘，
@@ -282,7 +425,9 @@ class WebActivity : Activity() {
                 // 会 replaceState 抹掉片段），所以只能由页面侧读 DOM 再回传。
                 @android.webkit.JavascriptInterface
                 fun saveSess(sid: String?) {
-                    try {
+                    // v1.34.16：JS 桥是从 JS 线程打进来的，且后台那台也会报，
+                    // 先归位到它自己那页再写状态。
+                    try { withPage(owner) {
                         val v = sid ?: return
                         if (v.isEmpty()) return
                         // ★ v1.33.41（用户 m07251）：一旦落到目标会话，立刻解除闸门与复核——
@@ -312,7 +457,7 @@ class WebActivity : Activity() {
                         if (host.isEmpty()) return
                         DshHosts.saveLastSess(this@WebActivity, host, v)
                         android.util.Log.d("dshsess", "save host=$host sess=$v")
-                    } catch (e: Exception) {
+                    } } catch (e: Exception) {
                     }
                 }
             }, "bwNative")
@@ -345,10 +490,18 @@ class WebActivity : Activity() {
                     view: WebView?, url: String?, favicon: android.graphics.Bitmap?
                 ) {
                     // 新的一次导航＝新的一次尝试：成败由回调重新判定（v1.32.8）
-                    loadErrored = false
-                    url?.let { if (it.startsWith("http")) lastUrl = it }
-                    // 页内跳去别的机器（如下载链、跨实例链接）时标题跟着换（v1.30.0）
-                    url?.let { applyInstanceLabel(it) }
+                    withPage(owner) {
+                        loadErrored = false
+                        url?.let {
+                            if (it.startsWith("http")) {
+                                lastUrl = it
+                                owner.url = it
+                            }
+                        }
+                        // 页内跳去别的机器（如下载链、跨实例链接）时标题跟着换（v1.30.0）。
+                        // v1.34.16：只有屏幕上那页的跳转才动顶栏，后台那台换页不许抢标题。
+                        url?.let { if (onScreen) applyInstanceLabel(it) }
+                    }
                 }
 
                 // 主框架加载失败 → 人设错误页（v1.12.0）+ 退避自动重试（v1.32.8）
@@ -356,9 +509,11 @@ class WebActivity : Activity() {
                     view: WebView?, request: WebResourceRequest?, error: WebResourceError?
                 ) {
                     if (request?.isForMainFrame == true) {
-                        loadErrored = true
-                        showError()
-                        scheduleRetry("onReceivedError")
+                        withPage(owner) {
+                            loadErrored = true
+                            showError()
+                            scheduleRetry("onReceivedError")
+                        }
                     }
                 }
 
@@ -369,25 +524,30 @@ class WebActivity : Activity() {
                     if (request?.isForMainFrame == true &&
                         (errorResponse?.statusCode ?: 0) >= 500
                     ) {
-                        loadErrored = true
-                        showError()
-                        scheduleRetry("onReceivedHttpError")
+                        withPage(owner) {
+                            loadErrored = true
+                            showError()
+                            scheduleRetry("onReceivedHttpError")
+                        }
                     }
                 }
 
                 override fun onPageFinished(view: WebView?, url: String?) {
-                    // 加载成功才清退避；错误页也会走到这里，所以要靠 loadErrored 区分（v1.32.8）
-                    if (loadErrored) {
-                        scheduleRetry("onPageFinished(error-page)")
-                    } else {
-                        retryAttempt = 0
-                        cancelRetry()
+                    // v1.34.16：后台那块 WebView 加载完也走这里，先归位到它自己那页再判
+                    withPage(owner) {
+                        // 加载成功才清退避；错误页也会走到这里，所以要靠 loadErrored 区分（v1.32.8）
+                        if (loadErrored) {
+                            scheduleRetry("onPageFinished(error-page)")
+                        } else {
+                            retryAttempt = 0
+                            cancelRetry()
+                        }
+                        hideError()
+                        // ★ v1.33.41（用户 m07251）：本次是「恢复到某会话」就复核落地，没到就补切。
+                        recheckRestoreTarget()
+                        // 断网期间页面重载过 → 横幅要重新挂上（页面 DOM 是新的）
+                        if (offline) showNetBanner()
                     }
-                    hideError()
-                    // ★ v1.33.41（用户 m07251）：本次是「恢复到某会话」就复核落地，没到就补切。
-                    recheckRestoreTarget()
-                    // 断网期间页面重载过 → 横幅要重新挂上（页面 DOM 是新的）
-                    if (offline) showNetBanner()
                     // 窄屏（≤1023px）修补（v1.32.5）：
                     //   ① 提问卡头部允许换行 + 问题文字占满整行（同 v1.32.2 的做法，但只在窄屏生效）。
                     //   ② 侧栏展开态改成浮层：中心列不被 280px 侧栏压缩，浮层盖在内容上、可滚动、
@@ -1956,6 +2116,16 @@ class WebActivity : Activity() {
                 }
             }
         }
+        owner.web = w
+        owner.url = w.url ?: ""
+        attachPage(owner)
+        // 验收判据：这台第一次建实例（切回来时不该再有这条）
+        android.util.Log.d("dshpage", "new host=" + key + " pages=" + pages.size)
+        return owner
+    }
+
+    /** 外壳收尾：错误层 + 页面容器 + setContentView（只在第一页之后跑一次） */
+    private fun buildShell() {
         // 错误层：盖在 WebView 上的叠放层，默认隐藏（v1.12.0）
         val layer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1992,13 +2162,17 @@ class WebActivity : Activity() {
             })
         }
         errorLayer = layer
-        val webBox = FrameLayout(this).apply {
-            addView(web, FrameLayout.LayoutParams(-1, -1))
-            addView(layer, FrameLayout.LayoutParams(-1, -1))
-        }
-        content.addView(webBox, LinearLayout.LayoutParams(-1, -1))
-        root.addView(content, FrameLayout.LayoutParams(-1, -1))
-        setContentView(root)
+        val box = FrameLayout(this)
+        webBox = box
+        activePage?.let { attachPage(it) }
+        box.addView(layer, FrameLayout.LayoutParams(-1, -1))
+        contentView?.addView(box, LinearLayout.LayoutParams(-1, -1))
+        rootView?.addView(contentView, FrameLayout.LayoutParams(-1, -1))
+        setContentView(rootView)
+    }
+
+    /** 首屏加载与「回到上次停留的对话」那套（原 onCreate 后半段原样搬来） */
+    private fun startFirstPage(savedInstanceState: Bundle?) {
         watchNetwork()
 
         val url0 = intent?.getStringExtra("url") ?: ""
@@ -2055,8 +2229,9 @@ class WebActivity : Activity() {
             "var v=e?String(e.getAttribute('data-conversation-session')||''):'';" +
             "return v||'none';})()"
         val jsForce = "(function(){try{location.hash='" + want + "';}catch(e1){}return 'forced';})()"
+        val pg = activePage ?: return
         for (delay in longArrayOf(2500L, 7000L)) {
-            ui.postDelayed({
+            ui.postDelayed({ withPage(pg) {
                 // 三重闸（v1.34.3）：(1) 目标已落地（saveSess 会清空 restoreTarget）；
                 // (2) 又要求恢复别的会话（want 已过期）；(3) 用户已动手（碰屏幕或切过会话）。
                 if (restoreTarget != want || restoreCanceled) {
@@ -2077,7 +2252,7 @@ class WebActivity : Activity() {
                     }
                 } catch (e: Exception) {
                 }
-            }, delay)
+            } }, delay)
         }
     }
 
@@ -2124,11 +2299,14 @@ class WebActivity : Activity() {
     private fun showError() {
         val u = web?.url ?: ""
         val host = try { Uri.parse(u).host } catch (e: Exception) { null } ?: u
+        // v1.34.16：后台那块 WebView 报错也只登记在它自己那页，别把错误层盖到屏幕上那页
+        if (!onScreen) return
         errText?.text = "连不上这台机器\n$host\n可能它睡着了或网络断了"
         errorLayer?.visibility = View.VISIBLE
     }
 
     private fun hideError() {
+        if (!onScreen) return
         errorLayer?.visibility = View.GONE
     }
 
@@ -2170,19 +2348,24 @@ class WebActivity : Activity() {
     private fun scheduleRetry(why: String) {
         if (retryPending != null) return
         if (isFinishing || isDestroyed) return
+        val pg = activePage ?: return
         val secs = when {
             retryAttempt <= 0 -> 1
             retryAttempt >= 5 -> 30
             else -> 1 shl retryAttempt
         }
         val r = Runnable {
-            retryPending = null
-            if (isFinishing || isDestroyed) return@Runnable
-            val target = currentUrl()
-            if (target.isEmpty()) return@Runnable
-            retryAttempt += 1
-            loadErrored = false   // 本次尝试成败由回调重新判定
-            loadFresh(target)
+            // v1.34.16：到点时用户可能已经切到另一台了，必须回到排期它的那一页，
+            // 否则会把后台那台的重载打到屏幕上这块 WebView 上。
+            withPage(pg) {
+                retryPending = null
+                if (isFinishing || isDestroyed) return@Runnable
+                val target = currentUrl()
+                if (target.isEmpty()) return@Runnable
+                retryAttempt += 1
+                loadErrored = false   // 本次尝试成败由回调重新判定
+                loadFresh(target)
+            }
         }
         retryPending = r
         ui.postDelayed(r, secs * 1000L)
@@ -2267,11 +2450,13 @@ class WebActivity : Activity() {
         // 上面那段 JS 用单引号包地址，带单引号的地址会拼坏它：这种链接直接不探（退化成不重载）。
         // 别写 url.indexOf(39)——Kotlin 的 String 没有 indexOf(Int)，编译不过（174 首次构建实测）。
         if (url.contains("'")) return
+        // v1.34.16：探针只打回排期它的那块 WebView，不能用 facade 找当前页
+        val pg = activePage ?: return
         for (delay in longArrayOf(2500L, 6000L)) {
             ui.postDelayed({
                 if (isFinishing || isDestroyed) return@postDelayed
                 try {
-                    web?.evaluateJavascript(authGuardJs(url), null)
+                    pg.web?.evaluateJavascript(authGuardJs(url), null)
                 } catch (e: Exception) {
                 }
             }, delay)
@@ -2330,15 +2515,21 @@ class WebActivity : Activity() {
                     if (isFinishing || isDestroyed) return@runOnUiThread
                     offline = false
                     hideNetBanner()
-                    // 断开态（错误层在 / 主文档加载失败 / 还没加载成功过）→ 自动重载，不需要用户手点
-                    val broken = errorLayer?.visibility == View.VISIBLE || loadErrored
-                    if (broken) {
-                        cancelRetry()
-                        retryAttempt = 0
-                        loadErrored = false
-                        hideError()
-                        val target = currentUrl()
-                        if (target.isNotEmpty()) loadFresh(target)
+                    // 断开态（错误层在 / 主文档加载失败 / 还没加载成功过）→ 自动重载，不需要用户手点。
+                    // v1.34.16：多实例下每台各修各的——屏幕上那页修它的，后台那台修它的，
+                    // 不能只重载活动页让后台那台永远停在错误页。
+                    for ((_, pg) in pages.toList()) {
+                        val broken = (pg.key == shownKey && errorLayer?.visibility == View.VISIBLE) ||
+                            pg.loadErrored || pg.loadedUrl.isEmpty()
+                        if (!broken) continue
+                        withPage(pg) {
+                            cancelRetry()
+                            retryAttempt = 0
+                            loadErrored = false
+                            hideError()
+                            val target = currentUrl()
+                            if (target.isNotEmpty()) loadFresh(target)
+                        }
                     }
                 }
             }
@@ -2362,24 +2553,40 @@ class WebActivity : Activity() {
         // 窗口复用：token 换新等直接在同一窗口加载新链接（v1.9.8）
         markMsgRead(intent)
         var u = intent?.getStringExtra("url") ?: ""
-        if (u.isNotEmpty()) {
-            // ★ v1.33.40（用户 m06924）：窗口已活着时从「进入哪台 DSH」切到另一台，
-            //   同样要落到那台设备上次停留的对话。hosts 里的 URL 自带 #session- 片段，
-            //   所以 revive 时无条件改写（restoreSessUrl 只换 fragment）；
-            //   消息卡片那两处调用不传 revive，精确落点一律不动。
-            val revive = intent?.getBooleanExtra("revive", false) == true
-            if (revive) u = restoreSessUrl(u)
-            // ★ v1.33.41（用户 m07251）：只有 revive（=从实例选择器进来）才设落地目标，
-            //   窗口复用这条路同样要过写盘闸与落地复核。点消息卡片的精确落点不设闸。
-            applyInstanceLabel(u)
-            lastUrl = u
-            // ★ v1.34.13（用户 m01157 + m01207）：这台 DSH 的页面还在屏幕上就别重载整页——
-            //   片段不同就改 location.hash 切对话（秒开）；host 换了、token 换了或上次没加载
-            //   成功，才走下面真正的 loadUrl。所有入口（推送按钮 / 消息卡片 / 设备卡 / 实例选择器）
-            //   都汇到 onNewIntent，所以只在这一处判一次。
-            // ★ v1.34.14（用户 m01446）：token 不同不再等于「该重载」——设备清单那条与这次
-            //   点进来的那条常常抓于不同时刻（DSH 每次重启换 token），先复用，两拍后再探鉴权。
-            val tok = tokenOf(u)
+        if (u.isEmpty()) return
+        // ★ v1.33.40（用户 m06924）：窗口已活着时从「进入哪台 DSH」切到另一台，
+        //   同样要落到那台设备上次停留的对话。hosts 里的 URL 自带 #session- 片段，
+        //   所以 revive 时无条件改写（restoreSessUrl 只换 fragment）；
+        //   消息卡片那两处调用不传 revive，精确落点一律不动。
+        val revive = intent?.getBooleanExtra("revive", false) == true
+        if (revive) u = restoreSessUrl(u)
+        val tok = tokenOf(u)
+        // ★ v1.34.16（用户 m01723「跨设备切换要重新加载」）：一台 DSH 一块 WebView。
+        //   先把「这次要显示哪一页」定下来：已有实例只切 visibility（不 loadUrl，切回来
+        //   还是原来那个会话、原来滚到哪儿）；从没见过这台才新建一块，并按 LRU 淘汰最旧的。
+        //   顺序要紧：lastUrl / loadedUrl / restoreTarget 现在都是**每页自己的账**，
+        //   先写账再选页就会把地址记到另一台名下（176 模拟器实测：笔电的会话被存进
+        //   工作VM 的 lastSess，就是这个顺序错的指纹）。
+        val host = DshHosts.hostOf(u)
+        val page = pages[host]
+            ?: pages.entries.firstOrNull { it.value.lastUrl.contains(host) }?.value
+            ?: buildPage(host)
+        if (page.key != shownKey) {
+            val brandNew = page.loadedUrl.isEmpty()
+            setPage(page)
+            evictPages()
+            android.util.Log.d("dshpage", "show host=" + host + " pages=" + pages.size +
+                if (brandNew) " (fresh)" else " (visibility only)")
+        }
+        applyInstanceLabel(u)
+        lastUrl = u
+        // ★ v1.34.13（用户 m01157 + m01207）：这台 DSH 的页面还在屏幕上就别重载整页——
+        //   片段不同就改 location.hash 切对话（秒开）；host 换了或上次没加载成功，
+        //   才走下面真正的 loadUrl。所有入口（推送按钮 / 消息卡片 / 设备卡 / 实例选择器）
+        //   都汇到 onNewIntent，所以只在这一处判一次。
+        // ★ v1.34.14（用户 m01446）：token 不同不再等于「该重载」——设备清单那条与这次
+        //   点进来的那条常常抓于不同时刻（DSH 每次重启换 token），先复用，两拍后再探鉴权。
+        withPage(page) {
             val tokenChanged = tok.isNotEmpty() && loadedToken.isNotEmpty() && tok != loadedToken
             if (warmTarget(u)) {
                 android.util.Log.d("dshwarm", "reuse host=" + DshHosts.hostOf(u) +
@@ -2419,12 +2626,15 @@ class WebActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        web?.onPause()
+        // v1.34.16：App 退后台时把每一块 WebView 都按下暂停键（后台那几块本来已 paused，
+        // 重复调用无害），否则留在视图树里的可见页会继续渲染与定时器。
+        for ((_, pg) in pages) pg.web?.onPause()
         android.webkit.CookieManager.getInstance().flush()
     }
 
     override fun onResume() {
         super.onResume()
+        // 只有屏幕上那页恢复渲染；后台那几块保持 paused，切过去时由 setPage 唤醒
         web?.onResume()
         // 调试浮层开关（v1.32.28）：主界面「调试浮层」按钮切完回到本页即时生效，不必重开页面。
         // 老注入里没有 __dshDiagSet 时整个表达式是空操作。
@@ -2441,11 +2651,14 @@ class WebActivity : Activity() {
             } catch (e: Exception) { }
         }
         netCallback = null
-        web?.let { w ->
-            (w.parent as? ViewGroup)?.removeView(w)
-            w.destroy()
+        // v1.34.16：窗口销毁要把每一块 WebView 都摘掉并 destroy，只清活动页会漏内存
+        for ((_, pg) in pages) {
+            pg.web?.let { w ->
+                (w.parent as? ViewGroup)?.removeView(w)
+                w.destroy()
+            }
         }
-        web = null
+        pages.clear()
         android.webkit.CookieManager.getInstance().flush()
         super.onDestroy()
     }

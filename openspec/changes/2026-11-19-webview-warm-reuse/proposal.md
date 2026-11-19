@@ -57,9 +57,9 @@
    DSH 真重启使页面要求重新鉴权时，守卫自动跳到来链；
 3. 顶栏「刷新」→ 必重载；4. 点「关闭」再点设备卡 → 应 `reuse`。
 
-**1.34.14 已按用户 m01410 的授权在模拟器实测**（用户 m01397 报真机仍刷新之后）：判据换成客观计数器
-`adb logcat -d -s chromium:W | grep -c "Fenced frames"`（chromium 每次新建文档才打这三条 WARNING）——
-同一台换 token 再进，173 打 `reload tokenChanged=true` 且计数 +1，174 打 `reuse … tokenChanged=true (skip reload)` 且计数恒为 1。详见 HANDOVER §7.62。
+**1.34.14 已按用户 m01410 的授权在模拟器实测**（用户 m01397 报真机仍刷新之后），判据取 `dshwarm` 日志本身
+（`reuse` 分支不调 loadUrl，`reload` 分支必调）：同一台换 token 再进，173 打 `reload tokenChanged=true`，
+174 打 `reuse … tokenChanged=true (skip reload)`。详见 HANDOVER §7.62。
 
 已知风险（未实测）：保温页面的 WebSocket 在后台可能被 Chromium 冻结后断开，页面显示「重连中」——点一次「刷新」即恢复；
-跨宿主 LRU 池（同时保温两台）本轮未做，一次只保温当前这一台。
+跨宿主 LRU 池（同时保温两台）本轮未做，一次只保温当前这一台——**1.34.16 已补上**，见 `2026-11-19-webview-multi-instance/proposal.md`。

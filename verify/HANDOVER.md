@@ -4574,14 +4574,15 @@ App WebView 现场（`adb root` → `am start -n xyz.cpyh.dshpush/.WebActivity -
 ### 二、模拟器实测定位（用户 m01410 起允许开模拟器）
 环境：adb 在 `G:\Android\Sdk\platform-tools\adb.exe`；`emulator-5554`；入口一律用
 `adb shell am start -n xyz.cpyh.dshpush/.WebActivity --es url '<链接>' -f 0x30000000`。
-**整页加载计数器**：`adb logcat -d -s chromium:W | grep -c "Fenced frames"`——chromium 每次新建文档才打这三条
-WARNING，所以它就是「有没有重载」的客观判据。
+**判据 = `dshwarm` 日志本身**：`reuse` 分支不调 `loadUrl`，`reload` 分支必调，所以它就是「有没有重载」的判据。
+（记下这轮的取证坑：一开始想用 `adb logcat -d -s chromium:W | grep -c "Fenced frames"` 当整页计数器，四步跑下来计数
+恒为 1——那三条 WARNING 是**渲染进程创建时**打的，同进程内换文档不重打，不能当每次加载的计数器，别拿它下结论。）
 
 | 步骤 | 173（用户装的那版） | 174（本次修法） |
 |---|---|---|
-| E1 冷启动（新 token + `#session-`） | 加载 1 次 | 加载 1 次 |
-| E2 同一条链接再进 | `dshwarm reuse ... (skip reload)`，不加载 | 同样不加载 |
-| E3 **同一台、token 不同** | `dshwarm reload host=... tokenChanged=true` ⇒ **整页重载** | `dshwarm reuse ... tokenChanged=true (skip reload)`，加载计数不变 |
+| E1 冷启动（新 token + `#session-`） | 正常加载 | 正常加载 |
+| E2 同一条链接再进 | `dshwarm reuse ... (skip reload)` | 同样 `reuse`，不调 loadUrl |
+| E3 **同一台、token 不同** | `dshwarm reload host=... tokenChanged=true` ⇒ **整页重载**（真机那记 1s 重载） | `dshwarm reuse host=... tokenChanged=true (skip reload)` ⇒ 不调 loadUrl |
 | E4 再进一次同一条 stale 链接 | —— | `tokenChanged=false`（loadedToken 已跟着更新），快路 |
 
 ⇒ 根因是 1.34.13 的第三道放行写反了：`return t.isEmpty() || loadedToken.isEmpty() || t == loadedToken`，
@@ -4607,8 +4608,81 @@ token 不等 ⇒ warmTarget 返回 false ⇒ onNewIntent 走 loadFresh。用户�
 ### 四、发版与验收
 - `release-fast.ps1 -Version 1.34.14 -VersionCode 174`：apk **16928393 B**，
   `blog.cpyh.xyz/dsh-push-latest.apk` 与 `ntfy.cpyh.xyz/dl/dsh-push.apk?v=174` 都 200 + SHA256 一致，通知 id `4w2t5mhaaJUV`。
-- 模拟器（174）E1→E4：整页加载计数**恒为 1**；守卫在健康页上不误跳（E3/E4 之后计数不变）。
+- 模拟器（174）E1→E4：E3 从 `reload` 变成 `reuse ... (skip reload)`，守卫在健康页上不跳转（E4 已是 `tokenChanged=false`）。
+  守卫的**反例**（健康页不误跳）有实测；**正例**（页面真的要求重新鉴权时自动跳）只有代码路径 + 文案实测，见下。
 - 未实测的一条：DSH 真重启后守卫的**正例**（页面变成「需要重新鉴权」→ 该跳到来链）。要造这场景得重启承载本会话的
   DSH 实例，代价大，留给真机；顶栏「刷新」是这条路的兜底。
 - 真机回归判据（交用户）：① 点头像 → 设备清单点那台 ⇒ 秒开、不换画面；② 点推送 likewise；
   ③ 顶栏「刷新」必重载；④ 重启 DSH 后再进，若页面显示要重新鉴权会自动跳过去（或手点刷新）。
+
+### 五、遗留（用户 m01564，2026-11-19 当天追报）
+装完 174 的反馈：「只在单个设备退出然后进入还算稳定，但如果我切换不同设备，再进入又会重新加载」。
+模拟器两台实测（笔电 `<tailnet-laptop>:3080` token `mAn_NCN9…` ⇄ 工作VM `<tailnet-work>:3080` token `ZJVVBAi7…`）：
+S1 进 A → S2 切 B（`reload host=<tailnet-work>:3080`）→ S3 回 A（`reload host=<tailnet-laptop>:3080`）→ S4 再切 B（又 `reload`）。
+**这不是回归，是单 WebView 单页面的结构性行为**：窗口里只有一个页面，换 host 必须加载那台的新文档，
+回来时那台的文档早被顶掉了 ⇒ 每次跨设备切换都要重新加载一次。要治只有一条路：
+**按 host 各留一个 WebView 实例**（LRU，上限 2～3，切回来只是切 visibility），代价是每个实例几十 MB 内存 +
+`loadedUrl/loadedToken/loadErrored/restoreTarget` 这套状态得搬进实例对象、`onPageFinished` 之类回调
+要按「是不是当前实例」过滤。尚未开工，等用户点头。
+
+## §7.63 发版通知的 apk 链接不再冒充「本设备的网页入口」（App 1.34.15 / 175，2026-11-19）
+
+### 一、现象与用户原话
+用户 m01583：「还有一个问题，每次发布新版本后，我通过头像点进来本设备都是显示下载APP」。
+只在**发版之后**出现，下一条真推送就覆盖回去了——所以看起来像「偶尔坏」。
+
+### 二、真因链（全部代码级确认）
+`verify/release-fast.ps1:159` 发的更新通知 message = `<note>\n#web <apk 链接>`、click=apk、topic=`dsh`
+（`verify/config.local.ps1` 里 `$Topic="dsh"`）→ `PushService.kt:188` 的 `webRegex = Regex("\\n#web (\\S+)$", MULTILINE)`
+→ L612 取出 webLink → **L743 `Devices.setWeb`（attrId 非空时）与 L745 全局 `KEY_WEB="webUrl"`（无条件）把 apk 链接存了下来**。
+实例清单那份 v1.29.1 就挡过（`DshHosts.looksLikeDsh = url.contains("token=")`，私有仓），但设备条目 `devices[].web` 这条通道没人挡。
+点进去的下载 Toast 来自 `WebActivity.kt:1878`（自实现下载器）/ `:1949`（DownloadManager 兜底），触发口 `:1867 setDownloadListener`。
+模拟器现形（174 在跑时 dump `shared_prefs/dshpush.xml`，12950 B）：`webUrl` = `devices[laptop].web` = `https://ntfy.cpyh.xyz/dl/dsh-push.apk?v=175`。
+
+### 三、改动（提交 `7740cd6`，版本提交 `be3b8d8`）
+| 位置 | 改动 |
+|---|---|
+| `DshHosts.kt:45` | 新增 `isDownloadLink()`：去掉 `#`/`?` 之后按 DOWNLOAD_SUFFIXES 判（apk aab ipa zip gz tar rar 7z exe msi dmg png jpg jpeg gif webp pdf mp4 mov） |
+| `Devices.setWeb` | 开头 `if (web.isBlank() \|\| DshHosts.isDownloadLink(web)) return` —— 一处挡掉 PushService L651/L663/L743 三个调用点 |
+| `PushService.kt:748` | `val webChanged = !DshHosts.isDownloadLink(webLink) && webLink != prefs?.getString(KEY_WEB, "")`；卡片里的 `m.put("web", …)` **保留** ⇒ 点「打开」照样下载 |
+| `Devices.pageLink(ctx, d)` | 设备清单行的落点：`d.web` 不是下载链接就用它，否则按 name 到 `DshHosts.all` 里找带 `token=` 的实例链接。用在 MainActivity L1189 文案与 L1197 点击 |
+| `Devices.healWeb(ctx)` | 清掉 `devices[].web` 与全局 `webUrl` 上的下载链接，能按名字对上实例就换成实例链接。挂在 `PushService.onCreate:296` 与 `MainActivity.onResume:905` ⇒ **已污染的真机升级后自愈** |
+
+### 四、发版与验收
+- `release-fast.ps1 -Version 1.34.15 -VersionCode 175`：apk **16930037 B**，blog 与 `?v=175` 都 200 + SHA256 一致，更新通知 id `V9uCgMIyRsss`，公开四处镜像 `63d70c1`。
+- 模拟器（175）三条：① 装 175 前先确认 174 又被 `?v=175` 污染，装完启动后 `webUrl` 与 `devices[laptop].web` 自动变回 `http://<tailnet-laptop>:3080/?token=mAn_NCN9…`（heal 生效）；② 发 qa- 探针（title `qa-探针 1.34.15 下载链接守卫`、消息 id `lcnpAYFIFkjp`、`#web …/dsh-push.apk?v=999`）⇒ prefs 一动没动，卡片 `web` 仍是 apk（下载入口保留）；③ uiautomator 点头像（ImageView 72,247-261,441 → tap 166,344）→ laptop 行文案「dsh · 已连接 · 点这里进它的网页」→ tap 528,1455 ⇒ `mCurrentFocus=…/WebActivity`、顶栏 `DSH 网页 · laptop`、无下载 Toast（截图 `C:/Temp/s175.png`）。
+- 坑两条：**`adb install` 之后新进程要等 artd 过一遍才起**，首次 prefs dump 太早会误判「heal 没跑」；那轮 `read_image` 没回图（工具不报错也不附图），验收改走 uiautomator + logcat 判据。
+
+## §7.64 跨设备不再重载：每台 DSH 一块 WebView（App 1.34.16 / 176，2026-11-19）
+
+### 一、用户点头与方案边界
+用户 m01723：「跨设备切换必重载可以开工了」⇒ 按 §7.62 §五 记下的那条唯一路线做：
+**每台 host 一个 WebView 实例、切回来只切 visibility、LRU 上限 3**（`maxPages = 3`）。
+不做的事：不做进程隔离、不做「后台页保 WebSocket」的额外招（Chromium 自己冻结，点「刷新」即恢复）。
+
+### 二、结构怎么改而老代码一行不动（`WebActivity.kt` 单文件，383 增 / 部分重写）
+- **Page 对象**：`key / web / loadedUrl / loadedToken / lastUrl / restoreTarget / restoreAt / restoreSkip / restoreCanceled / loadErrored / retryAttempt / retryPending / authGuard / title / touchedAt`；`pages = LinkedHashMap<String, Page>`、`activeKey` / `shownKey`。
+- **facade**：11 个活动级字段（loadedUrl、loadedToken、lastUrl、restore*、loadErrored、retry*、authGuard）全改成读写 `activePage` 的 accessor，`web` 改成派生只读 `get() = activePage?.web` ⇒ onCreate 里那 1700 行 WebView 构造整块搬进 `buildPage(key)` 而**逻辑一字未改**。
+- **`withPage(p) { … }`**（inline）：临时把 `activeKey` 指到回调的 owner 页，finally 还原 ⇒ WebViewClient 每个回调包一层，页面状态各记各的；`onScreen = activeKey == shownKey` 挡住只有可见页才能动的原生 UI（showError/hideError/barShow/标题）。
+- **定时器钉页**：`scheduleRetry` / `scheduleAuthGuard` / `recheckRestoreTarget` 先 `val pg = activePage ?: return`，Runnable 体整块 `withPage(pg)` ⇒ 后台那页的自动重试不会串到前台页。
+- **`onNewIntent` 先选页后写账**：`pages[host] ?: 按 lastUrl 匹配 ?: buildPage(host)` → 需要就 `setPage`（只 VISIBLE/GONE + onResume/onPause）+ `evictPages()` → 才 `applyInstanceLabel(u)` 与 `lastUrl = u` → 最后 `withPage(page)` 里判 `warmTarget`（沿用 §7.61/§7.62 的热复用与守卫）。
+- 网络恢复不再只刷当前页：`watchNetwork.onAvailable` 遍历所有页，`broken = (可见且错误层在) \|\| loadErrored \|\| loadedUrl 为空`，每台各重载一次。
+
+### 三、两个必须记住的顺序坑
+1. **先写账再选页 ⇒ 会话串台**：第一版把 `lastUrl = u` 写在选页之前，实测日志 `landed v=session-6a7ef2c8…` 紧跟 `save host=<tailnet-work>:3080 sess=session-6a7ef2c8…`——笔电的会话被存进工作VM 的 lastSess。改成先选页后写账，prefs 里工作VM 那条不再带 `#session-` 片段。
+2. **首屏空白**：`shownKey` 原先只有 `setPage` 一处赋值 ⇒ `buildPage` 首屏时 `attachPage` 判 `p.key == shownKey` 为假，把第一页挂成 GONE。补 `if (pages.size == 1) shownKey = key`。
+
+### 四、发版与验收（`release-fast.ps1 -Version 1.34.16 -VersionCode 176`）
+- apk **16936549 B**，`blog.cpyh.xyz/dsh-push-latest.apk` 与 `ntfy.cpyh.xyz/dl/dsh-push.apk?v=176` 都 200 + SHA256 一致，更新通知 id `Kk8LZL3WLU6G`。提交 `5103298`（文档）/ `8054b67`（代码）/ `61d7d77`（版本号）。
+- 模拟器 `emulator-5554`（脚本 `C:/Temp/t176c.sh`）三屏：
+  A 首屏笔电 `new host=<tailnet-laptop>:3080 pages=1`、顶栏 `DSH 网页 · laptop`；
+  B 切工作VM `new host=<tailnet-work>:3080 pages=2` + `show … (fresh)` + `reload tokenChanged=false`、顶栏 `DSH 网页 · 工作VM`；
+  C 切回笔电 **`show host=<tailnet-laptop>:3080 pages=2 (visibility only)` + `reuse … (skip reload)`**、顶栏回到 `DSH 网页 · laptop`，
+  页面里还是那台原来那个会话（`解决异常情况` + Chat/Trajectory + 原滚动位置，截图 `C:/Temp/s176b-c.png`）⇒ **切回来没重载**就是本次的验收点。
+- 内存实测：TOTAL PSS 119404 → 120298 → 122410 KB（RSS 302040 → 303948 → 306136）。**增量偏小的说明**：工作VM 那页停在 401 鉴权页，
+  比真页面轻得多，真机两台都是满页时按每页几十 MB 估。
+- 判据（下次接手照抄）：`adb logcat -d -s dshpage dshwarm`（**别加 `:W`**，那些是 `Log.d`）；
+  新页 `dshpage new host=… pages=N`、淘汰 `dshpage evict host=… keep=N`、切换 `dshpage show host=… pages=N (fresh|visibility only)`、
+  复用 `dshwarm reuse … (skip reload)`、重载 `dshwarm reload …`。
+- 编译坑三条：`try withPage(owner) {` 编译不过（Kotlin 的 try 必须跟块）；`Page` 缺 `lastUrl` 字段导致 193/194 行 Unresolved reference；
+  `run_code` 里用 JS 模板串写 Kotlin 代码时 **美元符紧跟花括号会被 JS 插值**（ReferenceError: pages is not defined），要转义或改字符串加号拼接。
