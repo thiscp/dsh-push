@@ -4684,5 +4684,8 @@ S1 进 A → S2 切 B（`reload host=<tailnet-work>:3080`）→ S3 回 A（`relo
 - 判据（下次接手照抄）：`adb logcat -d -s dshpage dshwarm`（**别加 `:W`**，那些是 `Log.d`）；
   新页 `dshpage new host=… pages=N`、淘汰 `dshpage evict host=… keep=N`、切换 `dshpage show host=… pages=N (fresh|visibility only)`、
   复用 `dshwarm reuse … (skip reload)`、重载 `dshwarm reload …`。
+- **真机回归（用户 m02050，2026-11-19 16:33）**：「目前用新版本使用没有问题」⇒ 跨设备切回不重载在真机成立，
+  本轮开放目标（用户 m01723「跨设备切换必重载可以开工了」）**就此关闭**。175 的自愈与 174 的 token 差异热复用是这条使用路径的上游，
+  一并视为通过；**仍未实测的只剩 174 守卫的正例**（DSH 真重启后页面要求重新鉴权 ⇒ 自动跳到来链），只有代码路径 + 文案实测。
 - 编译坑三条：`try withPage(owner) {` 编译不过（Kotlin 的 try 必须跟块）；`Page` 缺 `lastUrl` 字段导致 193/194 行 Unresolved reference；
   `run_code` 里用 JS 模板串写 Kotlin 代码时 **美元符紧跟花括号会被 JS 插值**（ReferenceError: pages is not defined），要转义或改字符串加号拼接。
