@@ -12,6 +12,7 @@
 
 | 字段 | 值 |
 |---|---|
+| **✅ App v1.34.13 / 173 已发布：再进同一台 DSH 不再整页重载——网页窗口热复用 + 顶栏「刷新」** | 用户 m01157「如果通过点击推送的进入dsh 网页…相当于开的一个新的web实例会重新加载…能不能把已有的缓存起来」+ m01207 更正「不止从推送里面进去时，从任何地方进去对应设备的dsh web都应该使用这套逻辑」。根因不在推送链路：WebActivity 早就是 singleTask（入口本来就复用同一个实例），是 onNewIntent 无条件 loadUrl + onDestroy 直接 destroy 两道把缓存抹平。修法：loadedUrl/loadedToken 记账（?token= 被 303 抹掉 ⇒ lastUrl/web.url 判不出 token 轮换）⇒ 同 host 同 token 只改 location.hash 切对话、不重载；顶栏加「刷新」、「关闭」改保温不销毁。详见 §7.61 |
 | **✅ App v1.34.12 / 172 已发布：内置浏览器适配 DSH 0.2.2 侧栏改版（浮空「工作区」与重复导航图标）** | 用户「dsh 更新到最新版后，左侧的插件栏好像出现重复的了。还有就是工作区这一栏，我把侧边栏缩放后还在屏幕上显示」。CDP 取证（裸 Edge 基线 vs App WebView 现场，360x698 dpr4）定位到**两个独立根因**。**① 浮空「工作区」是我们自己的注入 CSS 造成的**：0.2.2 把侧栏收起改成「列 `translateX(-280)` + `visibility:hidden`」，而 `bw-narrow-fix` 里那条 `transform:none!important`（`e67e56b` / v1.32.4 为绕开 `backdrop-filter` 裁剪加的）把位移杀掉 ⇒ 列停在 x=0，列内 `GAkraW_sectionLabel GAkraW_wide`、`GAkraW_iconButton` 的 computed visibility 又被 DSH 自己的 `*_wide` 规则穿透成 visible ⇒ 标题加三个图标浮在正文上；裸 Edge 不注入时列在 -280 屏外，所以只有 App 里看得见。**② 重复图标是 0.2.2 挪 DOM 造成的**：导航行 svg 从 button 直接子挪进 `span.wtg9ga_panelGlyph > div[data-slot]`，于是 DSH 核心 `[data-dsh-market-nav-icon] > svg{display:none}` 与插件 `@michengai/dsh-agency-agents` 1.2.26 `[data-aag-nav-icon] > svg{display:none!important}` 两条**直接子**选择器同时失配、而 `::before` 自绘图标照常画 ⇒「插件市场」（DSH 核心画的）与「专家」（插件画的）各多一个图标；桌面 1280 宽不打标（实测该元素数 0）故不复现。修法四处（只动 `WebActivity.kt` 注入段）：删 `transform:none`（保留真正起作用的 `backdrop-filter:none`/`filter:none`）、追加 `[data-dsh-market-nav-icon] svg,[data-aag-nav-icon] svg{display:none!important}`、`bwFabOpen()` 改几何判据 `r.width>0&&r.right>1`、观察器锚点加 `[class*='_sidebarCol'] [class*='_root']` 兜底。验收：emulator-5554 装 172 后 CDP 实测收起态列 `x=-280`、`tf=matrix(1,0,0,1,-280,0)`、屏内浮空元素 **9→0**、鲸鱼钮 `left` 由 +6px 变负（正确半隐），展开态 `x=0`、遮罩 `opacity=1`、注入样式 2307→**2360 B**；双图标在裸 Edge 360 宽实测修复（原生 svg 变 0x0 hidden），**模拟器那个 DSH 会话只有 5 条导航行、没有「插件市场/专家」，故 App 侧未复现该项**。发布 -Deploy **10/10**（geom-matrix `verdict=ENV states=0` 不拦发布）、线上 `?v=172` 200 + **16926693 B**、update-notify `nfotPxE0MO6C`、四处公共镜像 `6d431df`、私有 HEAD `36ff6e1`。细节见 §7.60。 |
 | **✅ 插件 0.7.38 + App v1.34.11 / 171 已发布：通行证按机器隔离、机器名终于存得下来、网页顶栏跟随设备清单** | 三段连修（2026-11-02 → 11-03）。**① 0.7.36 / 1.34.9**：通行证按 topic 隔离——中继 `/usr/local/bin/dsh-provd.py` 加 `GET /list?topic=`、`POST /revoke` 带 `{name, topic}`，三台机器各自只看到自己的（旧行为是所有人共用一份、谁都能吊销谁）；吊销 404 的真因是面板给的名字不是服务端真实用户名，现在先聚合真实用户名再删；面板机器名改成可填。**② 0.7.38 / 1.34.10**：「点保存没有提示、重扫还是旧名」两层独立真因——面板写 `webName` 不落盘（只写 volatile `nameText`）⇒ 插件 `persistName()` 用 `ctx.configEditor.edit()` 自己落盘；App `Devices.idOf()` 把机器名算进 id ⇒ 改名后重扫出两行，`upsert()` 归并顺序改为 id → 名字 → **web 的 host:port**。**③ 1.34.11 / 171**：删掉重复的「DSH 入口」胶囊（入口改成点状态卡），新增 `Devices.nameForWeb(ctx, web)` 让网页顶栏以设备清单为准（根因：手机里两份清单，`Devices` 由配对/改名写、`DshHosts` 由推送 `#name` 喂，顶栏原先只看后者）。验收：模拟器相册配对 `name=VM1` 后点该行 → 顶栏 `uiautomator dump` 读到 `DSH 网页 · VM1`；判新旧看 `classes3.dex`（`grep -ac nameForWeb` = 2）。发布与自测：selftest **197/197** + pair 59/59 + remote-bin 21/21 + remote-status 41/41（2026-11-03 复跑全绿）、npm `latest` = 0.7.38、线上 `?v=171` 200 + 16926629 B、提交 `f7afa8d`。细节见 §7.57 / §7.58 / §7.59。 |
 | **✅ 插件 0.7.18 + App v1.34.4 / 164 已发布：二维码终于带机器名，App 再用网页地址认机器——手工配凭据的 VM1 不再顶掉 laptop** | 用户「我刚刚更新到最新版，扫VM1的配对码，显示的laptop，点进去还是VM1」。第二层根因：VM1 凭据是手工配的、`credentials.json` 里**没有 `host`**，而插件 `payload()` 的 name 只取 `resolved.host` ⇒ 二维码里根本没有 `name=` ⇒ App 落进 §7.47 的「无机器名→退老逻辑」分支，把 laptop 那行的 token/web 换成 VM1 的。修法两侧都改：插件 `pairName()` = `host → webName → os.hostname()`；App 加 `webOrigin()/hostOf()`，无机器名时按**网页 host:port 指纹**判是不是另一台（清单里已有别的机器且没有一台对得上 ⇒ 新增一行）。验收用载荷字节数：VM1 的码 183 → **210 字节**，差的正是 `&name=%E6%B5%8B%E8%AF%95VM1`。插件 selftest 161+59+21+41 全过；APK 16923633 字节、`?v=164` 200+sha256 一致、通知 id `7rhI2Y32zh0k`；VM1 已升 0.7.18 并重启（新 token 已给用户）。细节见 §7.48。 |
@@ -4509,3 +4510,55 @@ App WebView 现场（`adb root` → `am start -n xyz.cpyh.dshpush/.WebActivity -
    三条都不成立才算没隐藏，而那正是「浮空工作区」的形态 ⇒ 新断言比旧的更能抓这个回归。
 4. 补测结果：冷跑 `node verify\geom-matrix.mjs --json --hosts 笔电 --prefs C:/Temp/geom-prefs-fresh.xml`
    → **PASS states=2 fails=0**（exit 0，收起态 + 展开态各一张截图）。
+
+## §7.61 网页窗口热复用：再进同一台 DSH 不再整页重载（App 1.34.13 / 173，2026-11-19）
+
+用户原话（m01157）：「我在使用中又发现我们app的一个问题，就是如果我通过点击推送的进入dsh 网页，那么相当于开的一个新的web实例会重新加载，这样很浪费时间，能不能把已有的缓存起来呢，只有进入之前没进去过的，或者自己手动刷新才重新加载，以此来保证流畅性」；
+两分钟后的更正（m01207）：「更正一下，不止从推送里面进去时，从任何地方进去对应设备的dsh web都应该使用这套逻辑」⇒ 判定只能做在 **WebActivity 收 URL 的那一层**（所有入口都汇到这里），不能挑推送那条路。
+
+### 一、根因：根本不是「新实例」，是两处老代码
+
+1. **入口本来就复用实例**：`AndroidManifest.xml:57-61` 的 WebActivity 早就是 `launchMode="singleTask"` + `configChanges`；推送（`PushService.kt:411-420 webAction`，带 `SINGLE_TOP`）、实例选择器（`MainActivity.kt:379` → `:612-620 openWebUrl`）、设备卡（`MainActivity.kt:1196`）三条路全都落到同一个实例 ⇒ 用户看到的「新开的 web 实例」是**错觉**。
+2. **真凶一 · onNewIntent 无条件重载**：原 `WebActivity.kt:2234-2243` 只要 intent 带 `url` extra 就 `web?.loadUrl(u)`。那台 DSH 明明还在跑、登录态还在，也把整套 SPA 从头起一遍——白屏几秒、当前对话与没提交的输入一起丢。
+3. **真凶二 · 关窗即销毁**：`:2274-2290 onDestroy` 直接 `removeView` + `w.destroy()`，而顶栏「关闭」（`:230`）就是 `finish()` ⇒ 上次开过的页面一点关闭就没了，下次必然冷加载。**没有任何跨窗缓存。**
+
+### 二、判「是不是同一台」不能看 lastUrl / web.url（本轮最贵的一个坑）
+
+入口 `?token=` 会被 **303 重定向到凭 Cookie 的地址**，`onPageStarted`（`:320-328`）随即把 `lastUrl` 覆盖成**不带 token** 的地址，`web.getUrl()` 同理（所以 `currentUrl()` 一直是「靠 Cookie 仍然有效」才敢拿它重载的）。
+⇒ 用这两个值判 token 轮换**永远判不出来**：DSH 每次重启换 token，热复用就会白挂一个 401 页面。
+⇒ 新增 `loadedUrl` / `loadedToken`（`:47-53`），**只在自家 `loadFresh()` 里写**，token 从当初那个入口 URL 上取，永不参与重定向污染。
+
+### 三、改了什么（`WebActivity.kt` 单文件 134 增 13 删，`64e30e8`）
+
+| 位置 | 改动 |
+|---|---|
+| 四处加载点（错误层重试 `:1965`、`scheduleRetry`、`watchNetwork` onAvailable、`onCreate` 首发 `:2010`） | 全改走 `loadFresh(url)`：先记 `loadedUrl`/`loadedToken` 再 `loadUrl`，保证判据不漏记 |
+| 新增 `warmTarget(url)` | 热路条件：web 活着 && `web.url` 是 http && `loadedUrl` 非空 && `!loadErrored` && 错误层没盖着 && `DshHosts.hostOf(当前)==hostOf(来链)` && (token 相等 **||** 来链不带 token **||** `loadedToken` 为空)。后两条是**故意通配**：设备卡的 `d.web` 常是裸链（`Devices.kt:40`），无 token 入口靠 Cookie 鉴权，不能因 token 为空就退回重载 |
+| 新增 `warmJump(url)` | 不 `loadUrl`，只 `evaluateJavascript(hashJs(sess))` 改 `location.hash` —— DSH 网页的 `revealFromHash` 挂着 `hashchange` 监听（这条被 `recheckRestoreTarget` `:2026-2057` 里现成的 `jsForce` 兜底证实），改片段就能切对话；随后照旧跑 `recheckRestoreTarget()`（2.5s/7s 读 `[data-conversation-session]`，不符补切） |
+| `onNewIntent` | 改成二选一：热路 `reuse`（`Log.d("dshwarm","reuse host=… (skip reload)")`）/ 冷路 `reload`（`tokenChanged=` 打上，行为与旧代码逐字一致）。**revive 语义只在冷路保留** |
+| 顶栏 | 新增「刷新」pill（`manualRefresh()`：作废保温、`loadFresh` 重载）——就是用户要的「自己手动刷新才重新加载」；「关闭」从 `finish()` 改 `leaveWarm()` |
+| `leaveWarm()` | `startActivity(MainActivity, FLAG_ACTIVITY_REORDER_TO_FRONT\|SINGLE_TOP)`，网页窗口**留在任务栈下一层保温**（`onPause` 只停渲染，`onResume` 恢复）；catch 退 `finish()` |
+
+**用户可见的语义变化**：点顶栏「关闭」不再销毁网页窗口（要彻底关掉得去最近任务划卡片）。这是刻意的——「缓存起来」的物理载体就是那个没被 destroy 的窗口。
+
+### 四、注入 JS 语法闸的两个坑（`verify/extract-injected-js.mjs`）
+
+闸按「哪一行出现 `evaluateJavascript(`」定段起点，再向后找**第一行含 `, null)`** 的行当段尾，中间以双引号开头的行全当 JS 字面量收进去。
+⇒ 把 JS 内联在调用行里（`web?.evaluateJavascript("location.hash=...", null)`）会让段尾飘到远处 `onResume` 那次调用，把中间的 Kotlin 杂行收成碎串，报 `SYNTAX_FAIL: Unexpected token '}'`（rc=1）。
+⇒ 正解：**JS 由助手函数产出、调用行里不写字符串字面量**（照 `bannerJs` 的形状写 `hashJs`）。修完 `node verify/extract-injected-js.mjs --all` = 共 2 段 / 语法错 0 / rc=0。（既有 `漏 L1806: "var dshDiagOn=" …` 是历史噪音，不影响 rc。）
+
+### 五、发版与分发
+
+- **`release-fast.ps1` 必须在有正常环境变量的 shell 里跑**：在 `run_code` 里 spawn 会因 `process.env` 为空，脚本内 `cmd /c "scp …"` 报 `cmd : 无法将 cmd 项识别为 cmdlet`（`release-fast.ps1:86` / `:104`），rc=3 `SUMMARY: ABORTED`、`FATAL: gradle produced no apk size line`；副作用是版本号已被幂等步骤改掉，且在仓库根留下一个字面量目录 `%SystemDrive%/ProgramData/Microsoft/Windows/Caches/`（Windows 字体缓存 db，已删）。
+- 走 `ops_bash` 重跑：110s 完成，**APK 16927917 B**（1.34.12 = 16926693 B）；`blog.cpyh.xyz/dsh-push-latest.apk` 与 `ntfy.cpyh.xyz/dl/dsh-push.apk?v=173` 均 200 / 16927917 B / **SHA256 比对通过**；通知 id `rSX8LcLtu0fT`。
+- 提交链：`64e30e8`（代码）→ `cfa6753`（版本号 1.34.13 / 173）；私有 gitee `origin` `054ae2d..cfa6753`；公开镜像四处同 commit `7faa918`。
+
+### 六、验收状态与已知风险
+
+本轮按 USER.md 的两轮制**没有开模拟器**，交用户真机回归的判据：
+
+1. 同一台 DSH，从推送 / 设备卡 / 实例选择器反复进 → **秒开、不白屏、落回上次那个对话**（`adb logcat | grep dshwarm` 应见 `reuse`）；
+2. DSH 重启换了 token 后用旧推送进来 → 应 `reload`（不再挂 401）；
+3. 顶栏「刷新」→ 必重载；
+4. 点「关闭」再点设备卡 → 应 `reuse`；
+5. **未实测的风险**：保温页面的 WebSocket 在后台可能被 Chromium 冻结后断开，页面显示「重连中」——点一次「刷新」即恢复；跨宿主 LRU 池（同时保温两台）本轮也没做，一次只保温当前这一台。
