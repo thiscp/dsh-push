@@ -902,6 +902,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         if (!PushService.listeners.contains(msgListener)) PushService.listeners.add(msgListener)
+        Devices.healWeb(this)   // v1.34.15：升级后第一次进主页就把发版通知存下的 apk 链接清掉
         refresh()
         statusText.postDelayed({ refresh() }, 500)
         // v1.33.0：状态卡在页面停留期间也要跟着刷——保存通行证发的 reload 是异步意图，
@@ -1185,7 +1186,7 @@ class MainActivity : Activity() {
                     setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
                 })
                 addView(TextView(ctx).apply {
-                    text = "${d.topic} · $st" + if (d.web.isNotEmpty()) " · 点这里进它的网页" else ""
+                    text = "${d.topic} · $st" + if (Devices.pageLink(ctx, d).isNotEmpty()) " · 点这里进它的网页" else ""
                     textSize = 11f
                     setTextColor(c(R.attr.dshTextSecondary))
                     setPadding(0, dp(3), 0, 0)
@@ -1193,7 +1194,8 @@ class MainActivity : Activity() {
             }
             col.setOnClickListener {
                 dismissDevices()
-                if (d.web.isNotEmpty()) openWebUrl(d.web)
+                val link = Devices.pageLink(ctx, d)
+                if (link.isNotEmpty()) openWebUrl(link)
                 else toast("这台还没推过网页链接，等它推一条就能进")
             }
             row.addView(col, LinearLayout.LayoutParams(0, -2, 1f))

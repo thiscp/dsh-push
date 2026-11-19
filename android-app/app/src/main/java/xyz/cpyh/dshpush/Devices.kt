@@ -280,9 +280,12 @@ object Devices {
         save(ctx, all(ctx).filterNot { it.id == id })
     }
 
-    /** 记下这台机器最近一次推送里带的网页直链（换新后答题/入口都跟它走） */
+    /** 记下这台机器最近一次推送里带的网页直链（换新后答题/入口都跟它走）。
+     *
+     *  下载链接不收（v1.34.15）：发版通知带的 `#web` 是 apk，收下来之后这一行就变成「点进去下载」，
+     *  要等这台机器推下一条带真链接的消息才自愈。 */
     fun setWeb(ctx: Context, id: String, web: String) {
-        if (web.isBlank()) return
+        if (web.isBlank() || DshHosts.isDownloadLink(web)) return
         val list = all(ctx).toMutableList()
         val i = list.indexOfFirst { it.id == id }
         if (i < 0) return
@@ -371,5 +374,42 @@ object Devices {
             token = token,
             web = p.getString(PushService.KEY_WEB, "") ?: "",
         )
+    }
+
+    /**
+     * 这一行现在能进哪个网页（v1.34.15）：这台机器自己存的直链优先，那是下载链接就当没有，
+     * 再退一步按名字去实例清单里找。主页那一行的文案和点击共用它，免得文案写着「点这里进它的网页」、
+     * 点下去却开始下载。
+     */
+    fun pageLink(ctx: Context, d: Dev): String {
+        val w = d.web.trim()
+        if (w.isNotEmpty() && !DshHosts.isDownloadLink(w)) return w
+        return DshHosts.all(ctx).firstOrNull { it.name == d.name && it.url.contains("token=") }?.url ?: ""
+    }
+
+    /**
+     * 清掉历史版本存下来的下载链接（v1.34.15）。
+     *
+     * v1.34.14 及以前会把发版通知的 `#web`（apk）当成设备主页存进 `devices` 与全局 `webUrl`，
+     * 现象就是「每次发布新版本后，通过头像点进来本设备都是显示下载APP」。这里一次性修好：
+     * 能按名字对上实例就用实例链接，对不上就置空——下一轮 `#syslink` 会自动补上。
+     */
+    fun healWeb(ctx: Context) {
+        try {
+            val hosts = DshHosts.all(ctx)
+            val list = all(ctx).toMutableList()
+            var changed = false
+            for (i in list.indices) {
+                val w = list[i].web
+                if (w.isEmpty() || !DshHosts.isDownloadLink(w)) continue
+                list[i] = list[i].copy(web = hosts.firstOrNull { it.name == list[i].name && it.url.contains("token=") }?.url ?: "")
+                changed = true
+            }
+            if (changed) save(ctx, list)
+            val p = sp(ctx)
+            if (DshHosts.isDownloadLink(p.getString(PushService.KEY_WEB, "") ?: "")) {
+                p.edit().putString(PushService.KEY_WEB, hosts.firstOrNull { it.url.contains("token=") }?.url ?: "").apply()
+            }
+        } catch (e: Exception) { }
     }
 }

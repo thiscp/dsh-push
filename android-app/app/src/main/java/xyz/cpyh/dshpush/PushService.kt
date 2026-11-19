@@ -292,6 +292,8 @@ class PushService : Service() {
     override fun onCreate() {
         super.onCreate()
         prefs = getSharedPreferences("dshpush", MODE_PRIVATE)
+        // v1.34.15：老版本把发版通知的 apk 链接存成了网页入口，起来先清一次（详见 Devices.healWeb）
+        Devices.healWeb(this)
         client = OkHttpClient.Builder()
             .pingInterval(25, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
@@ -741,7 +743,9 @@ class PushService : Service() {
                 // DSH Web 每次重启 token 必变，扫码那一刻存的 web 会过期；认得出这条推送是谁发的
                 // （attrId 非空）才写，认不出不瞎写，免得又把别人的链接盖到这一行上。
                 if (attrId.isNotEmpty()) Devices.setWeb(this, attrId, webLink)
-                val webChanged = webLink != prefs?.getString(KEY_WEB, "")
+                // v1.34.15：发版通知的 `#web` 是 apk 下载链接——这一次点击拿去下载可以，
+                // 但不能覆盖全局网页入口，否则每次发完版，点常驻通知/状态卡进本设备就是下载。
+                val webChanged = !DshHosts.isDownloadLink(webLink) && webLink != prefs?.getString(KEY_WEB, "")
                 if (webChanged) prefs?.edit()?.putString(KEY_WEB, webLink)?.apply()
                 // 清单变了也要重发常驻通知，否则新增的「DSH 入口」动作要等下次状态刷新才出现
                 if (webChanged || grew)

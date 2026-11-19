@@ -35,6 +35,23 @@ object DshHosts {
      *  早期版本会把它登记成 "ntfy.cpyh.xyz:443" 这种假实例（v1.29.1 修） */
     private fun looksLikeDsh(url: String) = url.contains("token=")
 
+    /**
+     * 这是个要下载的文件，不是能显示的网页（v1.34.15）。
+     *
+     * 发版通知把 `#web` 指到 apk 下载链接（`verify/release-fast.ps1` 那条 JSON），
+     * v1.29.1 只挡住了实例清单（见上面 [looksLikeDsh] 的注释），设备清单那份和全局 `webUrl`
+     * 没挡 ⇒ 每次发完新版，点头像进本设备弹的是「开始下载 dsh-push.apk」（用户 2026-11-19）。
+     */
+    fun isDownloadLink(url: String): Boolean {
+        val path = url.substringBefore('#').substringBefore('?').lowercase()
+        return DOWNLOAD_SUFFIXES.any { path.endsWith(it) }
+    }
+
+    private val DOWNLOAD_SUFFIXES = listOf(
+        ".apk", ".aab", ".ipa", ".zip", ".gz", ".tar", ".rar", ".7z", ".exe", ".msi", ".dmg",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".mp4", ".mov",
+    )
+
     fun all(ctx: Context): List<Host> {
         val out = ArrayList<Host>()
         try {
